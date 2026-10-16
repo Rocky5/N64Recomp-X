@@ -93,6 +93,7 @@ jobs:
           python tools/xbox/test_xbe_rom.py
           python tools/xbox/test_romcache.py
           python tools/xbox/test_saves.py
+          python tools/xbox/test_f3dex.py
           python tools/xbox/test_asp_hle.py --bench 0
 
       - name: The platform and runtime alone (no game)
