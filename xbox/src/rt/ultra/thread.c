@@ -23,7 +23,14 @@
 #ifndef XRC_THREAD_RESUME
 #define XRC_THREAD_RESUME 1
 #endif
-#define HOST_STACK (128 * 1024)   /* the kernel thread's; the game's own stack is in RDRAM */
+#define HOST_STACK (128 * 1024)
+/* -DXRC_THREAD_TRACE=1 (diagnosis): every create, start, stop and destroy
+ * logged with the calling thread's id, the first 400 */
+#ifndef XRC_THREAD_TRACE
+#define XRC_THREAD_TRACE 0
+#endif
+static unsigned s_trace;
+#define TRACE(...) do { if (XRC_THREAD_TRACE && s_trace++ < 400) xhw_logf(__VA_ARGS__); } while (0)   /* the kernel thread's; the game's own stack is in RDRAM */
 
 /* ---- the lock ---- */
 static xhw_mutex* s_lock;
@@ -177,6 +184,8 @@ ULTRA(osCreateThread) {
     d->sp = ARG(4);
     wr32(t + TH_ID, ARG(1));
     wr32(t + TH_PRIORITY, ARG(5));
+    TRACE("[OS] trace: create %08x id %d entry %08x pri %d (kt %d stopped %d wait %x) by %08x", (unsigned)t,
+          (int)ARG(1), (unsigned)ARG(2), (int)ARG(5), d->kt != 0, d->stopped, (unsigned)d->wait, (unsigned)self()->t);
     wr16(t + TH_STATE, OS_STATE_STOPPED);
     wr32(t + TH_NEXT, 0);
     xu_unlock();
@@ -189,6 +198,8 @@ ULTRA(osStartThread) {
     int pri;
     (void)rdram;
     if (!d) xrc_fatal_vram("osStartThread: unknown thread", t, 0);
+    TRACE("[OS] trace: start %08x (kt %d stopped %d wait %x fresh %d) by %08x", (unsigned)t, d->kt != 0, d->stopped,
+          (unsigned)d->wait, d->fresh, (unsigned)me->t);
     if (!d->kt) {
         pri = (int)(int32_t)rd32(t + TH_PRIORITY);
         wr16(t + TH_STATE, OS_STATE_RUNNABLE);
@@ -218,6 +229,7 @@ ULTRA(osStartThread) {
 ULTRA(osStopThread) {
     uint32_t t = ARG(0);
     (void)rdram;
+    TRACE("[OS] trace: stop %08x by %08x", (unsigned)t, (unsigned)self()->t);
     if (!t || t == self()->t) {
         Thr* me = self();
         if (me->t) wr16(me->t + TH_STATE, OS_STATE_STOPPED);
@@ -231,6 +243,7 @@ ULTRA(osDestroyThread) {
     uint32_t t = ARG(0);
     (void)rdram;
     static unsigned s_logged;
+    TRACE("[OS] trace: destroy %08x by %08x", (unsigned)t, (unsigned)self()->t);
     if (!t || t == self()->t) {
         if (t) wr16(t + TH_STATE, OS_STATE_STOPPED);
         stop_wait(self());
