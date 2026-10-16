@@ -640,7 +640,7 @@ overclocked CPU.** Wings64-X's and OpenCrossing-Xbox's rules, binding here:
 
 | variant | what can go wrong | the rule | where |
 |---|---|---|---|
-| **128 MB** (RAM upgrade, a 128 MB-aware BIOS) | the kernel hands out pages above 64 MB: GPU addresses masked with `0x03FFFFFF` alias, allocations that fail at 64 MB succeed, so a fallback is never tested; a pack that "fits" only on 128 MB | **the console runs as 64 MB**: cxbe's "limit to 64 MB" flag, and `xhw_ram_lock64` holds every page at or above 64 MB first thing in `main_body`, before anything allocates; `[MEM]` logs what it held. The budget of §3.10 is a 64 MB budget for every pack; no pack, no knob and no cache uses the upper half (§8 Q11 asks whether a page cache may, as an opt-in, later). Kill switch `-DXHW_RAM_LOCK64=0` for diagnosis only | `xhw_ramlock.c` (M0) |
+| **128 MB** (RAM upgrade, a 128 MB-aware BIOS) | the kernel hands out pages above 64 MB: GPU addresses masked with `0x03FFFFFF` alias, allocations that fail at 64 MB succeed, so a fallback is never tested; a pack that "fits" only on 128 MB | **the console runs as 64 MB**: cxbe's "limit to 64 MB" flag, and `xhw_ram_lock64` holds every page at or above 64 MB first thing in `main_body`, before anything allocates; `[MEM]` logs what it held. The budget of §3.10 is a 64 MB budget for every pack; no pack, no knob, no cache and no opt-in ever uses the upper half: a 128 MB console uses 64 MB, for stability (maintainer, 2026-10-16; decided, not open). Kill switch `-DXHW_RAM_LOCK64=0` for diagnosis only | `xhw_ramlock.c` (M0) |
 | **upgraded CPU** (1.0-1.4 GHz) or **overclocked FSB** | anything timed on the TSC or an assumed 733 MHz runs fast: game speed, audio pitch, timeouts; nxdk's `QueryPerformanceCounter` guesses the TSC rate from the multiplier | **time comes from the ACPI timer (3.375 MHz, its own crystal) and the vblank, never the TSC**: `osGetCount`/`osGetTime` are the ACPI clock scaled to 46.875 MHz, the retrace is pbkit's vblank (or 60.000 Hz from ACPI), the AI DAC drains in ACPI time; the TSC is read once at boot for the `[CLOCK]` line only. A game's own busy-waits on `osGetCount` (recompiled code) therefore wait real time on any CPU. The game's frame rate is its own (retrace messages), so a faster CPU only buys headroom | `xhw_clock.c`, `rt/ultra/time.c`, `vi.c`, `ai.c` (M0/M1) |
 | **patched `rdtsc`** (modded kernels rewrite `0f 31` in loaded code) | the XBE's own code changes under it | `xhw_code_repair.c` puts `.text` back as `default.xbe` has it before the clock reads the TSC and before any game code runs; `[BOOT] code check` logs it | M0 |
 | **PAL consoles / 50 Hz** | a 50 Hz retrace slows the game | the retrace is 60.000 Hz from ACPI when the output is not 60 Hz (Melee-X's pacer); 480p and 720p are NTSC-only in nxdk's tables (§5.4) | `xhw_video.c` |
@@ -1275,13 +1275,10 @@ Hard problems named as such, so nobody is surprised by them:
    disc path?
 10. **Controller Pak**: emulate a 32 KB pak per port by default (ghost data in
     MK64, some saves) or only where a pack asks?
-11. **128 MB consoles**: §3.13 runs them as 64 MB. Should the ROM page cache
-    (§3.5) be allowed to use the upper 64 MB as an opt-in on such consoles
-    (bigger caches for class B/C games), or stay at 64 MB everywhere so every
-    console behaves the same? The default is the latter.
 
-Decided on 2026-10-16 and no longer open: every build behaves the same on 64
-MB and 128 MB consoles and on stock and upgraded CPUs (§3.13); the tool runs
+Decided on 2026-10-16 and no longer open: a 128 MB console uses only 64 MB,
+for stability, with no opt-in for the upper half; every build behaves the
+same on 64 MB and 128 MB consoles and on stock and upgraded CPUs (§3.13); the tool runs
 on Windows, macOS and Linux with one command (§5.1); up to 720p and widescreen for every game, 1080i
 not offered (§5.4); the BACK menu is the port's settings UI in every game,
 game-agnostic, and a game-style menu a pack adds later is an addition, not a
