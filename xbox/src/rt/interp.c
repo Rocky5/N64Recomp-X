@@ -39,6 +39,9 @@
  * registers as a shadow and the TLB instructions through tlb.c (below); cache
  * and sync are no-ops.
  * Anything else stops the game with the instruction named, never a guess.
+ * Loads and stores in KSEG1 reach RDRAM through KSEG0 and, past RDRAM, the
+ * register model (mmio.c): the analyser sends the code that touches the
+ * hardware here for that (romonly.py).
  * There is no decoded-block cache: each instruction is read from RDRAM when
  * it runs, so code an overlay replaces needs no invalidation here.
  *
@@ -261,6 +264,39 @@ static void tlb_op(uint32_t fn) {
 }
 
 /* one instruction; a branch or jump only fills `br` (the caller runs the delay slot) */
+/* a load or store in KSEG1 past RDRAM: the register model (mmio.c), a word
+ * at a time; the narrower ones take their bytes from it big-endian */
+static void mmio(recomp_context* ctx, St* st, uint32_t pc, uint32_t w, uint32_t ea) {
+    uint32_t op = w >> 26, rt = (w >> 16) & 31, a = ea & ~3u, sh = (3 - (ea & 3)) * 8, v;
+    uint64_t t = st->r[rt];
+    if (op >= 40 && op != 49 && op != 55) {   /* the stores */
+        switch (op) {
+        case 40: v = (xrc_mmio_read(a) & ~(0xFFu << sh)) | (((uint32_t)t & 0xFFu) << sh); break;
+        case 41: sh &= 16, v = (xrc_mmio_read(a) & ~(0xFFFFu << sh)) | (((uint32_t)t & 0xFFFFu) << sh); break;
+        case 43: v = (uint32_t)t; break;
+        case 57: v = *fW(ctx, (int)rt); break;
+        case 63: xrc_mmio_write(a, (uint32_t)(t >> 32)), v = (uint32_t)t, a += 4; break;
+        default: stop(st, "Interpreter: a hardware register access it does not model", pc, w);
+        }
+        xrc_mmio_write(a, v);
+        return;
+    }
+    v = xrc_mmio_read(a);
+#define SETR(x) do { if (rt) st->r[rt] = (x); } while (0)
+    switch (op) {
+    case 32: SETR((uint64_t)(int64_t)(int8_t)(v >> sh)); return;
+    case 33: SETR((uint64_t)(int64_t)(int16_t)(v >> (sh & 16))); return;
+    case 35: SETR(SX32(v)); return;
+    case 36: SETR((uint8_t)(v >> sh)); return;
+    case 37: SETR((uint16_t)(v >> (sh & 16))); return;
+    case 39: SETR(v); return;
+    case 49: *fW(ctx, (int)rt) = v; return;
+    case 55: SETR(((uint64_t)v << 32) | xrc_mmio_read(a + 4)); return;
+    }
+#undef SETR
+    stop(st, "Interpreter: a hardware register access it does not model", pc, w);
+}
+
 static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint32_t w, Br* br) {
     uint32_t op = w >> 26, rs = (w >> 21) & 31, rt = (w >> 16) & 31, rd = (w >> 11) & 31, sa = (w >> 6) & 31, fn = w & 63;
     int16_t imm = (int16_t)(w & 0xFFFF);
@@ -269,6 +305,13 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
     uint32_t ea = (uint32_t)s + (uint32_t)(int32_t)imm;
 #define SET(n, v) do { if (n) st->r[n] = (v); } while (0)
 #define TRAP(c) do { if (c) do_break(pc); } while (0)
+    if (op >= 32 && op != 47 && (ea >> 29) == 5) {   /* KSEG1 */
+        if ((ea & 0x1FFFFFFFu) < xrc_rdram_size) ea -= 0x20000000u;   /* RDRAM: the same bytes through KSEG0 */
+        else if (xrc_mmio_is(ea)) {
+            mmio(ctx, st, pc, w, ea);
+            return;
+        }
+    }
     switch (op) {
     case 0:
         switch (fn) {

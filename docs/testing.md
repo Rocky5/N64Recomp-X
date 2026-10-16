@@ -12,6 +12,7 @@ python tools/xbox/test_recomp_h.py      # our recomp.h vs upstream's: x86-64, i6
 python tools/xbox/test_syms.py          # every committed symbol file against the function table's rules
 python tools/xbox/test_scan64.py        # the register-width scan on hand-assembled functions (rabbitizer)
 python tools/xbox/test_time.py          # the counter follows the ACPI clock; nothing else reads the TSC
+python tools/xbox/test_mmio.py          # the RCP register model through the interpreter: KSEG1 RDRAM, PI DMA, SI's PIF block, AI, VI_ORIGIN, the SP task by DMEM, MI, the cartridge, RDRAM past its end
 python tools/xbox/test_interp.py        # the MIPS interpreter: each instruction class vs expected results, 64- and 32-bit registers, the learn log's spans, the TLB (tlb.c, its page-table side recorded)
 python tools/xbox/test_asp_hle.py       # the audio HLE: every command of every ABI vs a reference, SIMD = C, native = word-swapped RDRAM (hash: aspMain, hash2: nead + n_aspMain)
 python tools/xbox/test_xbe_rom.py       # the ROM inside the XBE: xbe_sections' $ROM, found and checked by xhw_rom.c's parser
@@ -210,6 +211,9 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_ROM_CACHE_720P_MB=<n>` | 12 | the same when the boot predicts 720p |
 | `-DXHW_ROM_IN_XBE=0` | 1 | ignore `default.xbe`'s `$ROM` section: the ROM is looked for next to the XBE (the build-side switch is `n64rx build --rom-beside`, which leaves the section out and writes the file) |
 | `-DXRC_TLB=0` | 1 | the TLB's entries are kept (tlbp, tlbr, `osVirtualToPhysical` still see them) but nothing is aliased: a TLB-mapped access faults as before `tlb.c` |
+| `-DXRC_KSEG1=0` | 1 | the window is not aliased at KSEG1 (`mem.c`): a recompiled access to uncached RDRAM (0xA0000000 + x) faults as before (the interpreter still goes through KSEG0) |
+| `-DXRC_MMIO=0` | 1 | no RCP register model (`mmio.c`): no register pages, and the interpreter's KSEG1 accesses past RDRAM fault as before |
+| `N64RX_MMIO_INTERP=0` (env, n64rx) | 1 | the analyser does not send functions with constant hardware addresses to the interpreter (`emit.hw_funcs`): they are recompiled, as before |
 | `-DXRC_NO_MISSING_STUBS=1` | 0 | no weak bodies for the calls nothing provides (`gen/xrc_missing.c`, `more3.c`): such a game fails to link and the link names them |
 | `-DXRC_MISSING_FATAL=1` | 0 | the first call to such a function is the fatal card (default: `[ULTRA] missing <name>` once, returns 0) |
 | `-DXRC_SAFETY_NET=0` | 1 | a call to an address with no function is the fatal card again (no interpreting, no `[LEARN]`, no `learn.txt`) |

@@ -52,6 +52,7 @@ static void vi_thread(void* arg) {
             if (!XRC_VI_RESERVE || valid + 1 + XRC_VI_RESERVE <= count) xu_send(mq, s_msg, 0, 0);
         }
         xu_post_event(OS_EVENT_VI);
+        xrc_mmio_vi();   /* the register pages' status words, for recompiled pollers (../mmio.c) */
         xhw_combo_vi_look(s_retrace);
         if (XHW_TEST_BUILD) {   /* no graphics task for a second: say once what everyone waits on */
             static unsigned s_seen, s_still;

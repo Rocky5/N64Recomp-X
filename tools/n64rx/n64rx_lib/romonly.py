@@ -9,6 +9,7 @@ Without a pack: the title is the header's, the title ID 0x4E52 and a
 save type from SAVE_TYPES (public facts per game code, the emulators'
 kind) or 4 Kbit EEPROM when the game probes for one."""
 import hashlib
+import os
 import pathlib
 import re
 import tomllib
@@ -66,6 +67,10 @@ def make(rom, bdir, base=None, learnt=None):
     # register other than ra, a jump through a register with no table): the
     # runtime's interpreter runs it (xbox/src/rt/interp.c)
     interp = {x: nm[x] for x, f in a.all_funcs().items() if x in live and x != a.entry and f.bad.startswith('jr $')}
+    # code that reaches the RCP's registers through KSEG1: interpreted, onto
+    # the runtime's register model (N64RX_MMIO_INTERP=0: recompiled, as before)
+    if os.environ.get('N64RX_MMIO_INTERP', '1') != '0':
+        interp.update({x: n for x, n in emit.hw_funcs(a, live, nm, replaced).items() if n not in ignored})
     ignored |= set(interp.values())
     (pdir / 'interp.txt').write_text(''.join(f'{n} 0x{x:08X}\n' for x, n in sorted(interp.items())),
                                      encoding='utf-8')

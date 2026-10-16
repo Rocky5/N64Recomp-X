@@ -88,6 +88,20 @@ docs/look/           baseline shots: the loading screen (xemu, STILL); the BACK 
   loads. The runtime's osMapTLB family (`ultra/more2.c`) and the
   interpreter's `tlbwi`/`tlbp`/`tlbr` both write it; `osVirtualToPhysical`
   and `__osProbeTLB` translate through it. Kill switch `-DXRC_TLB=0`.
+- KSEG1 (`mem.c`, `mmio.c`): the window is aliased a second time at
+  `rdram + 0xA0000000` (host P + 0xA0000000), so uncached RDRAM is the same
+  bytes (`-DXRC_KSEG1=0`). Past RDRAM, the RCP's registers, the PIF and the
+  cartridge are a register model: the analyser sends every live function
+  with a constant hardware address that the runtime does not replace to the
+  interpreter (`emit.hw_funcs`), whose KSEG1 loads and stores go to
+  `xrc_mmio_read`/`_write`; writes with an effect go through the runtime's
+  own paths (PI_WR_LEN -> `xu_pi_dma` + the PI event, SI_PIF_ADDR_* ->
+  the PIF in `si.c`, AI_LEN/AI_DACRATE -> `ai.c`, VI_ORIGIN -> the swap,
+  SP DMA into a DMEM/IMEM model and SP_STATUS's clear-halt -> the task at
+  DMEM 0xFC0). Each register block's 4 KB page is also a page of ours
+  aliased at its host address (`xhw_alias_page`), holding the registers, so
+  code still recompiled reads idle values (the VI thread rewrites the
+  status words each retrace; its writes have no effect). `-DXRC_MMIO=0`.
 - `xrc_game` (`gen/xrc_game.c`, written by n64rx): id, title, title ID,
   RDRAM size, entrypoint, register width, the section table, the icon,
   the save size.

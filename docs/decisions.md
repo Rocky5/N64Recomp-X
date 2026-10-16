@@ -534,3 +534,47 @@ The runtime maps the overlay the last PI DMA loaded (the source ROM range
 decides, not the bytes), which is cheap (one pass over the section's
 range) and needs no hashing of RAM. KSEG1 register reads get shadow pages
 rather than per-site patches, so a ROM-only build needs no pack for them.
+
+## Hardware registers through KSEG1 (2026-10-16, agent `mmio`)
+
+**KSEG1 RDRAM is aliased; the RCP's registers are a model the interpreter
+reaches, with register pages as a fallback for recompiled code.** The sweep
+stopped 75 ROM-only games on loads and stores at 0xA4xxxxxx (libultra
+versions the rules did not name, recompiled instead of replaced) and 9 on
+uncached RDRAM. Three options were weighed:
+
+- *Trap the fault and decode the x86 instruction* (heavy: every addressing
+  mode and register of the generated code, in an exception handler, on two
+  triples): not taken.
+- *Map a page at each register block and accept writes with no effect*:
+  cheap, and it stops the faults, but a PI DMA, a PIF block or an audio
+  buffer written to the registers never happens, so the game reads stale
+  memory a little later instead of stopping here. Kept only as the fallback
+  (the pages, below).
+- *Interpret the code that touches the hardware, with a register model*:
+  taken. The analyser already records every constant hardware address a
+  function uses (`features.py`); `emit.hw_funcs` lists the live ones the
+  runtime does not replace and `romonly.py` adds them to `interp.txt`, so
+  the pipeline gives each an interpreter body. The interpreter's loads and
+  stores in KSEG1 go to KSEG0 for RDRAM and to `mmio.c` past it, where a
+  write with an effect calls the runtime's own path (the same code the
+  named libultra functions use), so a raw DMA behaves exactly like a named
+  one. These are small, cold routines (Ogre Battle 64: seven; Mario Kart
+  64, Super Mario 64: none; Pilotwings 64: one, its RSP-hang recovery), so
+  interpreting them costs nothing visible. A function the rules name is
+  still replaced; the safety net's code runs in the same interpreter and so
+  reaches the model too (Dr. Mario 64's PI poll).
+
+KSEG1 RDRAM takes the TLB's page-table aliasing (`xhw_alias.c`): the
+window's frames mapped again at host P + 0xA0000000, so the generated
+code's ordinary load works there with no extra instruction. Past the
+window's size, KSEG1 reads 0 and keeps nothing (an N64 with no Expansion
+Pak; `osGetMemSize`'s probe sees the size the pack gives). Each register
+block's 4 KB page is a page of ours aliased at its host address, so a
+register reached through a pointer the analyser could not follow reads the
+idle machine instead of faulting; the VI thread puts the status words back
+each retrace. The PIF page sits at host P + 0xBFC00000, above the page
+tables, in kernel space the kernel did not map at boot (the sweep's faults
+there show it); if a page cannot be had it is logged and that block faults
+as before. Kill switches: `-DXRC_KSEG1=0`, `-DXRC_MMIO=0`,
+`N64RX_MMIO_INTERP=0`.

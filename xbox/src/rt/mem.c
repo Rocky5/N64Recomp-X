@@ -6,10 +6,13 @@
  * `rdram + (uint32_t)vaddr` lands on RDRAM byte (vaddr - 0x80000000) for every
  * KSEG0 address with no subtraction and no mask. KSEG1 and physical
  * addresses the game hands the runtime (DMA, task pointers) are masked with
- * 0x1FFFFFFF here, as the N64 did; a CPU access the game makes through KSEG1
- * faults and the crash guard names it (the pack's patches fix the site,
- * Zelda64Recomp's way; -DXRC_MEM_MASK=1 masks every access instead). The
- * window is not lazily committed: the game touches all of it.
+ * 0x1FFFFFFF here, as the N64 did. A CPU access the game makes through KSEG1
+ * lands at host P + 0xA0000000 + x: the window's frames are aliased there
+ * too (xhw_alias.c), so uncached RDRAM is the same bytes with no extra
+ * instruction (-DXRC_KSEG1=0: not aliased, such an access faults and the
+ * crash guard names it; -DXRC_MEM_MASK=1 masks every access instead); the
+ * RCP's registers past it are mmio.c's, set up here too. The window is not
+ * lazily committed: the game touches all of it.
  *
  * The boot block (osTvType, osRomBase, osMemSize ...) and the boot segment
  * copy come with the ROM in M1. */
@@ -18,6 +21,10 @@
 
 #include "rt.h"
 #include "xhw.h"
+
+#ifndef XRC_KSEG1
+#define XRC_KSEG1 1
+#endif
 
 uint8_t* xrc_rdram;
 uint8_t* xrc_rdram_host;
@@ -36,6 +43,12 @@ uint32_t xrc_rdram_size;
 #ifndef XRC_HW_SHADOW
 #define XRC_HW_SHADOW 1
 #endif
+/* the register model (mmio.c) maps the same pages, kept current; the
+ * shadow pages stand in only when it is off (-DXRC_MMIO=0) */
+#ifndef XRC_MMIO
+#define XRC_MMIO 1
+#endif
+#define HW_SHADOW (XRC_HW_SHADOW && !XRC_MMIO)
 static const uint32_t k_hw_blocks[] = {0x04000000u, 0x04001000u, 0x04040000u, 0x04100000u, 0x04300000u,
                                        0x04400000u, 0x04500000u, 0x04600000u, 0x04700000u, 0x04800000u};
 #define HW_SHADOW_BYTES (sizeof k_hw_blocks / sizeof k_hw_blocks[0] * 4096u)
@@ -54,7 +67,7 @@ static void hw_shadow(uint8_t* p, uint32_t bytes) {
 
 int xrc_mem_init(uint32_t mb) {
     uint32_t bytes = mb << 20;
-    uint8_t* p = (uint8_t*)xhw_rdram_alloc(bytes + (XRC_HW_SHADOW ? HW_SHADOW_BYTES : 0));
+    uint8_t* p = (uint8_t*)xhw_rdram_alloc(bytes + (HW_SHADOW ? HW_SHADOW_BYTES : 0));
     if (!p) return 0;
     if (((uintptr_t)p & 0x80000000u) == 0) {   /* not the kernel's 0x80000000 + physical mapping */
         xhw_logf("[MEM] rdram at %08x: not in the physical window", (unsigned)(uintptr_t)p);
@@ -65,7 +78,13 @@ int xrc_mem_init(uint32_t mb) {
     xrc_rdram = p - 0x80000000u;
     xhw_logf("[RECOMP] window: %u MB, physical %08x, rdram base %08x", (unsigned)mb,
              (unsigned)((uintptr_t)p & 0x7FFFFFFFu), (unsigned)(uintptr_t)xrc_rdram);
-    if (XRC_HW_SHADOW) hw_shadow(p, bytes);
+    if (HW_SHADOW) hw_shadow(p, bytes);
+#if XRC_KSEG1
+    if (!xhw_alias_map((uint32_t)(uintptr_t)(xrc_rdram + 0xA0000000u), (uint32_t)(uintptr_t)p & 0x7FFFFFFFu, bytes))
+        xhw_logf("[MEM] KSEG1 not aliased (host %08x in use): uncached RDRAM accesses fault",
+                 (unsigned)(uintptr_t)(xrc_rdram + 0xA0000000u));
+#endif
+    xrc_mmio_init();
     return 1;
 }
 

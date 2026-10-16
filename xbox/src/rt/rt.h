@@ -26,6 +26,14 @@ void xrc_tlb_write(unsigned idx, uint32_t mask, uint32_t hi, uint32_t lo0, uint3
 void xrc_tlb_read(unsigned idx, uint32_t* mask, uint32_t* hi, uint32_t* lo0, uint32_t* lo1);
 uint32_t xrc_tlb_probe(uint32_t hi);
 uint32_t xrc_tlb_to_phys(uint32_t vaddr);
+
+/* mmio.c: the RCP's registers, the PIF and the cartridge through KSEG1, for
+ * the interpreter (xrc_mmio_is: KSEG1 past RDRAM; -DXRC_MMIO=0: never) */
+void xrc_mmio_init(void);
+void xrc_mmio_vi(void);
+int xrc_mmio_is(uint32_t vaddr);
+uint32_t xrc_mmio_read(uint32_t vaddr);
+void xrc_mmio_write(uint32_t vaddr, uint32_t v);
 /* a 32-bit word of the image as the game sees it (words are native) */
 static inline uint32_t xrc_word(uint32_t vram) { return *(uint32_t*)(xrc_rdram + (vram & 0x1FFFFFFFu) + 0x80000000u); }
 
