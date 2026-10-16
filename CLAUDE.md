@@ -46,6 +46,14 @@ evidence. Read both before writing code.
   `doctor` explains or installs the native toolchain; every error says what
   to do next; the README's three steps are tested on a fresh machine per OS
   before a release.
+- **Up to 720p and widescreen for every game** (`docs/PLAN.md` §5.4): the
+  video rules, the 16:9 mapping (generic hor+, the 4:3 box) and the modes
+  live in the platform layer and the interpreter; only the culling fix is per
+  game. 1080i is not offered.
+- **BACK opens the port's settings menu in every game** (`docs/PLAN.md`
+  §5.2): drawn by the platform over the frozen game, game-agnostic, never
+  dependent on a per-game patch; a game-style menu a pack adds later is an
+  addition, not a replacement.
 - **xemu is not hardware.** Timing, audio, memory pressure, HDD latency and
   GPU ordering are judged on a real Xbox; say when a result is emulator-only.
 - **Branches:** work on `dev`; `main` is for releases. Subagents do not run

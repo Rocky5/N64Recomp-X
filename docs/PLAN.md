@@ -48,6 +48,8 @@ Zelda64Recomp: `us.rev1.toml`, `patches.toml`, `patches/Makefile`.
 | N64 | VR4300 93.75 MHz (MIPS III, 64-bit registers, O32 code), RSP 62.5 MHz (8-lane 16-bit vector unit), 4 MB RDRAM (8 with the Expansion Pak), VI 60 Hz, cart reads at a few MB/s | public hardware facts |
 | Platform layer | Wings64-X `xbox/src/hw` (25 C files: boot, splash, video, pad, AC97, clock, RAM lock, crash/hang reporters, profiler, fbdump, autopad, NV2A back end, N64 combiner compiler, `asp_hle.c`), `xbox/src/game/ultra/os_shim.c` (kernel-thread libultra shim), `xbox/src/gfx/f3d_interp.c` (Fast3D on the CPU); Melee-X `xhw_reserve_lazy`/`xhw_commit`/crash-guard commit-on-fault; Snap64-X's F3DEX2 interpreter design | the sibling trees at Melee-X `abdfd0f`, OpenCrossing `e6be908`, Wings64-X `83f1258`, wings64-dc `0c384bd`, Snap64-X `43e3803` |
 | Maintainer requirement (2026-10-16) | **the tool works on Windows, macOS and Linux and is really easy to use** | this session |
+| Maintainer requirement (2026-10-16) | **up to 720p, and widescreen, for every game** (§5.4) | this session |
+| Maintainer requirement (2026-10-16) | **a BACK-button menu over the running game that controls the port's settings, game-agnostic** (§5.2) | this session |
 
 ---
 
@@ -132,6 +134,7 @@ The headline facts that shape everything else:
 | the generated code is compiled by us | the game triple, ThinLTO, `-fno-strict-aliasing`, and a per-section output grouping are build decisions, not recompiler changes; a recompiler fork is only needed for codegen changes that M3 proves worthwhile (§3.2) |
 | the Xbox kernel loads XBE sections on demand and `cxbe` preloads all of them | one post-link bit per section turns an overlay's code into a demand-loaded section; no loader of our own (§3.4) |
 | the tool must be easy on three OSes | Docker image first (identical everywhere, Apple Silicon included through a multi-arch image), native toolchains second, a `doctor` command, per-OS single-file binaries of the CLI, a tri-OS CI matrix (§5.1, §6 M0, M7) |
+| 720p, widescreen and a BACK menu are goals for every game, not per-game features | the video rules, the 16:9 mapping and the settings menu live in the platform layer and the interpreter; the only per-game piece is the culling fix that stops edge pop-in with hor+ (§5.2, §5.4); 1080i is not offered |
 
 ---
 
@@ -178,7 +181,7 @@ xbox/src/rt/   (game triple)  the runtime: ultra/ (the <name>_recomp entry point
                               events, timers, time, VI, SP, DP, AI, PI, SI, EEPROM/SRAM/Flash, PFS, motor),
                               mem.c (window, boot block, fault policy), pi.c (ROM resident or page cache, PI manager),
                               ovl.c (sections, two-level vram table, XeLoadSection), save.c, vi.c, sp.c, pad.c,
-                              settings.c, settings_menu.c (the port panel), hooks.c (recomp_trigger_event, host hooks)
+                              settings.c, settings_menu.c (the BACK menu), hooks.c (recomp_trigger_event, host hooks)
 xbox/src/gfx/  (game triple)  ucode registry (text hashes -> family), f3d_interp.c (table-driven: F3D, F3DEX, F3DEX2,
                               F3DZEX2, L3DEX2, S2DEX/S2DEX2), tmem.c, texconv.c, vi_map.c (VI mode -> content rect)
 xbox/include/xhw.h, xgfx.h, xrom.h   the only structs crossing the triples: 32-bit scalars, floats, byte arrays
@@ -458,12 +461,24 @@ recompiled game -> OSTask (M_GFXTASK) -> ucode registry: hash(ucode text) -> fam
   uploaded over the frame, Wings64-X's snow). Depth-image reads (lens of
   truth) are the known hard case: Z24 → the N64's 16-bit encoding on
   readback, measured when a game needs it.
-- **Widescreen**: `[video] hor_plus = false` by default for every pack. On,
-  perspective projection loads are widened by 3/4 on x (the siblings' trick);
-  because the game's culling is 4:3, a pack turns it on only with its culling
-  patch (Wings64-X 030/050, Snap64Recomp's cull patch as knowledge). Off at
-  16:9 output means a centred 4:3 rect with black bars; a "Stretch" value
-  exists for users who want it.
+- **Widescreen** (a goal for every game, maintainer 2026-10-16; §5.4): three
+  generic pieces and one per-game piece. Generic: (1) a perspective
+  projection load (`G_MTX` with the projection flag, a matrix that derives w
+  from z) is widened by 3/4 on its x column, so the vertical field of view is
+  unchanged and more world is visible at the sides; orthographic loads
+  (menus, HUD) are left alone; (2) the viewport and scissor follow the
+  content rect, and 2D drawn under an orthographic projection or by
+  `TEXRECT`/`FILLRECT` lands in a centred 4:3 box unless it spans the N64
+  frame (fades, backdrops, letterbox bars), which stretches to the edges;
+  (3) the trivial-reject bounds scale with the drawn width (Wings64-X
+  `XGFX_REJECT_RATIO`). Per game: the game's own object culling is 4:3, so
+  objects can pop at the edges until the pack brings a culling patch
+  (Wings64-X 030/050, Snap64Recomp's cull patch as knowledge), recorded as
+  `cull_patch = true`. The menu's row offers Auto (hor+ at 16:9 output; the
+  dashboard's flag at 480, anamorphic), On, Off (centred 4:3 with black
+  bars) and Stretch. A pack whose projections the detection gets wrong sets
+  `widescreen = "off"` as its default and says why in its README. Kill
+  switches `-DXGFX_HORPLUS=0`, `-DXGFX_HUD_BOX=0`.
 - **Frame rate**: the game's own. No interpolation, no decoupling at the
   framework level; a pack may patch a draw interval the way Snap64-X's plan
   does, per game.
@@ -511,7 +526,7 @@ X → B, Y/B/White/Black and the right stick → C buttons, triggers → Z and R
 L unbound), remappable per port in `settings.ini` and in the panel's Buttons
 page; rumble through the Rumble Pak emulation; `L + R + BACK + BLACK` quits,
 `L + R + BACK + WHITE` restarts, in every state (the VI thread checks when
-the game stops reading). BACK opens the port panel (§5.2). A pack can ship
+the game stops reading). BACK opens the port's settings menu (§5.2). A pack can ship
 its own default layout (`[input] layout = ...`) for games whose buttons mean
 something else.
 
@@ -538,8 +553,9 @@ the cache at its floor. Class C is 480 first and 720p only if `[MEMB]` on the
 console shows it; it is the stretch milestone for that reason, not only for
 CPU time. `xhw_ramlock.c` holds everything above 64 MB on a 128 MB console
 (kill switch `-DXHW_RAM_LOCK64=0`); `xhw_mem_free_kb()` gates 720p (32 MB
-free rule) before `pb_init`; 1080i stays off by default (Wings64-X's console
-run 15: it works and the frame-rate cost is too high).
+free rule) before `pb_init`; 720p is the top mode (§5.4) and 1080i is not
+offered (Wings64-X's console run 15: it works and the frame-rate cost is too
+high).
 
 ### 3.11 Performance model (a hypothesis until M3)
 
@@ -642,9 +658,11 @@ audio = "hle"                  # hle | recomp
 type = "eep4k"                 # eep4k | eep16k | sram | flash | none
 mempak = false
 [video]
-hor_plus = false
+widescreen = "auto"            # auto (generic hor+ at 16:9 output) | off (the pack found the detection wrong)
+cull_patch = false             # true once patches/ widens the game's own culling (no edge pop-in)
 fb_readback = false
 fb_cpu_write = false
+pause = "retrace"              # retrace (the BACK menu freezes the game by holding the retrace) | none
 [input]
 layout = "default"
 [status]
@@ -778,24 +796,31 @@ The maintainer's requirement of 2026-10-16. What "really easy" means here:
 - A GUI (a window with a drop target and a log) is §8 Q4; the CLI's functions
   are a library so one can be added without touching the pipeline.
 
-### 5.2 The port panel and `settings.ini`
+### 5.2 The BACK menu: the port's settings, game-agnostic
 
-The siblings put their settings in the game's own menus; a framework cannot,
-until a pack brings a MIPS-C patch for it (Zelda64Recomp's menu is likewise
-the port's, not the game's). So, by default, **the port panel**: opened with
-BACK at any time, drawn by the platform over the frozen frame in the splash's
-dress (navy, unscii-16 at 2x, Melee-X's menu semantics: `*` rows need a
-restart, "480p -> 480i" when the dashboard disallows, held-direction repeat
-by retrace count, A keeps, B cancels). While it is open the VI thread stops
-posting retrace messages, so the game waits where it would wait for the
-retrace, and the audio ring drains to silence (`DIVERGES`: a pause the N64
-did not have; packs whose game does not block on the retrace list
-`pause = "none"`). Rows:
+Maintainer decision (2026-10-16): **BACK opens a menu over the running game
+that controls the port's settings, in every game, with no per-game work.**
+The siblings put their settings in the game's own menus, which takes the
+decomp or a MIPS-C patch per game; here the menu is the platform's
+(Zelda64Recomp's menu is likewise the port's, not the game's), so a pack gets
+it the day it boots. It is drawn by the platform (`xhw_overlay.c`'s
+successor, `settings_menu.c` in `xbox/src/rt`) over the frozen frame in the
+splash's dress: a navy panel, unscii-16 at 2x (the splash's own font), and
+Melee-X's menu semantics (`*` rows need a restart, "720p -> 480i" when the
+dashboard disallows, held-direction repeat by retrace count, A keeps, B
+cancels, the stick's live readout on the dead-zone row). While it is open the
+VI thread stops posting retrace messages, so the game waits where it would
+wait for the retrace; controller reads return neutral; the audio ring drains
+to silence (`DIVERGES`: a pause the N64 did not have). A game that does not
+block on the retrace keeps running underneath; the menu still works and the
+pack says `pause = "none"`. BACK on any port opens it and closes it; a pack
+can move the opener (BACK + START) for a game that uses BACK's position for
+something else. Rows:
 
 | row | values | applies | key |
 |---|---|---|---|
-| Video output | Auto, 480i, 480p, 720p (1080i when built with it) | `*` | `[video] output`, `progressive` |
-| Widescreen | Off, On (hor+, where the pack allows), Stretch; shown with the dashboard's flag | at once | `[video] widescreen` |
+| Video output | Auto, 480i, 480p, 720p; shown as "Auto, 720p" / "720p -> 480i" when the dashboard disallows | `*` | `[video] output`, `progressive` |
+| Widescreen | Auto, On, Off, Stretch (§5.4); shown as "Auto, 16:9" / "Auto, 4:3" | at once | `[video] widescreen` |
 | Texture filter | N64 (bilinear), Sharp | at once | `[video] texture_filter` |
 | FPS counter | On, Off | at once | `[video] fps` |
 | Volume | 0-100 | at once | `[audio] volume` |
@@ -804,13 +829,18 @@ did not have; packs whose game does not block on the retrace list
 | Rumble | On, Off | at once | `[input] rumble` |
 | Save slot | 1-4 (the image file swapped at boot) | `*` | `[save] slot` |
 | Screenshots (BACK+WHITE) | On, Off; test builds | at once | `[system] screenshots` |
-| Save and restart / Return | | | |
+| Restart | relaunches the XBE (`xhw_reboot_self`); also the "Save and restart" of a changed `*` row | | |
+| Exit to dashboard | writes `lastexit.txt`, quits (`xhw_quit_to_dashboard`) | | |
+| Return | saves `settings.ini` when something changed (B too) | | |
 
 Stored per game in `E:\UDATA\<title id>\settings.ini` (Melee-X `settings.c`:
 defaults written on first boot, atomic replace, unknown keys dropped). BACK
-held at boot = safe video (480i 4:3, saved). A pack that ships a game-style
-menu (M-later, per game) sets `panel = "game"` and the platform panel stays
-reachable with BACK+START for the rows the game menu lacks.
+held at boot = safe video (480i 4:3, saved). The menu is the same in every
+pack, which is the point: a user who learnt it in one game knows it in all of
+them. A pack that later adds a game-style menu through a MIPS-C patch adds
+it; the BACK menu stays as it is, never replaced, so the port's settings are
+reachable the same way everywhere. Kill switch `-DXRC_MENU=0` (the ini still
+works).
 
 ### 5.3 The game ladder
 
@@ -825,6 +855,40 @@ Which games, in what order, and why (facts and "verify" marks in
 | **G3** (stretch) | Majora's Mask (`NZSE`) | C | 8 MB RAM, 17,765 functions, 617 sections, two RSP microcodes (`naudio` + the JPEG decoder) → the `recomp` audio path and the vector unit; the memory budget's edge |
 | open | Pokémon Snap | A | Snap64-X plans it from the decomp; §8 Q2 asks whether Snap moves here instead (F3DEX2 + L3DEX2 and the readbacks are the same work either way; recomp costs speed, decomp costs the asset pipeline and a licence-free vendoring) |
 | later | Banjo-Kazooie, DK64, Kirby 64, Paper Mario, Goemon, Harvest Moon 64 | A/B/C | each has a recomp or a decomp; custom microcodes (Rare) need interpreter tables and the `recomp` audio path |
+
+### 5.4 Up to 720p, and widescreen
+
+Maintainer decision (2026-10-16): **up to 720p, and widescreen, for every
+game.** Wings64-X's video rules, with 1080i left out (its console run 15
+measured the mode as working and too slow for the frame rate; nothing here
+changes that trade, and the memory of §3.10 is better spent on the ROM cache
+and the texture pool).
+
+| tier | framebuffer | aspect | when |
+|---|---|---|---|
+| 480i | 640x480x32 + Z24S8 | 4:3, or 16:9 anamorphic when Widescreen is On | always available; the safe mode (BACK held at boot) |
+| 480p | same | same | HDTV/VGA pack, the dashboard's 480p flag, NTSC |
+| **720p** | 1280x720 R5G6B5 + Z24S8 | 16:9 | HDTV/VGA pack, the dashboard's 720p flag, ≥ 32 MB free before `pb_init`; **Auto's choice where allowed** |
+
+Defaults: `output = auto` (720p where the dashboard allows it, else 480p,
+else 480i) and `widescreen = auto`. The three nets from Wings64-X §3.3 apply
+unchanged: BACK held at boot (480i 4:3, saved), a `pb_init` or allocation
+failure falls to 480, and a mode not yet confirmed on this console is on
+probation (`video_pending.txt`, "New video mode 720p. Press A to keep it.",
+15 s, restart into 480i otherwise). The N64's picture, whatever the VI mode
+says (320x240, 640x480 interlaced, letterboxed modes, `osViSetXScale`), maps
+onto the content rect: all of 640x480 at 4:3, all of 1280x720 with hor+, a
+centred 960x720 box with black bars when Widescreen is Off, the whole frame
+with Stretch. What widescreen does mechanically is §3.7: the projection
+widened by 3/4 for 3D, 2D in the 4:3 box, full-frame 2D stretched, the
+trivial reject following the width, and the one per-game piece, the culling
+patch, without which objects pop at the edges. Cost at 720p is the budget of
+§3.10 (frame buffers 9.1 MB, texture pool 6 MB) and fill rate, measured per
+pack on the console with `[PERF]`; a pack that cannot hold its rate at 720p
+says so in its README and the menu still offers the mode and the 480p
+alternative. Order of work in a pack: Off and Stretch cost nothing; Auto is
+right for most 3D on the first day; edge pop-in is the listed defect until
+the culling patch lands.
 
 ---
 
@@ -878,15 +942,22 @@ through `console.py`/`n64rx deploy`, logs pulled before every relaunch.
 ### M2: Pilotwings 64 complete on the recompiled path
 - **Goal**: title, menus, every vehicle, results, the album, EEPROM saves
   moving both ways with Wings64-X's `.eep`, audio through `asp_hle`,
-  controllers and combos, the port panel's file-only settings; 480 and 720p;
-  the console boots it.
-- **Files**: `xbox/src/rt/{save.c,pad.c,settings.c}`, the AI path, the
-  `ASP_HLE_SEGMENTS 1` mode of `asp_hle.c`, `xhw_rom.c`'s known table from
-  the pack, `games/pw64/README.md`; the first `[[patches.instruction]]`
-  entries with reasons.
+  controllers and combos; **the BACK menu** with its first rows (Video
+  output, Widescreen, FPS counter, Volume, Stick dead zone, Restart, Exit to
+  dashboard, Return) and `settings.ini`; 480i, 480p and **720p with
+  widescreen Auto** (generic hor+, the 4:3 box); the console boots it.
+- **Files**: `xbox/src/rt/{save.c,pad.c,settings.c,settings_menu.c,
+  widescreen.c}`, `xhw_overlay.c`, `xhw_video.c` as Wings64-X's (480/720p,
+  fallback), the AI path, the `ASP_HLE_SEGMENTS 1` mode of `asp_hle.c`,
+  `xhw_rom.c`'s known table from the pack, `games/pw64/README.md`; the first
+  `[[patches.instruction]]` entries with reasons.
 - **Done when**: Wings64-X's xemu scenarios (`title`, `rb_a`, the attract
-  demos) run on this build with the same shots; console: the maintainer flies
-  a mission with sound; a 30-minute soak logs no underrun, crash or hang.
+  demos) run on this build with the same shots; BACK opens and closes the
+  menu in flight with the game frozen underneath and silent, and a row
+  changed in it is in `settings.ini` after Return; 720p shots show more world
+  at the sides with the HUD box undistorted, Off shows the centred 4:3 box;
+  console: the maintainer flies a mission with sound at 720p; a 30-minute
+  soak logs no underrun, crash or hang.
 
 ### M3: the measurement gate (A/B against Wings64-X)
 - **Goal**: the translation factor T (§3.11) on the console, per `[PERF]`
@@ -928,15 +999,21 @@ through `console.py`/`n64rx deploy`, logs pulled before every relaunch.
   for comparison; a DVD-R boot of the folder is tried once and its stall
   numbers recorded.
 
-### M6: video, widescreen, the panel, hardening
-- **Goal**: 480i/480p/720p rules with confirm-or-revert (Wings64-X's net),
-  the port panel complete (§5.2) with per-port buttons and dead zones, hor+
-  where packs allow it, the save-slot swap, `[MEMB]` flat over two hours on
-  every pack, 128 MB consoles as 64, CPU-upgraded consoles (`[CLOCK]`).
-- **Files**: `settings_menu.c`, `xhw_video.c` as Wings64-X's, `widescreen.c`,
-  `docs/platform.md`, `docs/testing.md` switch table.
+### M6: video, widescreen, the menu complete, hardening
+- **Goal**: confirm-or-revert for 720p (Wings64-X's third net), the BACK
+  menu complete (§5.2: the per-port Buttons sub-page, Rumble, Texture
+  filter, Save slot, Screenshots), the culling patches for the packs that
+  exist so hor+ has no edge pop-in there (`cull_patch = true`), the
+  save-slot swap, `[MEMB]` flat over two hours on every pack at 720p, 128 MB
+  consoles as 64, CPU-upgraded consoles (`[CLOCK]`).
+- **Files**: `settings_menu.c`, `xhw_video.c` (probation), `widescreen.c`,
+  `games/*/patches/cull*.c`, `docs/platform.md`, `docs/testing.md` switch
+  table.
 - **Done when**: the Wings64-X video scenarios pass per pack in xemu and on
-  red; gold shows "720p -> 480i"; two burn-ins per pack clean.
+  red (each mode photographed; Auto -> Off at once; set 720p then press
+  nothing -> 480i after 15 s and the ini reads 480i); gold shows
+  "720p -> 480i" and boots 480i; the Buttons sub-page captures on a Duke and
+  a Controller S; two burn-ins per pack clean.
 
 ### M7: the tool, packaging, release
 - **Goal**: `n64rx` as shipped: single-file binaries for Windows, macOS
@@ -1027,14 +1104,17 @@ Hard problems named as such, so nobody is surprised by them:
 8. **The recompiler fork**: patches under `patches/recomp/` applied to the
    submodule (the plan's default) or a fork repo `TechProGabe/N64Recomp`?
    Upstream's CONTRIBUTING should be read before anything is sent back.
-9. **The port panel** as the default settings UI (§5.2), with game-style
-   menus per pack later: acceptable, given the siblings' rule?
-10. **1080i**: stays off (Wings64-X's finding) or offered per pack?
-11. **Test hardware**: red and gold as for the siblings; is a 128 MB or a
-    CPU-upgraded console available for R14; is there a DVD-R user to test the
-    disc path?
-12. **Controller Pak**: emulate a 32 KB pak per port by default (ghost data in
+9. **Test hardware**: red and gold as for the siblings; is a 128 MB or a
+   CPU-upgraded console available for R14; is there a DVD-R user to test the
+   disc path?
+10. **Controller Pak**: emulate a 32 KB pak per port by default (ghost data in
     MK64, some saves) or only where a pack asks?
+
+Decided on 2026-10-16 and no longer open: the tool runs on Windows, macOS and
+Linux with one command (§5.1); up to 720p and widescreen for every game, 1080i
+not offered (§5.4); the BACK menu is the port's settings UI in every game,
+game-agnostic, and a game-style menu a pack adds later is an addition, not a
+replacement (§5.2).
 
 ---
 
@@ -1087,7 +1167,11 @@ Paste this to start the build, and again after every context reset.
 > and be really easy to use: every error message says what to do next, the
 > Docker engine gives identical results everywhere, `doctor` installs or
 > explains the native toolchain, and the README's three steps are tested on a
-> fresh machine per OS before a release. Port code is MIT.
+> fresh machine per OS before a release. Up to 720p and widescreen are goals
+> for every pack (§5.4) and the port's settings are the game-agnostic BACK
+> menu drawn by the platform over the frozen game (§5.2): both live in the
+> platform layer and the interpreter, never in per-game code, with only the
+> culling fix per game; 1080i is not offered. Port code is MIT.
 >
 > xemu is for crashes and pictures only; timing, audio, memory headroom,
 > HDD latency and GPU ordering are judged on a real Xbox, and you say when a
