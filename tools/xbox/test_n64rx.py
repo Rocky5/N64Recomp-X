@@ -94,6 +94,27 @@ class Rom(unittest.TestCase):
                 romlib.read(pathlib.Path(tmp) / 'missing.z64')
             self.assertIn('n64rx build', e.exception.hint)
 
+    def test_shift_jis_title(self):
+        z = bytearray(synthetic())
+        z[0x20:0x34] = b'\x83}\x83\x8a\x83I 64'.ljust(20, b' ')   # a Japanese cart's name
+        self.assertEqual(romlib.parse('x.z64', bytes(z)).title, '} I 64')
+        z[0x20:0x34] = bytes([0x83, 0x8A] * 10)
+        self.assertEqual(romlib.parse('x.z64', bytes(z)).title, 'N64 game NZZE')
+
+    def test_generated_c_fixups(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gen = pathlib.Path(tmp)
+            (gen / 'funcs.h').write_text('void func_80000400(uint8_t* rdram, recomp_context* ctx);\n')
+            (gen / 'funcs_0.c').write_text('    0 = MEM_W(ctx->r4, 0X0);\n    ctx->r2 = 0;\n'
+                                           '    func_80000400(rdram, ctx);\n    __osSpSetStatus_recomp(rdram, ctx);\n')
+            self.assertEqual(pipeline.fix_zero_dest(gen), 1)
+            self.assertIn('    (void)(MEM_W(ctx->r4, 0X0));\n    ctx->r2 = 0;', (gen / 'funcs_0.c').read_text())
+            self.assertEqual(pipeline.write_extern_h(gen), ['__osSpSetStatus_recomp'])
+            m = (gen / 'xrc_missing.c').read_text()
+            self.assertIn('__attribute__((weak)) void __osSpSetStatus_recomp(', m)
+            self.assertIn('xrc_missing("__osSpSetStatus_recomp", rdram, ctx)', m)
+            self.assertNotIn('func_80000400', m)
+
     def test_test_rom_is_deterministic(self):
         _, data, _ = make_test_rom.build()
         r = romlib.parse('test.z64', data)

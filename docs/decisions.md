@@ -376,3 +376,37 @@ state stays in Fast3D's terms.
 **CI textures came with the F3DEX work.** Mario Kart 64's textures are
 mostly CI4/CI8 (Pilotwings 64 used none): G_LOADTLUT and a TLUT path in
 texconv.c, the palette in the texture cache key.
+
+## The sweep and what it fixed (2026-10-16, `tools/xbox/sweep.py`, agent `breadth`)
+
+**Calls nothing provides link as weak bodies** (`pipeline.py`
+`write_missing_c`, `xbox/src/rt/ultra/more3.c`). N64Recomp renames every
+function of its built-in *ignored* list (libultra internals: `__osSpSetStatus`,
+`__osEnqueueAndYield`, the TLB and CP0 helpers, IDO's 64-bit conversions)
+to `<name>_recomp` and emits no body; the analyser stops its reachability
+there too. A game whose own code calls one failed to link: 78 of 246 games
+in the first sweep. n64rx now writes `gen/xrc_missing.c`, a weak body per
+called-but-undeclared name that logs `[ULTRA] missing <name>` once and
+returns 0; a strong body (the runtime's, a pack's, another agent's
+`more2.c`) replaces it at the link (the game side is linked as objects, not
+an archive, so the weak body never hides one). The common ones got real
+bodies in `more3.c` (the RSP status register as a halted RSP with "task
+done" up, the CP0 compare and VI context writes ignored, the signed 64-bit
+conversions). Switches: `-DXRC_NO_MISSING_STUBS=1` (the old link errors),
+`-DXRC_MISSING_FATAL=1` (a card at the first call).
+
+**A load into `$zero`** comes out of the pinned N64Recomp as
+`0 = MEM_W(...);`, which C rejects (Mace and two other games). n64rx rewrites it to
+`(void)(MEM_W(...));` after the recompile: the read happens (it may be a
+probe), the result is dropped, as on the CPU. No change to `tools/recomp/`.
+
+**`floor.*`/`ceil.*`**: the generator calls libm's `floorf`/`ceilf`/`floor`/
+`ceil`, which `recomp.h` did not declare (Jet Force Gemini). They map to
+`__builtin_*` (pdclib's, the interpreter's already).
+
+**Titles**: the header's name is its printable ASCII (Shift-JIS titles
+broke n64rx's own output on a cp1252 console: a traceback); all-Japanese
+headers become "N64 game <code>". cxbe's title passes CMake's post-build
+shell line unquoted, so an apostrophe ("Cruis'n USA", "Majora's Mask")
+broke the link step; it gets a safe subset and `xbe_sections.py` writes the
+real title afterwards.

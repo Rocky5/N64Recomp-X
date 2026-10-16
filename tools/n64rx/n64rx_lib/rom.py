@@ -63,8 +63,11 @@ def parse(path, data):
     if len(z64) < 0x100000:
         raise N64rxError(f'This ROM is too small to be a game ({len(z64)} bytes).',
                          'Dump the cartridge again or use another copy.')
-    title = z64[0x20:0x34].decode('ascii', 'replace').rstrip(' \0') or '(no title)'
     code = z64[0x3B:0x3F].decode('ascii', 'replace')
+    # the header's name is ASCII, or Shift-JIS on Japanese carts: its ASCII part
+    # (the XBE title, the folder name and the console's text are ASCII)
+    title = ' '.join(''.join(chr(b) if 32 <= b < 127 else ' ' for b in z64[0x20:0x34]).split()) \
+        or f'N64 game {code}'
     return Rom(path=pathlib.Path(path), data=z64, order=order, sha1=hashlib.sha1(z64).hexdigest(), title=title,
                code=code, version=z64[0x3F])
 

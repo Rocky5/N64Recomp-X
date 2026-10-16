@@ -438,3 +438,35 @@ microcode was never logged and its resampler table never searched.
   back in races (particles or their depth; `docs/renderer.md` gaps).
 - `[MEM]`/`[CLOCK]`: unchanged by this work (no allocation added; the
   vertex buffer grew from 16 to 80 entries, ~3 KB of BSS).
+
+### The sweep: every ROM in the library (2026-10-16, branch `agent/breadth`)
+
+**Done.** `tools/xbox/sweep.py` builds every ROM in a folder (one per game,
+5 at a time, a timeout each) and boots each XBE in xemu (`--run`); results
+stay in `build-host/sweep/<tag>/` (`docs/testing.md`). Fixed what was not
+the analyser's: weak bodies for libultra internals nothing provides
+(`gen/xrc_missing.c` -> `xbox/src/rt/ultra/more3.c`, which also has real
+`__osSpSet/GetStatus`, `__osSetCompare`, `__osViSwapContext`, the signed
+64-bit conversions), loads into `$zero` rewritten after the recompile,
+`floorf`/`ceilf` in `recomp.h`, ASCII titles from Shift-JIS headers, an
+apostrophe in the title breaking cxbe's post-build line, n64rx's output on a
+cp1252 pipe (`docs/decisions.md`).
+
+**Verified how.** Two sweeps of 246 games: XBE built 54 -> 143, link
+failures 78 -> 0 (table in `docs/analyzer.md`). `--run 45` over the 143 in
+xemu (slot 11): 17 present frames, 75 stop on RCP register access through
+KSEG1, 23 on a TLB-mapped address. Host tests: `test_n64rx.py` (new: the
+Shift-JIS title, the `$zero` fixup, the weak bodies), `test_recomp_h.py`.
+
+**Not verified.** No console run. xemu only, and no game judged beyond
+"frames presented". The weak bodies' runtime path (`[ULTRA] missing`) never
+fired in the 45 s runs; `__osEnqueueAndYield` (66 games) waits for the
+`tlb` agent's body.
+
+**Gaps carried on.** For the analyser: 71 entry-code and 14 boot-segment
+refusals, 12 function-bounds compile errors, 5 entry points jumping into SP
+IMEM, 1 `mtc0 EPC`; unnamed libultra versions that touch the RCP registers
+(75 runtime stops). For `tlb`: 23 KUSEG stops. Next: name more libultra
+versions (`osCartRomInit`, the raw PI/SI/SP I/O) or trap KSEG1 registers.
+`[MEM]`/`[CLOCK]` (xemu, Ogre Battle 64): 64 MB console, 34368 KB free after
+nv2a with a 40 MB ROM on the page cache; cpu 734 MHz (ACPI), TSC unused.

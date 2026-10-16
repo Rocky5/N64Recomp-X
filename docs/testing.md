@@ -58,6 +58,33 @@ card's second number is the host return address (`tools/xbox/sym.py --map
 <folder>/debug/n64recomp_x.map 0x...` names the recompiled caller).
 `[INTERP]` lines name the hand-written routines that run interpreted.
 
+## The sweep: every ROM in a folder (`tools/xbox/sweep.py`)
+
+```sh
+export N64RX_RECOMP=<checkout>/build-host/recomp            # one N64Recomp for every worktree
+python tools/xbox/sweep.py "<ROM folder>" --list            # which file stands for each game
+python tools/xbox/sweep.py "<ROM folder>" --tag s2 --jobs 5 # n64rx build --fast over all of them
+python tools/xbox/sweep.py "<ROM folder>" --tag s2 --only "NKTE|Mario"   # some again (code or file name)
+. /c/xemu/nrx-env<N>.sh                                     # your xemu slot
+python tools/xbox/sweep.py "<ROM folder>" --tag s2 --run 45 # boot each XBE that built
+```
+
+One ROM per game (the game code without its region letter): `[!]` first,
+then USA, Europe, Japan; `[b]`, `[h]`, `[t]`, `[o]`, `[f]`, betas, hacks
+and kiosks are skipped. Each build gets a timeout (`--timeout`, 1500 s).
+`build-host/sweep/<tag>/` (never tracked) gets `results.json`, `table.md`
+(stage counts, categories, one row per game with the first error line),
+`logs/<code>.txt` (n64rx's output; the tool's own log is still
+`build-xbox/<id>/n64rx.log`), `out/<code>/` (the folders), `run/<code>.txt`
+(the serial log's interesting lines and tail). A second run resumes:
+games already in `results.json` are skipped unless `--redo`; `--rescan`
+reads the logs again (new categories without rebuilding). Stages:
+analyse, recompile, compile, link, xbe; `--run` adds what the boot reached
+(crash with its address, fatal card, frames presented, `[LEARN]` lines,
+`[ULTRA] missing` names, the graphics microcode) and stops a boot early at
+a crash, a card or 30 s of beats. xemu is not hardware: a run says where
+a game stops in xemu, nothing about timing.
+
 ## The learning loop (`docs/analyzer.md`)
 
 ```sh
@@ -149,6 +176,8 @@ Controller Pak screen, its pages free).
 | `-DXRC_ROM_CACHE_MB=<n>` | 16 | the page cache's cap (chunks held, pins included) |
 | `-DXRC_ROM_CACHE_720P_MB=<n>` | 12 | the same when the boot predicts 720p |
 | `-DXHW_ROM_IN_XBE=0` | 1 | ignore `default.xbe`'s `$ROM` section: the ROM is looked for next to the XBE (the build-side switch is `n64rx build --rom-beside`, which leaves the section out and writes the file) |
+| `-DXRC_NO_MISSING_STUBS=1` | 0 | no weak bodies for the calls nothing provides (`gen/xrc_missing.c`, `more3.c`): such a game fails to link and the link names them |
+| `-DXRC_MISSING_FATAL=1` | 0 | the first call to such a function is the fatal card (default: `[ULTRA] missing <name>` once, returns 0) |
 | `-DXRC_SAFETY_NET=0` | 1 | a call to an address with no function is the fatal card again (no interpreting, no `[LEARN]`, no `learn.txt`) |
 | `N64RX_WITHHOLD=<vram>,...` (env, n64rx) | unset | test: those functions left out of the analysis, so the safety net runs them (the learning loop's demo) |
 | `-DXRC_SAVE_PAK=0` | 1 | no pak in any port: the PIF's status says none, pak commands get no answer, osPfs* return `PFS_ERR_NOPACK` (the old behaviour) |
