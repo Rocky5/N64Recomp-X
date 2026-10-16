@@ -93,6 +93,48 @@ every family.
 | Mario Kart 64 | F3DEX 0.95 (F3D_OLD) | the title, game/player/map select, a Luigi Raceway race driven with A held (HUD, karts, track, items, the course map), `scenarios/mk64_race`; no texture misses, no unhandled commands. At 720p 16:9 (`scenarios/mk64_hd`, Widescreen Auto) the race is hor+ (the world to the edges, the HUD in the 4:3 box), the title in the box |
 | Paper Mario | F3DEX2 | not reached: the analyser stops at its boot segment (`n64rx: This ROM could not be analysed`) |
 
+## Framebuffer effects (`xbox/src/gfx/fbfx.{h,c}`, f3d_interp.c)
+
+Frames are drawn on the NV2A and never land in RDRAM. Mario Kart 64's big
+screens (Luigi Raceway, Wario Stadium: `copy_framebuffer` in the decomp's
+render_courses.c / skybox_and_splitscreen.c) copy 64x32 tiles of the frame
+before with the CPU into segment 5 textures; Pokemon Snap's photos read
+the frame too. The maintainer's "frame buffer screen on the Mario map" is
+Luigi Raceway's (the Mario GP's first course). What is built
+(`-DXGFX_FB_READBACK=1`; off by default, see below):
+
+- end of frame: one draw copies the picture, N64 size, into a quarter of a
+  640x480 readback stage in cached memory (`xgfx_target_stage`,
+  `xgfx_tex_linear_back`); the colour image (G_SETCIMG width and size, the
+  height from the frame's lowest scissor/fill row, at most 3/4 of the
+  width) is a slot (fbfx.c: 4, least recently drawn goes);
+- start of next frame: the slot's whole pages are looked at through the
+  x86 accessed bits (`xhw_watch_pages`, xhw_alias.c; armed every frame); a
+  touched frame is hot for 60 frames and converted into RDRAM (RGBA5551 or
+  RGBA8888, word-swapped) every frame (`xgfx_stage_read`: wait for the GPU,
+  `wbinvd`, read);
+- a texture load from a frame not converted yet converts it first;
+- `[GFX] framebuffer readback` (every 600 frames) and `[NV2A] ... stage
+  reads` count it.
+
+Tried and dropped: guarding the pages (not present) and converting on the
+fault. The probe (a page read from the boot thread) reached the crash
+guard's handler, but the game's touch of a guarded frame page was a
+bugcheck 0xA (IRQL 0xFF, kernel EIP 0x80014F10) before any handler ran
+(xemu, the real kernel).
+
+Verified in xemu only: Mario Kart 64 in the race scenario touches its
+frames (53 frames a 600), readback runs; `-DXGFX_FB_DUMP=60` dumped the
+RDRAM frame (the N64 logo intro) correct at 320x240. The big screen itself
+was not in any scripted shot. Gaps: Pilotwings 64 touches its frames every
+~2 s (or the A bit is set by something else) so it stays hot, and a
+readback cost 20-85 ms in xemu (GPU wait included): flight dropped to ~14
+fps, hence off by default. Next: convert only the rows of the touched pages
+(the A bits say which), and wait for the GPU once per frame (before
+xgfx_frame_begin). Render to texture in the same frame (Zelda's pause,
+Banjo's jigsaw) is not done: an off-screen colour image still draws on the
+screen.
+
 ## Gaps
 
 - Mario Kart 64: a white translucent puff covers the driver's back in every

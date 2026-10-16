@@ -61,6 +61,31 @@ uint32_t xgfx_tex_linear_last(float* w, float* h) { (void)w; (void)h; return 0; 
 int xgfx_target_hold(int on) { (void)on; return 0; }
 uint32_t xgfx_tex_linear_hold(float* w, float* h) { (void)w; (void)h; return 0; }
 void xgfx_debug_dump(void) {}
+/* the readback stage (framebuffer effects): off unless a test turns it on */
+static int s_stage_on, s_stage_target;
+static uint32_t s_stage[640 * 480];
+static unsigned s_stage_copies;
+uint32_t xgfx_tex_linear_back(float* w, float* h) { *w = 640.0f; *h = 480.0f; return s_stage_on ? 7 : 0; }
+int xgfx_target_stage(int on, int32_t* w, int32_t* h) {
+    if (!s_stage_on) return 0;
+    if (!on && s_stage_target) s_stage_copies++;
+    s_stage_target = on;
+    *w = 640;
+    *h = 480;
+    return 1;
+}
+const void* xgfx_stage_read(int32_t* pitch, int32_t* bpp) {
+    *pitch = 640 * 4;
+    *bpp = 32;
+    return s_stage_on ? s_stage : NULL;
+}
+static uint32_t s_watch_va, s_watch_bytes;
+static int s_watch_arms, s_watch_touched;
+int xhw_watch_pages(uint32_t va, uint32_t bytes, int arm) {
+    s_watch_va = va, s_watch_bytes = bytes;
+    if (arm) s_watch_arms++;
+    return arm ? (int)(bytes / 4096u) : s_watch_touched;
+}
 static char s_log[4096];
 void xhw_log(const char* s) { (void)s; }
 void xhw_logf(const char* fmt, ...) {
@@ -375,6 +400,50 @@ static void test_ci(void) {
     CHECK(!texconv_ci_to_argb8(ci8, 8, 1, 1, N64SIZ_16b, tlut, 0, 0, out, 1, 1), "ci16 refused");
 }
 
+/* framebuffer readback (f3d_interp.c "framebuffer effects", fbfx.c): a frame
+ * drawn into a 320x240 RGBA16 colour image is copied to the stage at its
+ * end; at the next frame's start its pages are looked at and armed again,
+ * and only a frame some thread touched is converted into RDRAM
+ * (word-swapped RGBA5551) */
+#define CIMG_AT 0x40000u
+static void readback_frame(const GfxUcode* u) {
+    s_pc = DL_AT;
+    cmd(0xFF000000u | (2u << 19) | (320u - 1u), CIMG_AT);   /* G_SETCIMG RGBA16 320 */
+    cmd(0xED000000u, (320u << 14) | (240u << 2));            /* G_SETSCISSOR 0,0 320,240 */
+    cmd(0xB8000000u, 0);
+    run(u);
+}
+static void test_readback(void) {
+    GfxUcode u = uc_of("RSP SW Version: 2.0D, 04-01-96");
+    unsigned i;
+    uint32_t host0 = (uint32_t)(uintptr_t)s_ram, px = CIMG_AT + 2u * (5u * 320u + 7u);
+    s_stage_on = 1;
+    for (i = 0; i < 640u * 480u; i++) s_stage[i] = 0xFF000000u | ((i % 640u) < 320u && (i / 640u) < 240u ? 0xFF0000u : 0x0000FFu);
+    s_stage_copies = 0;
+    readback_frame(&u);
+    CHECK(s_stage_copies == 1, "readback: %u stage copies after one frame", s_stage_copies);
+    CHECK(s_v[s_nv - 1].x == 320.0f && s_v[s_nv - 1].y == 240.0f, "readback: the copy quad ends at %g,%g", s_v[s_nv - 1].x,
+          s_v[s_nv - 1].y);
+    /* untouched: armed, not converted */
+    put16(px, 0x1234);
+    s_watch_touched = 0;
+    s_watch_arms = 0;
+    readback_frame(&u);
+    CHECK(s_watch_arms == 1 && s_watch_va == host0 + CIMG_AT && s_watch_bytes == 320u * 240u * 2u,
+          "readback: arms %d va %08x bytes %u", s_watch_arms, (unsigned)(s_watch_va - host0), (unsigned)s_watch_bytes);
+    CHECK(*(uint16_t*)(s_ram + (px ^ 2u)) == 0x1234u, "readback: an untouched frame was converted");
+    /* touched: converted at the next frame's start; red in RGBA5551 is F801 */
+    s_watch_touched = 3;
+    readback_frame(&u);
+    CHECK(*(uint16_t*)(s_ram + (px ^ 2u)) == 0xF801u, "readback: pixel %04x", *(uint16_t*)(s_ram + (px ^ 2u)));
+    /* still hot without touches: converted again */
+    put16(px, 0x1234);
+    s_watch_touched = 0;
+    readback_frame(&u);
+    CHECK(*(uint16_t*)(s_ram + (px ^ 2u)) == 0xF801u, "readback: a hot frame was not converted again");
+    s_stage_on = 0;
+}
+
 int main(void) {
     test_ci();
     setup_data();
@@ -384,6 +453,7 @@ int main(void) {
     test_f3dex();
     test_f3dex2();
     test_fast3d();   /* and Fast3D again after the others: nothing left over */
+    test_readback();
     if (s_fail) printf("test_f3dex: %d failed\n", s_fail);
     return s_fail ? 1 : 0;
 }

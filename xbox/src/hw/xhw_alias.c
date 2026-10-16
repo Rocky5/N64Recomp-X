@@ -165,3 +165,45 @@ void xhw_alias_unmap(uint32_t va, uint32_t bytes) {
     }
     irq_restore(f);
 }
+
+/* ---- page watch (framebuffer readback, docs/renderer.md "Framebuffer
+ * effects"): the x86 sets a PTE's accessed bit when it loads the page into
+ * its TLB for any read or write. Arming clears the bits of the whole pages
+ * inside the range (splitting a large page first, as above) and flushes
+ * them from the TLB; the next look counts the pages touched since. No page
+ * is ever made not present: a not-present page of this window that the
+ * game touched was a bugcheck 0xA in the kernel's fault path before any
+ * exception handler ran (xemu, the real kernel). ---- */
+#define WINDOW 0x80000000u
+
+int xhw_watch_pages(uint32_t va, uint32_t bytes, int arm) {
+    uint32_t v = (va + 0xFFFu) & ~0xFFFu, end = (va + bytes) & ~0xFFFu, f;
+    int n = 0;
+    if (va < WINDOW || va + bytes < va || end > WINDOW + LOW_TOP || v >= end) return 0;
+    if (arm) {
+        uint32_t r;
+        for (r = v; r < end; r = (r & ~0x3FFFFFu) + 0x400000u)
+            if (!table_for(r)) return 0;
+    }
+    f = irq_off();
+    for (; v < end; v += 4096) {
+        uint32_t pde = *pde_of(v);
+        volatile uint32_t* pte;
+        if (!(pde & PTE_P)) continue;
+        if (pde & PDE_PS) {   /* not split: no telling */
+            n += !arm;
+            continue;
+        }
+        pte = pte_of(v);
+        if (!(*pte & PTE_P)) continue;
+        if (arm) {
+            *pte &= ~PTE_A;
+            invlpg(v);
+            n++;
+        } else {
+            n += (*pte & PTE_A) != 0;
+        }
+    }
+    irq_restore(f);
+    return n;
+}

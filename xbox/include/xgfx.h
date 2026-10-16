@@ -120,6 +120,16 @@ uint32_t xgfx_tex_linear_last(float* w, float* h);
 int xgfx_target_hold(int on);
 uint32_t xgfx_tex_linear_hold(float* w, float* h);
 
+/* Framebuffer readback (docs/renderer.md "Framebuffer effects"): a linear
+ * texture viewing the frame being drawn (texel coordinates: w x h; sample
+ * it only with the stage as the target); the readback stage (a w x h
+ * surface in cached memory, the screen's colour format) as the render
+ * target (1) or the screen again (0), 0 when there is no stage; and the
+ * stage for the CPU once the GPU is done with it (waits; NULL when none). */
+uint32_t xgfx_tex_linear_back(float* w, float* h);
+int xgfx_target_stage(int on, int32_t* w, int32_t* h);
+const void* xgfx_stage_read(int32_t* pitch, int32_t* bpp);
+
 void xgfx_debug_dump(void);   /* debug: the back buffer now, as [FBDUMP] */
 
 /* Combiner coverage: modes the compiler had to approximate since boot. */

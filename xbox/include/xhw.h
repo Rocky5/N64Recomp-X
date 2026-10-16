@@ -84,6 +84,11 @@ void* xhw_rdram_alloc(uint32_t bytes);
  * only what _map did. */
 int xhw_alias_map(uint32_t va, uint32_t pa, uint32_t bytes);
 void xhw_alias_unmap(uint32_t va, uint32_t bytes);
+/* Page watch (xhw_alias.c, framebuffer readback): arm (1) clears the
+ * accessed bits of the whole pages inside [va, va + bytes) of the low-64 MB
+ * window and returns the pages armed; a look (0) returns how many of them
+ * any thread read or wrote since. */
+int xhw_watch_pages(uint32_t va, uint32_t bytes, int arm);
 /* 128 MB consoles run as 64 MB ones (xhw_ramlock.c): call first in main_body.
  * _log writes the [MEM] line once the log is open. */
 void xhw_ram_lock64(void);

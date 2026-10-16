@@ -553,3 +553,14 @@ microcode was never logged and its resampler table never searched.
 - Not on the console. `[MEM]`: +2 KB static (the note table, the page's
   state); `[CLOCK]`: unchanged.
 - A pak shared across games (stretch) is not built.
+
+### Framebuffer effects (agent fbfx, 2026-10-16; xemu only)
+
+Built behind `-DXGFX_FB_READBACK=1` (default 0): the CPU-read frame path for
+Mario Kart 64's big screens (docs/renderer.md "Framebuffer effects").
+Verified: host tests (`test_fbfx.py`, `test_f3dex.py` test_readback); in
+xemu, MK64's race touches its frames and the readback runs; an RDRAM dump
+(`-DXGFX_FB_DUMP`) of the N64 logo frame is correct. Not verified: the big
+screen on screen (no scripted shot reached it), any console run, 720p.
+Gap carried on: Pilotwings 64 stays hot and slows to ~14 fps in xemu with
+it on; render to texture in the same frame is not done.
