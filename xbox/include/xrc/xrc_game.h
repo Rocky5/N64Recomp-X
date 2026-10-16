@@ -30,6 +30,8 @@ typedef struct XrcGame {
     uint32_t rom_size;                 /* bytes; 0: any */
     const char* sha1[4];               /* the known dumps (normalised image), NULL-ended */
     uint32_t eeprom_bytes;             /* 512 (4 Kbit), 2048 (16 Kbit), 0: none */
+    const uint32_t* rom_pins;          /* [rom] pin: offset, length pairs held in the page cache */
+    uint32_t num_rom_pins;
 } XrcGame;
 
 extern const XrcGame xrc_game;

@@ -109,9 +109,11 @@ void xrc_gfx_task(uint32_t task);
 void xrc_audio_task(uint32_t task);
 unsigned xu_gfx_tasks(void);
 
-/* pi.c: the ROM the PI reads (z64 order), from boot.c */
-void xu_pi_set_rom(const uint8_t* rom, uint32_t size);
-const uint8_t* xu_rom_ptr(uint32_t rom_off, uint32_t n);
+/* pi.c: the ROM the PI reads (z64 order), through xhw_rom_read (resident or
+ * the page cache, PLAN.md 3.5); 0 = done, 1 = outside the ROM (nothing read) */
+uint32_t xu_rom_to_rdram(uint32_t rom_off, uint32_t dram, uint32_t n);
+uint32_t xu_rom_read(uint32_t rom_off, void* dst, uint32_t n);
+const uint8_t* xu_rom_ptr(uint32_t rom_off, uint32_t n);   /* resident only: NULL with the page cache */
 
 /* si.c: the save writer's flush (the exit combos call it) */
 void xu_save_flush(void);

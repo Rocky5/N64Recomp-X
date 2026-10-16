@@ -213,7 +213,7 @@ def write_game_c(pack, gpr_bits, gen):
 #include "recomp_overlays.inl"
 
 extern const uint32_t xrc_icon_64[4096];
-
+{rom_pins_c(pack)}
 const XrcGame xrc_game = {{
     .id = {c_str(pack.id)},
     .title = {c_str(pack.title)},
@@ -231,8 +231,21 @@ const XrcGame xrc_game = {{
     .rom_size = {pack.rom_size}u,
     .sha1 = {{ {''.join(c_str(h) + ', ' for h in pack.sha1[:3])}0 }},
     .eeprom_bytes = {EEPROM.get(pack.save_type, 0)}u,
+    .rom_pins = {'rom_pins' if pack.rom_pins else '0'},
+    .num_rom_pins = {len(pack.rom_pins)}u,
 }};
 ''', encoding='utf-8', newline='\n')
+
+
+RESIDENT = {'always': ' -DXRC_ROM_RESIDENT_MB=64', 'never': ' -DXRC_ROM_RESIDENT_MB=0'}
+
+
+def rom_pins_c(pack):
+    """the pack's [rom] pin ranges (offset, length pairs) for the page cache"""
+    if not pack.rom_pins:
+        return ''
+    rows = ', '.join(f'0x{o:X}u, 0x{n:X}u' for o, n in pack.rom_pins)
+    return f'static const uint32_t rom_pins[] = {{ {rows} }};\n'
 
 
 def readme(pack, folder, rom_beside=False):
@@ -337,6 +350,8 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
         'XRC_GAME_CFLAGS': ' '.join(flags),
         # N64RX_CFLAGS: a developer's extra flags (a test build: -DXHW_AUTOPAD=1), docs/testing.md
         'XBOX_CFLAGS': f'-DXRC_VIDEO_DEFAULT={VIDEO[video]}' + (' -O1' if fast else '')
+                       # [rom] resident: always | never (the page cache for every size); auto: by size (PLAN.md 3.5)
+                       + RESIDENT.get(pack.raw.get('rom', {}).get('resident', 'auto'), '')
                        + (' ' + os.environ['N64RX_CFLAGS'] if os.environ.get('N64RX_CFLAGS') else ''),
         'XBOX_LTO': '0' if fast else '1',
     }

@@ -37,7 +37,8 @@ rom_size = 8388608
 
 [rom]
 compressed = "none"            # none | yaz0-oot | yaz0-mm (M5)
-resident = "auto"              # auto | always | never (the page cache, M5)
+resident = "auto"              # auto: in RAM up to 16 MB, the page cache over | always | never (the page cache)
+pin = [[0x123400, 0x8000]]     # [offset, length] ranges the page cache keeps held (tables read every frame); at most half its cap
 
 [cpu]
 entrypoint = 0x80000400
