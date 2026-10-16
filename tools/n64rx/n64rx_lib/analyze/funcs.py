@@ -79,6 +79,7 @@ def parse_entry(rom, entry):
     Returns (bss_start, bss_size, main) or None when the entry is something
     else."""
     regs, bss, size, main, snap = {}, None, None, None, None
+    empty = False
     for i in range(48):
         o = 0x1000 + 4 * i
         ins = Ins(int.from_bytes(rom[o:o + 4], 'big'), entry + 4 * i)
@@ -97,6 +98,10 @@ def parse_entry(rom, entry):
             other = src.get(9)
             if other is not None and other >= 0x80000000 and other > bss:   # an end address, not a size
                 size = other - bss
+            elif other is not None and other >= 0x80000000:   # start == end: a loop over nothing
+                bss, size, snap = None, None, None                # (Extreme-G 2 clears two empty ranges)
+                empty = True
+                continue
             else:
                 size = other
         elif ins.is_jr:
@@ -105,13 +110,15 @@ def parse_entry(rom, entry):
         elif ins.is_j:
             main = ins.target
             break
-        elif ins.is_jal and bss is not None:   # main called, the entry spins after it
+        elif ins.is_jal and (bss is not None or empty):   # main called, the entry spins after it
             main = ins.target
             break
         elif d is not None and d not in (8, 9, 10, 29):
             regs.pop(d, None)
-    if bss is None or main is None:
+    if main is None or (bss is None and not empty):
         return None
+    if bss is None:   # no BSS cleared: the boot segment is what IPL3 copied, 1 MB
+        return entry + 0x100000, 0, main
     return bss, size or 0, main
 
 
