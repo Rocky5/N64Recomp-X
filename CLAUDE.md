@@ -40,8 +40,11 @@ the approach (§1), the architecture (§3), the build, game packs and tests
   uses nxdk's; they share only plain-scalar structs (`xhw.h`, `xgfx.h`,
   `xrom.h`). Never `-ftrivial-auto-var-init` or `-ffast-math` on game code.
   Releases build with `XBOX_LTO=1`.
-- **Stock 64 MB** (`xhw_ramlock.c`). **Time comes from the vblank and the
-  ACPI timer**, never an assumed CPU clock.
+- **Stock 64 MB on every console** (`xhw_ramlock.c` holds the upper half of
+  a 128 MB one; the budget is 64 MB for every pack). **Time comes from the
+  vblank and the ACPI timer**, never the TSC or an assumed CPU clock, so an
+  upgraded or overclocked CPU changes nothing but headroom (`docs/PLAN.md`
+  §3.13). Each handoff entry records the `[MEM]` and `[CLOCK]` lines.
 - **The loading screen is built on Melee-X's `xhw_splash.c`** ("TechProGabe
   Presents...": its wordmark, font, palette, "Hold BACK for 480i" line and
   behaviours are kept; `docs/PLAN.md` §5.5 adds the rest). It draws in the

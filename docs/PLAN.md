@@ -51,6 +51,7 @@ Zelda64Recomp: `us.rev1.toml`, `patches.toml`, `patches/Makefile`.
 | Maintainer requirement (2026-10-16) | **up to 720p, and widescreen, for every game** (§5.4) | this session |
 | Maintainer requirement (2026-10-16) | **a BACK-button menu over the running game that controls the port's settings, game-agnostic** (§5.2) | this session |
 | Maintainer requirement (2026-10-16) | **a loading screen worth looking at, in the line of the siblings' "TechProGabe Presents..." splash, with safe 480i fallbacks** (§5.5) | this session |
+| Maintainer requirement (2026-10-16) | **64 MB and 128 MB consoles, stock and upgraded or overclocked CPUs, all behave the same** (§3.13) | this session |
 | Maintainer requirement (2026-10-16) | **`L + R + BACK + BLACK` returns to the dashboard in every game** (and `L + R + BACK + WHITE` restarts), in every state, with no per-game work (§3.9) | this session |
 | The sibling splash | `xhw_splash.c` (166 lines, Melee-X's, from OpenCrossing's `xbox_splash.c`): CPU-drawn into the `XVideoSetMode(640, 480, 32)` framebuffer before pbkit, so it shows on any TV; unscii-16 at 3x; navy gradient `rgb(14, 22, 52)` → `rgb(6, 10, 28)`; fade-in 17 steps / ~500 ms; a 400x8 bar in `rgb(120, 200, 110)`; "Hold BACK for 480i (safe video)"; 2 s hold, any button skips; `xhw_splash_progress`, `xhw_splash_release` before the mode change; no `XVideoWaitForVBlank` (`pb_init` fails with -4 after it); `-DXHW_NO_SPLASH`, `-DXHW_SPLASH_MS`, `-DXHW_SPLASH_DUMP` | Wings64-X `xbox/src/hw/xhw_splash.c` |
 
@@ -630,6 +631,29 @@ caching, a mixed-width mode) is worth doing (§6 M9).
 
 Locks block in the kernel, never spin; the one recursive lock of the shim
 stands for libultra's interrupt mask.
+
+### 3.13 Console variants: 64 MB and 128 MB, stock and upgraded CPUs
+
+Maintainer requirement (2026-10-16): **every build behaves the same on a
+stock 64 MB console, a 128 MB console, and a console with an upgraded or
+overclocked CPU.** Wings64-X's and OpenCrossing-Xbox's rules, binding here:
+
+| variant | what can go wrong | the rule | where |
+|---|---|---|---|
+| **128 MB** (RAM upgrade, a 128 MB-aware BIOS) | the kernel hands out pages above 64 MB: GPU addresses masked with `0x03FFFFFF` alias, allocations that fail at 64 MB succeed, so a fallback is never tested; a pack that "fits" only on 128 MB | **the console runs as 64 MB**: cxbe's "limit to 64 MB" flag, and `xhw_ram_lock64` holds every page at or above 64 MB first thing in `main_body`, before anything allocates; `[MEM]` logs what it held. The budget of §3.10 is a 64 MB budget for every pack; no pack, no knob and no cache uses the upper half (§8 Q11 asks whether a page cache may, as an opt-in, later). Kill switch `-DXHW_RAM_LOCK64=0` for diagnosis only | `xhw_ramlock.c` (M0) |
+| **upgraded CPU** (1.0-1.4 GHz) or **overclocked FSB** | anything timed on the TSC or an assumed 733 MHz runs fast: game speed, audio pitch, timeouts; nxdk's `QueryPerformanceCounter` guesses the TSC rate from the multiplier | **time comes from the ACPI timer (3.375 MHz, its own crystal) and the vblank, never the TSC**: `osGetCount`/`osGetTime` are the ACPI clock scaled to 46.875 MHz, the retrace is pbkit's vblank (or 60.000 Hz from ACPI), the AI DAC drains in ACPI time; the TSC is read once at boot for the `[CLOCK]` line only. A game's own busy-waits on `osGetCount` (recompiled code) therefore wait real time on any CPU. The game's frame rate is its own (retrace messages), so a faster CPU only buys headroom | `xhw_clock.c`, `rt/ultra/time.c`, `vi.c`, `ai.c` (M0/M1) |
+| **patched `rdtsc`** (modded kernels rewrite `0f 31` in loaded code) | the XBE's own code changes under it | `xhw_code_repair.c` puts `.text` back as `default.xbe` has it before the clock reads the TSC and before any game code runs; `[BOOT] code check` logs it | M0 |
+| **PAL consoles / 50 Hz** | a 50 Hz retrace slows the game | the retrace is 60.000 Hz from ACPI when the output is not 60 Hz (Melee-X's pacer); 480p and 720p are NTSC-only in nxdk's tables (§5.4) | `xhw_video.c` |
+
+Checks, every milestone from M0: the boot log's `[MEM]` and `[CLOCK]` lines
+in the `docs/handoff.md` entry; xemu with 128 MB (a slot with `mem_limit =
+128`) shows the RAM lock holding the upper half and the pack still inside
+§3.10's numbers; on the console, when §8 Q9's hardware exists, one run on a
+128 MB and one on a CPU-upgraded console per release (M6 and M7 are the
+gates), with `[CLOCK] cpu N MHz` and the game's speed and audio pitch judged
+against a stock console. Host test `test_time.py` (M1) feeds the time
+functions a fake ACPI clock at several TSC rates and checks that nothing
+moves.
 
 ---
 
@@ -1251,9 +1275,14 @@ Hard problems named as such, so nobody is surprised by them:
    disc path?
 10. **Controller Pak**: emulate a 32 KB pak per port by default (ghost data in
     MK64, some saves) or only where a pack asks?
+11. **128 MB consoles**: §3.13 runs them as 64 MB. Should the ROM page cache
+    (§3.5) be allowed to use the upper 64 MB as an opt-in on such consoles
+    (bigger caches for class B/C games), or stay at 64 MB everywhere so every
+    console behaves the same? The default is the latter.
 
-Decided on 2026-10-16 and no longer open: the tool runs on Windows, macOS and
-Linux with one command (§5.1); up to 720p and widescreen for every game, 1080i
+Decided on 2026-10-16 and no longer open: every build behaves the same on 64
+MB and 128 MB consoles and on stock and upgraded CPUs (§3.13); the tool runs
+on Windows, macOS and Linux with one command (§5.1); up to 720p and widescreen for every game, 1080i
 not offered (§5.4); the BACK menu is the port's settings UI in every game,
 game-agnostic, and a game-style menu a pack adds later is an addition, not a
 replacement (§5.2); the loading screen is built on the siblings' splash with

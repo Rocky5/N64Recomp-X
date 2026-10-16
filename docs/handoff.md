@@ -39,6 +39,13 @@ Built on Windows 11 with MSYS2 (clang 21.1.8), nxdk `58427c0`, N64Recomp
   `rom_leak_check` clean.
 - `tools/xbox/setup.sh` on Windows (MSYS2 path): installs the missing
   pacman packages, finds nxdk and N64Recomp built.
+- Console variants (PLAN.md 3.13), xemu: at 64 MB `[MEM] boot: 65536 KB of
+  RAM, nothing to hold (64 MB console)`, `[CLOCK] cpu 733 MHz (TSC against
+  the ACPI timer, 3375000 Hz)`. With `mem_limit = '128'` (`-m 128`) the
+  kernel still gives the XBE 64 MB (this BIOS honours cxbe's 64 MB-limit
+  flag): the same `[MEM]` line, the console runs as 64 MB. Not exercised:
+  `xhw_ram_lock64`'s hold path (a kernel that hands out the upper half
+  anyway) and an upgraded CPU (xemu has neither); the console runs of §3.13.
 
 **Not verified (and why)**
 
