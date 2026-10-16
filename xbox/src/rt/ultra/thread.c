@@ -311,13 +311,16 @@ ULTRA(osSetEventMesg) {
     }
 }
 
-void xu_post_event(int e) {
+static void post(int e, int jam) {
     static unsigned s_dropped;
     if (e < 0 || e >= OS_NUM_EVENTS || !s_events[e].mq) return;
-    if (xu_send(s_events[e].mq, s_events[e].msg, 0, 0) < 0 && s_dropped++ < 20)
+    if (xu_send(s_events[e].mq, s_events[e].msg, 0, jam) < 0 && s_dropped++ < 20)
         xhw_logf("[OS] event %d dropped: queue %08x full (%u)", e, (unsigned)s_events[e].mq,
                  (unsigned)rd32(s_events[e].mq + MQ_MSGCOUNT));
 }
+
+void xu_post_event(int e) { post(e, 0); }
+void xu_post_event_first(int e) { post(e, 1); }
 
 /* ---- the interrupt mask ---- */
 /* __osDisableInt / __osRestoreInt and COP0 status IE: a thread that turns

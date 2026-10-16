@@ -8,8 +8,9 @@ platform layer (NV2A back end, AC97, USB pads, the splash, the console
 tooling). Target: retail Xbox, stock 64 MB. The user-facing tool, `n64rx`,
 runs on Windows, macOS and Linux with one command.
 
-**Status: M0 done on `dev` (Windows + xemu verified; Linux, macOS, Docker
-and the console not yet: `docs/handoff.md`).** `docs/PLAN.md` is binding on
+**Status: M1 done on `dev`: Pilotwings 64 recompiled, booting and drawing
+in xemu (Windows verified; the console not yet: `docs/handoff.md`). CI is
+manual-only (free minutes).** `docs/PLAN.md` is binding on
 the approach (§1), the architecture (§3), the build, game packs and tests
 (§4), the feature specs (§5), the milestone order and exit checks (§6).
 `docs/research.md` holds the evidence. Read both, then `docs/handoff.md` and

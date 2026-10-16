@@ -390,6 +390,7 @@ def main():
     ap.add_argument('--print-sha1', action='store_true')
     args = ap.parse_args()
     a, rom, size = build()
+    pathlib.Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     pathlib.Path(args.out).write_bytes(rom)
     if args.syms:
         pathlib.Path(args.syms).write_text(syms_toml(a, size), newline='\n')

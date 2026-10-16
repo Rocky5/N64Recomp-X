@@ -93,3 +93,46 @@ checkout at `/src`, the ROM's folder read-only at `/rom` and the output at
 `/out`, as the user's own uid on Linux and macOS. The image builds N64Recomp
 from the checkout's submodule at its pin and is tagged by both pins
 (`tools/xbox/docker/IMAGE`).
+
+## M1 (2026-10-16)
+
+**Pilotwings 64's symbol file comes from the decomp's splat config, not its
+ELF** (PLAN.md 4.2 said `--dump-context` on the decomp's IDO build). That
+build needs IDO and MIPS binutils under WSL or Docker, and neither runs on
+this machine (Hyper-V is off). `tools/xbox/syms_tools.py from-splat` runs the
+decomp's own splat config (splat 0.39.1, its pin) once with every C file as
+asm: spimdisasm's function bounds, the decomp's names where its symbol files
+have them. The same facts, on any OS, with no compiler. Committed: the decomp
+is MIT.
+
+**`func_80231A10` (a handwritten mfc0/mtc0 Count helper) is `ignored`.** The
+recompiler stops on COP0 Count; nothing in the game calls it.
+
+**`ctx->f_odd` points at `f0.u32h` in every context** (`xrc_ctx_init`). The
+generated code reaches an odd FPR as the high half of the even one below it
+(FR = 0); left NULL, the first float op wrote through address 0x90.
+
+**PI device addresses are cartridge offsets.** libultra ORs `osRomBase` in
+itself, so `osPiStartDma`'s and `osPiReadIo`'s addresses are ROM offsets (the
+app segment's 0x51E30); a full bus or KSEG1 address is still accepted.
+
+**The boot code parks at its first `osStartThread`** (called from a thread
+that is not an N64 thread): the N64 never returned to it either.
+
+**Synchronous tasks post their done events at the front of the queue**
+(`DIVERGES` in `ultra/sp.c`). With the task on the scheduler's own thread,
+the retraces that queued while it ran sat ahead of its done events; the
+scheduler took its task for still running, asked it to yield and recovered
+from a task "that did not yield" (Pilotwings 64's `_uvScHandleRetrace`).
+
+**`_uvScDlistRecover`'s SP_STATUS store is a nop** (`games/pw64/recomp.toml`,
+an instruction patch; Wings64-X's patch 018 at the same site). The recovery's
+messages are kept. PLAN.md 3.2.1: a KSEG1 CPU store is patched at its site.
+
+**The interpreter reads by N64 address.** Display lists word by word from the
+host image (words are native); vertices, matrices, viewports and lights
+through `rd16`/`rd8`; texels copied out in N64 byte order, the order
+Wings64-X's `texconv.c` already took (its textures stayed big-endian).
+
+**CI is manual-only** (the maintainer's free Actions minutes): `gh workflow
+run build.yml --ref dev`, `-f image=true` to rebuild the SDK image.

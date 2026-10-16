@@ -79,7 +79,8 @@ SYSTEM_FLAGS = [
     '-U_WIN32', '-U__MINGW32__', '-U__MINGW64__', '-UWIN32', '-U__WIN32', '-U__WIN32__',
 ]
 
-INCLUDES = [str(ROOT / 'xbox/include/xrc'), str(ROOT / 'xbox/include'), str(ROOT / 'xbox/src/rt'), str(BUILD_INCLUDE)]
+INCLUDES = [str(ROOT / 'xbox/include/xrc'), str(ROOT / 'xbox/include'), str(ROOT / 'xbox/src/rt'), str(ROOT / 'xbox/src/gfx'),
+            str(BUILD_INCLUDE)]
 if GEN:
     INCLUDES.append(str(GEN))
 

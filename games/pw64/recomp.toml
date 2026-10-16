@@ -14,3 +14,12 @@ functions_per_output_file = 50
 # out; if a call ever appears, the link names it and the runtime's clock
 # (osGetCount / osSetCount, ultra/time.c) gives it a body.
 ignored = ["func_80231A10"]
+
+# _uvScDlistRecover (kernel/sched.c, the RSP/RDP timeout recovery) writes the
+# RSP's status register (sw t6, 0x10(t7) with t7 = 0xA4040000: SP_STATUS_REG,
+# KSEG1). There is no RSP; the recovery's messages are kept and the register
+# write becomes a nop (Wings64-X's patches/018, the same site).
+[[patches.instruction]]
+func = "_uvScDlistRecover"
+vram = 0x8022B678
+value = 0x00000000

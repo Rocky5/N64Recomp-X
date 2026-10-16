@@ -38,6 +38,8 @@ if [ "$kind" = linux ]; then
     $sudo apt-get update -q
     $sudo apt-get install -yq build-essential cmake ninja-build git bison flex patch curl xz-utils \
       libzstd-dev zlib1g-dev libxml2-dev python3-pip
+    # a 32-bit host compiler for test_recomp_h (our header on i686); x86-64 hosts only
+    if [ "$(uname -m)" = x86_64 ]; then $sudo apt-get install -yq gcc-multilib || true; fi
   fi
   if [ ! -x "$LLVM/bin/clang" ]; then
     arch="$(uname -m)"; case "$arch" in x86_64) tarch=X64 ;; aarch64|arm64) tarch=ARM64 ;; *) echo "no LLVM build for $arch"; exit 1 ;; esac
@@ -62,7 +64,7 @@ else
   say "MSYS2 packages"
   "$msys/usr/bin/bash" -lc 'pacman -S --needed --noconfirm make git bison flex cmake ninja patch \
     mingw-w64-x86_64-clang mingw-w64-x86_64-lld mingw-w64-x86_64-llvm mingw-w64-x86_64-python \
-    mingw-w64-x86_64-python-pillow mingw-w64-x86_64-python-pip'
+    mingw-w64-x86_64-python-pillow mingw-w64-x86_64-python-pip mingw-w64-i686-gcc'
   LLVM=/mingw64
   NXDK_DIR="${NXDK_DIR:-/c/xdev/nxdk}"
 fi

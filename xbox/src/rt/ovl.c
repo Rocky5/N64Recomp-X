@@ -63,6 +63,24 @@ int xrc_ovl_init(void) {
             }
     }
     xhw_logf("[RECOMP] %u functions in %u sections", (unsigned)s_nfuncs, (unsigned)xrc_game.num_sections);
+    {   /* the code's size: the MIPS text the functions came from, and the span
+         * their x86 occupies (the generated objects link together; an
+         * estimate under ThinLTO, which may move a few). PLAN.md 3.11's
+         * expansion factor. */
+        uintptr_t lo = ~(uintptr_t)0, hi = 0;
+        uint32_t mips = 0;
+        for (i = 0; i < xrc_game.num_sections; i++)
+            for (j = 0; j < xrc_game.sections[i].num_funcs; j++) {
+                uintptr_t f = (uintptr_t)xrc_game.sections[i].funcs[j].func;
+                mips += xrc_game.sections[i].funcs[j].rom_size;
+                if (f < lo) lo = f;
+                if (f > hi) hi = f;
+            }
+        if (mips && hi > lo)
+            xhw_logf("[RECOMP] code: %u KB of MIPS -> about %u KB of x86 (x%u.%u)", (unsigned)(mips >> 10),
+                     (unsigned)((hi - lo) >> 10), (unsigned)((hi - lo) / mips),
+                     (unsigned)((hi - lo) * 10 / mips % 10));
+    }
     return 1;
 }
 

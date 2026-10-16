@@ -71,3 +71,53 @@ Built on Windows 11 with MSYS2 (clang 21.1.8), nxdk `58427c0`, N64Recomp
   runtime does not read a ROM yet. M1 generalises it to the pack's table.
 - No libultra entry points, no VI thread, no boot block or boot copy (M1).
 - `test_recomp_h` (our header against upstream's on the host) is M1's.
+
+## M1: the runtime core on Pilotwings 64, first frame (2026-10-16, branch `dev`)
+
+Windows 11 + MSYS2 (clang 21.1.8), nxdk `58427c0`, N64Recomp `ffb39cd`; xemu
+0.8.136 slot 9; the maintainer's own US ROM (`ec771aed...`), never in the tree.
+
+**Verified**
+
+- `n64rx build "Pilotwings 64 (U) [!].z64"`: the pack matches by SHA-1; 1956
+  functions in the symbol file, 1899 recompiled into 37 files; the scan finds
+  no 64-bit instruction: 32-bit registers; the generated code compiles under
+  the game triple with our `recomp.h` (implicit declarations stay errors:
+  n64rx's `xrc_extern.h` declares the 58 libultra entry points and the other
+  calls `funcs.h` lacks); ThinLTO and `--fast` both link.
+- xemu, release build (ThinLTO): `[ROM] verified`, `[RECOMP] 1899 functions
+  in 3 sections`, `[RECOMP] code: 783 KB of MIPS -> about 1778 KB of x86
+  (x2.2)`, `[RECOMP] entrypoint 80200050, 32-bit registers`; `[OS]` threads 1,
+  0, 4, 6, 3 at levels 9, 13, 11, 8, 10 (N64 priorities 12, 250, 127, 10, 110);
+  the title screen drawn by the interpreter (FBDUMP, compared by eye with the
+  game's own title: logo, the six pilots, the menu, the copyright line; the
+  shot stays outside the tree); the intro and attract demos for 4 minutes,
+  `[PERF]` ~50 fps in xemu (xemu timing, not the console's), no crash, no
+  `crash.log`.
+- `test_recomp_h`: upstream's header vs ours on x86-64 (85,015 lines, none
+  differ), ours on i686 with `-march=pentium3 -msse -mfpmath=sse` and the
+  Xbox's x87 control word (none differ), 32-bit registers vs 64-bit on the
+  68,013 sign-extended cases (none differ).
+- Host tests: `test_syms`, `test_scan64`, `test_time` (7 checks; no TSC read
+  outside the clock module), plus M0's, with clang and with GCC.
+- `[MEM] boot: 65536 KB of RAM, nothing to hold`, `[CLOCK] cpu 733 MHz` (xemu).
+
+**Not verified (and why)**
+
+- The console: no hardware run yet. Audio: tasks run but `asp_hle` is not
+  wired (M2); `[PERF]`'s "audio 0 tasks" says so.
+- Wings64-X's `[FBDUMP]` of the same frame side by side: compared with the
+  game's look instead (the title screen is unambiguous); M2 runs Wings64-X's
+  scenarios with shots on both builds.
+- CI for M1: manual-only now (the maintainer's free minutes). The last
+  automatic run (before M1's tests) had Linux, macOS and Windows through the
+  toolchain, host tests, platform XBE and n64rx tests, failing only at the
+  end-to-end step on a missing folder, since fixed; unrun since.
+- `test_f3d` (synthetic display lists per family): not written. The F3D
+  interpreter is Wings64-X's, hardware-tested there; the test comes with
+  F3DEX in M4.
+
+**Fixed on the way (docs/decisions.md):** `f_odd` must point at f0's high
+word; PI device addresses are cartridge offsets; synchronous tasks' done
+events go to the front of their queue; `_uvScDlistRecover`'s SP_STATUS
+store is a pack instruction patch.

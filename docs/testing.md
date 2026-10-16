@@ -8,7 +8,20 @@ python tools/xbox/test_pad_combo.py     # the exit-combo detector (xhw_combo.c's
 python tools/xbox/test_splash.py        # the loading screen's layout, palette, STILL (needs nxdk's font)
 python tools/xbox/test_settings.py      # settings.ini parse and format
 python tools/xbox/test_n64rx.py         # the tool: ROMs, packs, messages, cache, output folder, doctor, CLI
+python tools/xbox/test_recomp_h.py      # our recomp.h vs upstream's: x86-64, i686 (CC32), 32- vs 64-bit registers
+python tools/xbox/test_syms.py          # every committed symbol file against the function table's rules
+python tools/xbox/test_scan64.py        # the register-width scan on hand-assembled functions (rabbitizer)
+python tools/xbox/test_time.py          # the counter follows the ACPI clock; nothing else reads the TSC
 ```
+
+CI (`.github/workflows/build.yml`) is manual-only, for the maintainer's free
+Actions minutes: `gh workflow run build.yml --ref dev` when a milestone needs
+the three-OS check, `-f image=true` to rebuild and push the SDK image.
+
+A test build of a game: `N64RX_CFLAGS=-DXHW_AUTOPAD=1 n64rx build <rom> --out out-test`
+(the flags reach both triples). Test builds log `[OS] stall:` (what every N64
+thread waits on, once, after 60 retraces without a graphics task) and a `[VI]`
+line every 30 s.
 
 The C tests build with `tools/xbox/hostcc.py`: `$CC`, else `cc`, `clang` or
 `gcc`, else MSYS2's clang. `test_splash.py` saves what it checked as
