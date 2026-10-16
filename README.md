@@ -19,7 +19,8 @@ runs [Melee-X](https://github.com/TechProGabe/Melee-X),
 How it is meant to work when it exists: install Docker (or let the tool set
 up a native toolchain), run `n64rx build "<your rom>.z64"` on Windows, macOS
 or Linux, and copy the folder it produces to your Xbox. Every game gets the
-same port features: output up to 720p, widescreen, and a menu on the BACK
-button, drawn over the game, for the port's settings (video, controls, audio,
-saves). Nothing from any game ships with this project, no built game is ever
+same port features: a loading screen in the family's "TechProGabe
+Presents..." style with safe 480i fallbacks, output up to 720p, widescreen,
+and a menu on the BACK button, drawn over the game, for the port's settings
+(video, controls, audio, saves). Nothing from any game ships with this project, no built game is ever
 published, and nothing derived from a ROM is ever committed here.

@@ -39,8 +39,13 @@ evidence. Read both before writing code.
   `xrom.h`). Never `-ftrivial-auto-var-init` or `-ffast-math` on game code.
   Releases build with `XBOX_LTO=1`.
 - **Stock 64 MB** (`xhw_ramlock.c`). **Time comes from the vblank and the
-  ACPI timer**, never an assumed CPU clock. **The splash is Melee-X's
-  `xhw_splash.c` as is.**
+  ACPI timer**, never an assumed CPU clock.
+- **The loading screen is built on Melee-X's `xhw_splash.c`** ("TechProGabe
+  Presents...": its wordmark, font, palette, "Hold BACK for 480i" line and
+  behaviours are kept; `docs/PLAN.md` §5.5 adds the rest). It draws in the
+  dashboard's 640x480 mode before pbkit so it shows on any TV, and the four
+  ways back to a picture (BACK, BACK + START, the init fallback, the 15 s
+  probation) are never removed.
 - **The tool is cross-platform and easy**: `n64rx` must work on Windows,
   macOS and Linux; the Docker engine gives identical results everywhere;
   `doctor` explains or installs the native toolchain; every error says what

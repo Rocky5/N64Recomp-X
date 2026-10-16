@@ -50,6 +50,8 @@ Zelda64Recomp: `us.rev1.toml`, `patches.toml`, `patches/Makefile`.
 | Maintainer requirement (2026-10-16) | **the tool works on Windows, macOS and Linux and is really easy to use** | this session |
 | Maintainer requirement (2026-10-16) | **up to 720p, and widescreen, for every game** (§5.4) | this session |
 | Maintainer requirement (2026-10-16) | **a BACK-button menu over the running game that controls the port's settings, game-agnostic** (§5.2) | this session |
+| Maintainer requirement (2026-10-16) | **a loading screen worth looking at, in the line of the siblings' "TechProGabe Presents..." splash, with safe 480i fallbacks** (§5.5) | this session |
+| The sibling splash | `xhw_splash.c` (166 lines, Melee-X's, from OpenCrossing's `xbox_splash.c`): CPU-drawn into the `XVideoSetMode(640, 480, 32)` framebuffer before pbkit, so it shows on any TV; unscii-16 at 3x; navy gradient `rgb(14, 22, 52)` → `rgb(6, 10, 28)`; fade-in 17 steps / ~500 ms; a 400x8 bar in `rgb(120, 200, 110)`; "Hold BACK for 480i (safe video)"; 2 s hold, any button skips; `xhw_splash_progress`, `xhw_splash_release` before the mode change; no `XVideoWaitForVBlank` (`pb_init` fails with -4 after it); `-DXHW_NO_SPLASH`, `-DXHW_SPLASH_MS`, `-DXHW_SPLASH_DUMP` | Wings64-X `xbox/src/hw/xhw_splash.c` |
 
 ---
 
@@ -135,6 +137,7 @@ The headline facts that shape everything else:
 | the Xbox kernel loads XBE sections on demand and `cxbe` preloads all of them | one post-link bit per section turns an overlay's code into a demand-loaded section; no loader of our own (§3.4) |
 | the tool must be easy on three OSes | Docker image first (identical everywhere, Apple Silicon included through a multi-arch image), native toolchains second, a `doctor` command, per-OS single-file binaries of the CLI, a tri-OS CI matrix (§5.1, §6 M0, M7) |
 | 720p, widescreen and a BACK menu are goals for every game, not per-game features | the video rules, the 16:9 mapping and the settings menu live in the platform layer and the interpreter; the only per-game piece is the culling fix that stops edge pop-in with hor+ (§5.2, §5.4); 1080i is not offered |
+| the loading screen is part of the product | built on `xhw_splash.c`, CPU-drawn in the dashboard's mode so it shows on any TV: the family's wordmark and palette, an animated background, the game card, real stage progress, a video line that says which mode is coming and how to hold BACK for 480i, a bridge frame across the mode switch, and four ways back to a picture (§5.5) |
 
 ---
 
@@ -150,7 +153,7 @@ source gives this project and under what terms.
 | `Zelda64Recomp/Zelda64Recomp` @ `b65c482` | Majora's Mask recomp | knowledge only: how a game is configured (`us.rev1.toml`: symbol file, overlay list, stubs, single-instruction patches such as rewriting a KSEG1 `lui` to KSEG0), how patches are built (clang `-target mips -mips2 -mabi=32 -O2 -G0 -mno-abicalls`, lld `--emit-relocs`, `single_file_output`), that compressed games are recompiled from a decompressed image, which microcodes needed recompiling | GPL-3.0 | no code; the patch *mechanism* is upstream's MIT tooling, the patch *contents* are theirs |
 | `Zelda64Recomp/Zelda64RecompSyms` | MM symbol files generated from the `zeldaret/mm` decomp | the format; a data point on size (81,965 lines, 17,765 functions) | **no licence file** | not committed here; §8 Q7 |
 | Ares (via `librecomp/rsp_vu*.hpp`) | the RSP vector unit, SSE4.1 or scalar | the scalar reference as a test oracle and a model for the MMX/scalar VU of §3.8 | ISC (header) inside a GPL repo | from Ares directly, with attribution |
-| `TechProGabe/Wings64-X` @ `83f1258` | Pilotwings 64 on the Xbox, from the decomp | `xbox/src/hw/*` as is (boot, splash, video, pad, AC97, clock, RAM lock, crash/hang, profiler, fbdump, autopad, `nv2a*.c`, `asp_hle.c`); the libultra shim's design and most of its code (`os_shim.c`: levels, lock, queues, VI thread, synchronous tasks, virtual DAC, EEPROM); `f3d_interp.c` + `texconv.c`; `xhw_rom.c` (find, order, header, SHA-1); `settings*.c`; build (`compile_game.py`, `thinlto_link.py`, CMake, MSYS2 and Docker wrappers); console and xemu tooling; the game as the **A/B reference** | MIT (the maintainer's) | yes |
+| `TechProGabe/Wings64-X` @ `83f1258` | Pilotwings 64 on the Xbox, from the decomp | `xbox/src/hw/*` as is (boot, video, pad, AC97, clock, RAM lock, crash/hang, profiler, fbdump, autopad, `nv2a*.c`, `asp_hle.c`) and `xhw_splash.c` as the loading screen's base (§5.5); the libultra shim's design and most of its code (`os_shim.c`: levels, lock, queues, VI thread, synchronous tasks, virtual DAC, EEPROM); `f3d_interp.c` + `texconv.c`; `xhw_rom.c` (find, order, header, SHA-1); `settings*.c`; build (`compile_game.py`, `thinlto_link.py`, CMake, MSYS2 and Docker wrappers); console and xemu tooling; the game as the **A/B reference** | MIT (the maintainer's) | yes |
 | `TechProGabe/Melee-X` @ `abdfd0f` | the origin of the platform layer | `xhw_reserve_lazy`/`xhw_commit`/crash-guard commit-on-fault (the memory window of §3.2), the EFB-copy readback machinery, `settings.c`/`menu.c` semantics, PGO and order-file machinery, `docs/testing.md` method | GPL-3.0-or-later on paper because of melee-pc; the maintainer relicenses the Xbox files as their author (Wings64-X's position) | yes |
 | `TechProGabe/Snap64-X` @ `43e3803` | plan for Pokémon Snap from the decomp | the F3DEX2 interpreter design (§3.4 there), the readback rules, the memory-budget method, the plan shape | the maintainer's | yes, as design |
 | `TechProGabe/OpenCrossing-Xbox` @ `e6be908` | Animal Crossing on the Xbox | `traps.md` (clock, aliasing, rdtsc rewrite), `xbox_ramlock.c`, `xbox_code_repair.c`, the video rules | MIT | yes |
@@ -871,11 +874,12 @@ and the texture pool).
 | **720p** | 1280x720 R5G6B5 + Z24S8 | 16:9 | HDTV/VGA pack, the dashboard's 720p flag, ≥ 32 MB free before `pb_init`; **Auto's choice where allowed** |
 
 Defaults: `output = auto` (720p where the dashboard allows it, else 480p,
-else 480i) and `widescreen = auto`. The three nets from Wings64-X §3.3 apply
-unchanged: BACK held at boot (480i 4:3, saved), a `pb_init` or allocation
-failure falls to 480, and a mode not yet confirmed on this console is on
-probation (`video_pending.txt`, "New video mode 720p. Press A to keep it.",
-15 s, restart into 480i otherwise). The N64's picture, whatever the VI mode
+else 480i) and `widescreen = auto`. The ways back to a picture are §5.5's
+four: BACK held during the loading screen (480i 4:3, saved), BACK + START
+(the same plus default settings), a `pb_init` or allocation failure falling
+to 480, and a mode not yet confirmed on this console on probation
+(`video_pending.txt`, "New video mode 720p. Press A to keep it.", 15 s,
+restart into 480i otherwise). The N64's picture, whatever the VI mode
 says (320x240, 640x480 interlaced, letterboxed modes, `osViSetXScale`), maps
 onto the content rect: all of 640x480 at 4:3, all of 1280x720 with hor+, a
 centred 960x720 box with black bars when Widescreen is Off, the whole frame
@@ -890,6 +894,94 @@ alternative. Order of work in a pack: Off and Stretch cost nothing; Auto is
 right for most 3D on the first day; edge pop-in is the listed defect until
 the culling patch lands.
 
+### 5.5 The loading screen, and the ways back to a picture
+
+Maintainer request (2026-10-16): **a loading screen worth looking at, in the
+line of the siblings' "TechProGabe Presents..." splash, with safe 480i
+fallbacks.** The base is Melee-X's `xhw_splash.c` (§0 has its facts). It is
+drawn by the CPU into the framebuffer `XVideoSetMode(640, 480, 32)` returns,
+before pbkit exists, in the dashboard's own mode, which is why it shows on
+every TV and why it is the right place for the safety story. Everything
+below keeps its lineage (the wordmark, the font, the palette, the BACK line,
+the timings, the switches) and adds to it. Nothing on it is game art.
+
+**What it shows**, top to bottom, at 640x480:
+
+1. **Background**: the navy gradient as the base, with a slow aurora over
+   it: three soft colour bands inside the family's palette (navy, teal,
+   violet) drifting diagonally, computed at 160x120 from a sine table and
+   upscaled 4x with a 2x2 smoothing step, at ~30 fps. Cost: ~20k samples and
+   one 1.2 MB write of the framebuffer per frame, sequential rows (the
+   framebuffer is write-combined), nothing for the P3. A sparse field of
+   slow rising sparks (at most 48) over it. `-DXHW_SPLASH_STILL=1` freezes
+   both, for xemu shot comparisons.
+2. **The wordmark** "TechProGabe Presents..." at 3x in unscii-16, fading in
+   as today, then one light sweep (a brighter diagonal band crossing the
+   glyphs over ~700 ms), then settled with a 1-px shadow so it stays legible
+   over the moving background.
+3. **The game card**: the pack's icon (original art, `games/<id>/icon.png`,
+   64x64, baked into a C array at build time) and the pack's title
+   ("Pilotwings 64"), with "N64Recomp-X <version>" small at the bottom
+   right. Until the ROM is identified the card reads "Looking for a ROM...";
+   a ROM no pack knows shows the header's name and "no pack for this game",
+   then the error card.
+4. **The stage line and the bar**, with real progress behind them:
+   "Reading ROM (8 MB)" (bytes read), "Checking the ROM (SHA-1)" (chunks
+   hashed), "Preparing memory" (the window, the tables), "Loading code" (the
+   section table, pinned ROM ranges, the page cache's first fills),
+   "Starting <title>". The bar keeps the sibling's green, with a soft
+   gradient and a moving highlight. Test builds print the elapsed time per
+   stage at the right and log `[BOOT] stage <name> <ms>`.
+5. **The video line**, the new part of the safety story: it says what is
+   about to happen and how to stop it. "Video: 720p 16:9 (the dashboard
+   allows 720p). Hold BACK for 480i (safe video)." While BACK is held it
+   brightens and reads "Safe video: this boot runs 480i 4:3 and saves it";
+   with BACK + START, "Safe video and default settings". When the coming
+   mode is unconfirmed on this console it adds "First time at 720p here:
+   after the switch, press A within 15 s to keep it."
+
+**Timing.** The minimum hold stays `XHW_SPLASH_MS` (2,000 ms); the work
+(the ROM read, 0.5-3 s from the HDD; SHA-1 at ~0.2 s per 8 MB on the P3;
+the tables) usually covers it. Any button skips the hold, never the work. A
+splash thread (level 3, started by `xhw_splash_show`, joined by
+`xhw_splash_release`) animates while the boot thread works; stage and
+progress are shared state, as `xhw_splash_progress` is today. No sound: the
+AC97 pump starts after the mode switch, and a chime there would delay the
+boot for nothing.
+
+**The bridge across the mode switch** (`-DXHW_SPLASH_BRIDGE=1`, default on):
+`xhw_splash_release` keeps a copy of the last frame (640x480x32, 1.2 MB);
+after `pb_init` the back end draws it as one textured quad scaled into the
+new mode's content rect, with the stage line still updating ("Starting
+Pilotwings 64...", or "720p unavailable, using 480p" after a fallback),
+until the game's first present; then the texture is freed. One continuous
+picture from power-on to the game's first frame, at 480 and at 720p alike,
+instead of the siblings' black gap. Off: black between, as the siblings.
+
+**The ways back to a picture** (the siblings' three nets plus one; all
+logged):
+
+| # | when | what happens |
+|---|---|---|
+| 1 | BACK held while the loading screen shows (the controllers are opened before it, Melee-X's order; without a splash the boot still waits 1.5 s for them, OpenCrossing's rule) | this boot runs 480i 4:3 and saves `output = 480i`, `progressive = 0`, `widescreen = off`; the menu's Video output row goes back to Auto later |
+| 2 | BACK + START held | as 1, and `settings.ini` is rewritten with the defaults, so a bad binding, dead zone or volume cannot lock a user out; `[SETTINGS] reset at boot` |
+| 3 | `pb_init` or a contiguous allocation fails at 720p | `xhw_video_fallback_480`: 480p where allowed, else 480i; the bridge frame says so; never a black screen because of memory |
+| 4 | a mode not yet confirmed on this console | `video_pending.txt` is written before `XVideoSetMode`; the first frames carry "New video mode 720p. Press A to keep it. Back to 480i in 15 s." as CPU text (`xhw_overlay.c`); A confirms and saves `video_confirmed`; no A → restart into 480i, saved; a reset or power-off with the file present → 480i next boot. 480i is never on probation |
+
+The error cards (no ROM, wrong size, bad header, not a supported game, bad
+dump with both hashes shown, E: not writable) are drawn in the same dress by
+`xhw_error_card` with "Press any button or wait to return to the dashboard"
+(30 s), and `lastexit.txt` names the reason for the next boot's log.
+
+Kill switches: `-DXHW_NO_SPLASH` (straight to the mode switch), `-DXHW_SPLASH_MS=<n>`,
+`-DXHW_SPLASH_STILL=1`, `-DXHW_SPLASH_BRIDGE=0`, `-DXHW_SPLASH_DUMP`. Host
+test `test_splash.py` renders the screen on the host into a buffer (the
+drawing code depends on nothing but the framebuffer pointer and the font)
+and checks the layout: nothing outside the TV-safe area (the frame minus
+32 px), the palette inside the family's, every stage label fitting its line.
+The first xemu `[FBDUMP]` of M0 is the visual check, and the console the
+real one (interlace flicker on the sweep and the sparks is judged there).
+
 ---
 
 ## 6. Milestones
@@ -902,9 +994,10 @@ through `console.py`/`n64rx deploy`, logs pulled before every relaunch.
 
 ### M0: skeleton, toolchain on three OSes, the tool's shape
 - **Goal**: Wings64-X's platform layer copied (Melee parts already gone), an
-  XBE that boots to the "TechProGabe Presents..." splash and a "no game
-  built in" card; N64Recomp as a submodule building on Linux, macOS and
-  Windows; `n64rx doctor/build/games` scaffolded with both engines; the SDK
+  XBE that boots to the loading screen of §5.5 in its first form (the
+  animated background, the wordmark, the stage line and bar, the video line
+  with the BACK and BACK + START holds) and a "no game built in" card;
+  N64Recomp as a submodule building on Linux, macOS and Windows; `n64rx doctor/build/games` scaffolded with both engines; the SDK
   image building for amd64 and arm64; CI matrix green with the libdragon
   test ROM through the recompiler and a linking XBE.
 - **Files**: `xbox/src/hw/*` (from Wings64-X `83f1258`), `xbox/include/xhw.h`,
@@ -918,8 +1011,10 @@ through `console.py`/`n64rx deploy`, logs pulled before every relaunch.
 - **Done when**: `n64rx doctor` gives the right verdict on a clean Windows,
   macOS and Linux machine (one with Docker, one without); `n64rx build
   test.z64` (the libdragon ROM) produces an XBE on each through the Docker
-  engine and the native one; xemu boots the card; CI is green; the image is
-  on GHCR.
+  engine and the native one; xemu boots the loading screen and the card
+  (`[FBDUMP]` shots with `-DXHW_SPLASH_STILL=1`, kept as the look's
+  baseline), BACK and BACK + START during it take effect (`[SETTINGS]`
+  lines); `test_splash.py` passes; CI is green; the image is on GHCR.
 
 ### M1: the runtime core on Pilotwings 64: first frame
 - **Goal**: the PW64 pack (`pw64.us.syms.toml` from the decomp ELF via
@@ -952,7 +1047,9 @@ through `console.py`/`n64rx deploy`, logs pulled before every relaunch.
   `xhw_rom.c`'s known table from the pack, `games/pw64/README.md`; the first
   `[[patches.instruction]]` entries with reasons.
 - **Done when**: Wings64-X's xemu scenarios (`title`, `rb_a`, the attract
-  demos) run on this build with the same shots; BACK opens and closes the
+  demos) run on this build with the same shots; the loading screen shows
+  the Pilotwings 64 card with real stage progress and the bridge carries it
+  across the 720p switch with no black frame; BACK opens and closes the
   menu in flight with the game frozen underneath and silent, and a row
   changed in it is in `settings.ini` after Return; 720p shots show more world
   at the sides with the HUD box undistorted, Off shows the centred 4:3 box;
@@ -1114,7 +1211,8 @@ Decided on 2026-10-16 and no longer open: the tool runs on Windows, macOS and
 Linux with one command (§5.1); up to 720p and widescreen for every game, 1080i
 not offered (§5.4); the BACK menu is the port's settings UI in every game,
 game-agnostic, and a game-style menu a pack adds later is an addition, not a
-replacement (§5.2).
+replacement (§5.2); the loading screen is built on the siblings' splash with
+the four ways back to a picture (§5.5).
 
 ---
 
@@ -1135,8 +1233,12 @@ Paste this to start the build, and again after every context reset.
 > answered. Then read `docs/research.md`. Clone `TechProGabe/Wings64-X`,
 > `TechProGabe/Melee-X`, `TechProGabe/Snap64-X` and `TechProGabe/OpenCrossing-Xbox`
 > next to this repo and read the files `docs/PLAN.md`'s preamble lists; copy
-> from them rather than rewriting; `xhw_splash.c` and `xbox/src/hw` come over
-> as they are. Read N64Recomp's `include/recomp.h` before writing ours.
+> from them rather than rewriting; `xbox/src/hw` comes over as it is, and
+> `xhw_splash.c` is the base of the loading screen (§5.5), which keeps its
+> wordmark, font, palette, safe-video line and behaviours and adds the
+> animated background, the game card, the stage progress, the video line,
+> the bridge frame and the BACK + START reset. Read N64Recomp's
+> `include/recomp.h` before writing ours.
 >
 > Work milestone by milestone starting at M0. Each milestone ends with a
 > `default.xbe` that boots, the host tests green on Linux, macOS and Windows
