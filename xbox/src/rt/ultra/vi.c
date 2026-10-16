@@ -22,6 +22,7 @@
 
 int xrc_menu_open(void);
 void xrc_menu_vi(unsigned retrace);
+void xrc_video_vi(unsigned retrace);
 
 #ifndef XRC_VI_RESERVE
 #define XRC_VI_RESERVE 2
@@ -45,6 +46,7 @@ static void vi_thread(void* arg) {
         s_retrace++;
         mq = s_mq;
         xrc_menu_vi(s_retrace);
+        xrc_video_vi(s_retrace);   /* the video-mode prompt: A, or the timeout (../video.c) */
         if (mq && s_retrace % s_every == 0 && !xrc_menu_open()) {
             int32_t count = (int32_t)rd32(mq + MQ_MSGCOUNT), valid = (int32_t)rd32(mq + MQ_VALIDCOUNT);
             if (!XRC_VI_RESERVE || valid + 1 + XRC_VI_RESERVE <= count) xu_send(mq, s_msg, 0, 0);

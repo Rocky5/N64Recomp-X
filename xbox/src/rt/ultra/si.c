@@ -28,6 +28,7 @@
 
 void xrc_menu_feed(int port, const xhw_pad* p);
 int xrc_menu_blocks(uint32_t raw_buttons);
+int xrc_video_pad(int port, const xhw_pad* p);
 
 enum {
     N_A = 0x8000, N_B = 0x4000, N_Z = 0x2000, N_START = 0x1000, N_DU = 0x0800, N_DD = 0x0400, N_DL = 0x0200,
@@ -96,6 +97,7 @@ static void read_pads(void) {
         xrc_menu_feed(i, &p);           /* BACK taps open the menu */
         if (p.connected) raw |= p.buttons;
         map(i, &p, &s_pads[i]);
+        if (xrc_video_pad(i, &p)) s_pads[i].button &= (uint16_t)~N_A;   /* the A that kept a video mode */
     }
     if (xrc_menu_blocks(raw))   /* the menu is open, or the press that closed it is still down */
         for (i = 0; i < 4; i++) s_pads[i].button = 0, s_pads[i].x = s_pads[i].y = 0;

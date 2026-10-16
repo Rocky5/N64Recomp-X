@@ -186,3 +186,16 @@ screen's animation; they stay for now.)
 
 **Widescreen offers Auto, On and Off.** Stretch needs interpreter work and
 comes with M6.
+
+**Generic hor+** (`XGFX_WORLD_GENERIC`, PLAN.md 5.4): until a pack emits a
+world tag, every perspective draw under the full-screen scissor is the world
+and is drawn across the whole width; rectangles and orthographic draws stay
+in the 4:3 box. Wings64-X widened only inside its decomp patches' tags; here
+no pack has patches on day one. The game's own culling still works to its
+4:3 frustum (pop-in at the edges until a pack's culling patch).
+
+**The video-mode probation's runtime half is `rt/video.c`** (M1 had none: A
+could not keep a mode). A on any port, at the game's reads or from the VI
+thread every 8 retraces, keeps the mode and saves `video_confirmed`; that A
+does not reach the game until let go. The timeout restarts into 480i from
+the VI thread.

@@ -1,0 +1,2 @@
+# L + R + BACK + WHITE while the game runs (it reads the controllers): restart
+t25000 L R BACK WHITE for 300

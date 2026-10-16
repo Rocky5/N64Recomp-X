@@ -319,6 +319,7 @@ static int s_title;   /* the title screen this frame (title fit) */
 static volatile int s_ws_req;   /* f3d_set_widescreen */
 static int s_hp;                /* hor+ this frame */
 static int s_world;             /* inside a world view's tags (patches/050) */
+static int s_tagged;            /* a world tag was seen: the pack marks its world views itself */
 static int s_anchor = 'C';      /* the HUD anchor of the 2D draws that follow (patches/052) */
 static int s_extend;            /* this draw state: a world view's perspective draw, scissored to s_wx0..s_wx1 */
 static int s_side_drawn;        /* this frame drew into the pillarbox strips on purpose (side_clear) */
@@ -695,7 +696,8 @@ static void pixel_state(int depth_override_always) {
     /* hor+ (map_setup): a world view's perspective draw under the full-screen
      * scissor is drawn across the whole width; other draws stay in the box,
      * moved by the HUD anchor ('L' / 'R': the side margin) */
-    s_extend = s_hp && s_world && !s_sc_on && !depth_override_always /* a rectangle */ && R.proj[2][3] != 0.0f;
+    s_extend = s_hp && (s_world || (XGFX_WORLD_GENERIC && !s_tagged)) && !s_sc_on && !depth_override_always /* a rectangle */ &&
+               R.proj[2][3] != 0.0f;
     s_xoff = 0.0f;
     if (s_hp && !s_extend && XGFX_HUD_ANCHOR) {
         if (s_anchor == 'L') s_xoff = s_wx0 - s_cx;
@@ -1355,6 +1357,7 @@ static void run_dl(const uint32_t* pc) {
             case F3D_G_NOOP:   /* the port's widescreen tags (patches/050, 052; wings64_widescreen.h) */
                 if (w1 == WINGS64_TAG_WORLD_ON || w1 == WINGS64_TAG_WORLD_OFF) {
                     s_world = w1 == WINGS64_TAG_WORLD_ON;
+                    s_tagged = 1;
                     DIRTY();
                 } else if ((w1 & 0xFFFFFF00u) == WINGS64_TAG_ANCHOR) {
                     s_anchor = (int)(w1 & 0xFF);

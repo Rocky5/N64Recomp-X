@@ -1,0 +1,7 @@
+# the BACK menu: Video output -> Auto, then Restart (the * row's restart)
+t20000 BACK for 200
+t21500 LEFT for 100
+t22200 UP for 100
+t22600 UP for 100
+t23000 UP for 100
+t23800 A for 100

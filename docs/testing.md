@@ -76,7 +76,13 @@ BLACK UP DOWN LEFT RIGHT`, triggers `L R`, sticks `SL SR SU SD CL CR CU CD`,
 | `t6000 L R BACK BLACK for 300` | the same from the "No game built in" card |
 | `t800 L R BACK WHITE for 300` | `[PAD] port 1: L + R + BACK + WHITE`, a restart; next boot: `previous exit: restart: ...` |
 
-M2's: `tools/xbox/scenarios/menu/autopad.txt` (a game build): `[MENU] opened`,
+Video modes in xemu: `tools/xbox/eeprom_video.py <copy of eeprom.bin> 480p,720p,widescreen`
+and a slot config pointing at the copy (`MX_XEMU_ARGS="-config_path .../xemu-hd.toml"`);
+the HDTV AV pack is xemu's default. M2's scenarios (game builds):
+`combo_flight` (restart while the game reads the pads), `combo_menu` (the
+dashboard from inside the menu), `video_auto` (the menu's Video output to
+Auto, Restart), `hd` (A keeps 720p, shots with Widescreen Auto and after a
+change). `tools/xbox/scenarios/menu/autopad.txt`: `[MENU] opened`,
 `[MENU] Widescreen: ...`, `[MENU] closed (settings.ini saved)`, four shots.
 A COM1 `[FBDUMP]` takes seconds in xemu, so scenarios space their shots.
 Timed events follow the ACPI clock.

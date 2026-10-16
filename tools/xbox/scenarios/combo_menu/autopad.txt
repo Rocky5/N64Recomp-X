@@ -1,0 +1,3 @@
+# L + R + BACK + BLACK from inside the BACK menu: the dashboard
+t30000 BACK for 200
+t33000 L R BACK BLACK for 300

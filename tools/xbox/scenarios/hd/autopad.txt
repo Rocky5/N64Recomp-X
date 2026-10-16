@@ -1,0 +1,10 @@
+# 720p (dashboard 480p/720p/widescreen): A keeps the mode; a shot with
+# Widescreen Auto (hor+), Off in the menu, a shot (the 4:3 box)
+t10000 A for 200
+t26000 SHOT
+t40000 BACK for 200
+t41000 DOWN for 100
+t41500 RIGHT for 100
+t42000 RIGHT for 100
+t43000 B for 100
+t47000 SHOT
