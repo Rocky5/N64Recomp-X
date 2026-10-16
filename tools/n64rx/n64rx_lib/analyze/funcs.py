@@ -26,6 +26,7 @@ class Segment:
     rom: int
     vram: int
     size: int
+    code_end: int = 0               # where its text ends, when a load descriptor says (0: unknown)
 
     def has(self, v):
         return self.vram <= v < self.vram + self.size
@@ -43,11 +44,17 @@ class Func:
 
 
 class Image:
+    """`focus`: the segment being walked; where overlays share an address it
+    is the one read (an overlay's code reads its own bytes)"""
     def __init__(self, rom):
         self.rom = rom
         self.segments = []
+        self.focus = None
+        self.text_ends = {}         # (rom, vram) -> text end, from load descriptors (segments.in_data)
 
     def seg(self, v):
+        if self.focus is not None and self.focus.has(v):
+            return self.focus
         for s in self.segments:
             if s.has(v):
                 return s
@@ -252,11 +259,21 @@ def walk(img, start, starts):
     return f
 
 
-def discover(img, seg, roots):
+def discover(img, seg, roots, weak=()):
     """Every function of `seg` reachable from `roots`, then its gaps, and
-    again from what the gaps called, until nothing new turns up."""
+    again from what the gaps called, until nothing new turns up. `weak`:
+    roots that may be another overlay's call target at the same address; one
+    that a function's own branches run past is not a start."""
     funcs, starts = {}, set(roots)
     queue = list(roots)
+    prev, img.focus = img.focus, seg
+    try:
+        return _discover(img, seg, roots, funcs, starts, queue, set(weak))
+    finally:
+        img.focus = prev
+
+
+def _discover(img, seg, roots, funcs, starts, queue, weak):
     while True:
         while queue:
             s = queue.pop()
@@ -271,9 +288,9 @@ def discover(img, seg, roots):
                 if t not in starts:
                     starts.add(t)
                     queue.append(t)
-        _settle(funcs)
+        _settle(funcs, weak)
         new = _gaps(img, seg, funcs)
-        _settle(funcs)
+        _settle(funcs, weak)
         for f in new:
             for t in sorted(f.calls | f.tails):
                 if t not in starts:
@@ -283,12 +300,18 @@ def discover(img, seg, roots):
             return funcs
 
 
-def _settle(funcs):
-    """No overlaps: a function that ran into the next one stops there."""
+def _settle(funcs, weak=()):
+    """No overlaps: a function that ran into the next one stops there, or,
+    when the next one is a weak root, takes it in."""
     order = sorted(funcs)
-    for a, b in zip(order, order[1:]):
+    a = order[0] if order else None
+    for b in order[1:]:
+        if funcs[a].end > b and b in weak and funcs[a].end >= funcs[b].end:
+            del funcs[b]
+            continue
         if funcs[a].end > b:
             funcs[a].end = b
+        a = b
 
 
 def _dead_epilogue(img, f):
@@ -354,6 +377,8 @@ def _gaps(img, seg, funcs):
         order = sorted(funcs)
         # (and the code before the first function: a loaded segment starts with code)
         pairs = ([(None, order[0])] if order and seg.vram < order[0] else []) + list(zip(order, order[1:]))
+        if order and seg.code_end > funcs[order[-1]].end:
+            pairs.append((order[-1], seg.code_end))   # and up to the end of the text a descriptor gives
         for a, b in pairs:
             pc = funcs[a].end if a is not None else seg.vram
             while pc < b and img.word(pc) == 0:

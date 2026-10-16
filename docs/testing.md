@@ -79,6 +79,10 @@ card's second number is the host return address (`tools/xbox/sym.py --map
 <folder>/debug/n64recomp_x.map 0x...` names the recompiled caller).
 `[INTERP]` lines name the hand-written routines that run interpreted.
 
+Pokemon Snap's scenario (`tools/xbox/scenarios/snap_title`): the intro, the
+title, START and A through the menus, shots along the way (build with
+`N64RX_CFLAGS=-DXHW_AUTOPAD=1`).
+
 ## The learning loop (`docs/analyzer.md`)
 
 ```sh
@@ -172,6 +176,10 @@ Controller Pak screen, its pages free).
 | `-DXHW_ROM_IN_XBE=0` | 1 | ignore `default.xbe`'s `$ROM` section: the ROM is looked for next to the XBE (the build-side switch is `n64rx build --rom-beside`, which leaves the section out and writes the file) |
 | `-DXRC_TLB=0` | 1 | the TLB's entries are kept (tlbp, tlbr, `osVirtualToPhysical` still see them) but nothing is aliased: a TLB-mapped access faults as before `tlb.c` |
 | `-DXRC_SAFETY_NET=0` | 1 | a call to an address with no function is the fatal card again (no interpreting, no `[LEARN]`, no `learn.txt`) |
+| `-DXRC_OVERLAYS=0` | 1 | sections that share vram are not switched on the PI DMA that loads them (ovl.c): the section entered last keeps the address |
+| `-DXRC_HW_SHADOW=0` | 1 | no shadow pages for the RCP registers through KSEG1 (mem.c): a game's own access there faults with the crash card again |
+| `-DXRC_THREAD_RESUME=0` | 1 | osStopThread(self) parks for good, osCreateThread over a stopped thread does not restart it, osStartThread never waits for a higher priority on the same kernel level (thread.c) |
+| `N64RX_OVERLAYS=0` (env, n64rx) | unset | the analyser's old segment rule: no segment whose vram overlaps a known one, no load descriptors without a caller (segments.py) |
 | `N64RX_WITHHOLD=<vram>,...` (env, n64rx) | unset | test: those functions left out of the analysis, so the safety net runs them (the learning loop's demo) |
 | `-DXRC_SAVE_PAK=0` | 1 | no pak in any port: the PIF's status says none, pak commands get no answer, osPfs* return `PFS_ERR_NOPACK` (the old behaviour) |
 | `-DXRC_SAVE_CART=0` | 1 | no SRAM or FlashRAM: domain 2 reads zeros and drops writes, osFlash* fail |

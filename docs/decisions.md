@@ -430,3 +430,14 @@ before the `_tlb` rule named it) calls it; the runtime's threads are the
 kernel's, so there is no run queue to join. Every libultra caller rechecks
 its condition in a loop, so returning early is a spurious wake-up; the
 millisecond keeps a busy caller from starving lower kernel priorities.
+
+## Overlays keyed by ROM offset, switched on the DMA (2026-10-16)
+
+Functions of segments that share vram are named `func_<vram>_<ROM offset>`
+and keyed `vram | ROM offset << 32` in the analyser, rather than giving
+N64Recomp relocatable sections: the game's overlays are linked at fixed
+addresses, and N64Recomp already turns an ambiguous `jal` into a lookup.
+The runtime maps the overlay the last PI DMA loaded (the source ROM range
+decides, not the bytes), which is cheap (one pass over the section's
+range) and needs no hashing of RAM. KSEG1 register reads get shadow pages
+rather than per-site patches, so a ROM-only build needs no pack for them.

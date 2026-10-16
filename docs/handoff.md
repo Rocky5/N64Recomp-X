@@ -515,3 +515,15 @@ microcode was never logged and its resampler table never searched.
   `[LEARN]` lines (`out-sm64/serial5.log` holds 37 more).
 - Dr. Mario 64: interpreted code reads PI registers through KSEG1; its main
   code segment is not found or learnt.
+
+## Pokemon Snap from its ROM alone, overlays sharing vram (agent snap, 2026-10-16)
+
+Verified: `test_analyze.py` (6 pairs with Snap: 0 wrong libultra names, floors held); `test_n64rx.py`, `test_interp.py` pass;
+Snap builds (`--fast`), 32 segments, 3793 functions recompiled; in xemu
+(slot 14, emulator only) its intro scene runs (F3DEX2 identified, aspMain
+audio, FlashRAM 1 Mbit save found), the overlay switch to the main menu
+works (`[OVL] 800e18a0: ROM a08e30 mapped`), then it faults reading NULL+0xe
+in func_80007F24 under omCreateProcess (main menu's func_800E4AF8: its
+omAddGObj seems to return NULL). MK64 ROM-only and PW64 (its pack) build and draw in xemu, no fault, no stall.
+Not verified: SM64 boot after these changes, real hardware, the
+title screen and Beach. `[MEM]`/`[CLOCK]`: xemu 64 MB, 733 MHz (not hardware).

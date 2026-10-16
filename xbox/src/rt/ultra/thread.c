@@ -14,6 +14,15 @@
 #include "ultra.h"
 
 #define MAX_THREADS 32
+/* osStopThread(self) waits for an osStartThread instead of parking for
+ * good: HAL's object manager (Pokemon Snap) runs each object's thread a
+ * frame at a time that way, and destroys and creates them again on the
+ * same OSThread structs: an osCreateThread over a stopped thread makes the
+ * next osStartThread run the new entry on the same kernel thread (back to
+ * thread_body's start). Kill switch: -DXRC_THREAD_RESUME=0 (parks). */
+#ifndef XRC_THREAD_RESUME
+#define XRC_THREAD_RESUME 1
+#endif
 #define HOST_STACK (128 * 1024)   /* the kernel thread's; the game's own stack is in RDRAM */
 
 /* ---- the lock ---- */
@@ -38,6 +47,9 @@ typedef struct {
     volatile uint32_t wait;     /* what it sleeps on (a queue address, |1 for "full"), 0 when running */
     uint32_t entry, arg, sp;
     int ints_off;               /* __osDisableInt / cop0 status IE clear: holds one lock level */
+    volatile int stopped;       /* in osStopThread, until an osStartThread */
+    volatile int fresh;         /* osCreateThread again on this OSThread: start over at the entry */
+    void* jb[5];                /* thread_body's restart point (__builtin_setjmp) */
 } Thr;
 static Thr s_thr[MAX_THREADS];
 static volatile int s_nthr;
@@ -121,11 +133,26 @@ static void park(void) {
     for (;;) xhw_event_wait(e, XHW_INFINITE);
 }
 
+/* a stopped N64 thread waits here for osStartThread; created again in the
+ * meantime, it starts over at its (new) entry */
+static void stop_wait(Thr* me) {
+    if (!XRC_THREAD_RESUME || !me->t) park();
+    me->stopped = 1;
+    while (me->stopped) xhw_event_wait(me->ev, XHW_INFINITE);
+    if (me->fresh) __builtin_longjmp(me->jb, 1);
+    wr16(me->t + TH_STATE, OS_STATE_RUNNING);
+}
+
 static void thread_body(void* p) {
     Thr* d = (Thr*)p;
     recomp_context ctx;
     if (s_tls == 0xFFFFFFFFu) s_tls = xhw_tls_alloc();
     xhw_tls_set(s_tls, d);
+    if (XRC_THREAD_RESUME && __builtin_setjmp(d->jb)) {   /* created again (stop_wait) */
+        d = (Thr*)xhw_tls_get(s_tls);
+        xhw_logf("[OS] thread %d started again: entry %08x", (int)(int32_t)rd32(d->t + TH_ID), (unsigned)d->entry);
+    }
+    d->fresh = 0;
     xrc_ctx_init(&ctx, d->sp);
     ctx.r4 = (gpr)(int32_t)d->arg;
     set_cop1_cs(0);
@@ -133,7 +160,7 @@ static void thread_body(void* p) {
     /* an N64 thread that returns stops (libultra's __osCleanupThread) */
     xhw_logf("[OS] thread %d returned", (int)(int32_t)rd32(d->t + TH_ID));
     wr16(d->t + TH_STATE, OS_STATE_STOPPED);
-    park();
+    stop_wait(d);
 }
 
 /* osCreateThread(t, id, entry, arg, sp, pri) */
@@ -144,6 +171,7 @@ ULTRA(osCreateThread) {
     xu_lock();
     d = find(t);
     if (!d) d = add(t);
+    if (d->kt && XRC_THREAD_RESUME) d->fresh = 1;   /* the old one is stopped: starts over */
     d->entry = ARG(2);
     d->arg = ARG(3);
     d->sp = ARG(4);
@@ -168,7 +196,17 @@ ULTRA(osStartThread) {
         if (!d->kt) xrc_fatal_vram("osStartThread: no kernel thread", t, 0);
         xhw_logf("[OS] thread %d started: entry %08x, sp %08x, N64 priority %d -> level %d",
                  (int)(int32_t)rd32(t + TH_ID), (unsigned)d->entry, (unsigned)d->sp, pri, xu_level_of(pri));
+    } else if (XRC_THREAD_RESUME && d->stopped) {
+        wr16(t + TH_STATE, OS_STATE_RUNNABLE);
+        d->stopped = 0;
+        xhw_event_signal(d->ev);
     }
+    /* a higher N64 priority runs first, as libultra dispatches it: where the
+     * kernel levels are equal (50 and 51 share one) the caller waits until
+     * it stops or blocks on a queue; a higher level preempts by itself */
+    if (XRC_THREAD_RESUME && me->t && (int32_t)rd32(t + TH_PRIORITY) > (int32_t)rd32(me->t + TH_PRIORITY) &&
+        xu_level_of((int32_t)rd32(t + TH_PRIORITY)) == xu_level_of((int32_t)rd32(me->t + TH_PRIORITY)))
+        while (!d->stopped && !d->wait) xhw_yield();
     /* the boot code is not a thread: on the N64 the first osStartThread
      * dispatches and the boot code never runs again */
     if (me->t == 0 && !me->entry) {
@@ -181,8 +219,10 @@ ULTRA(osStopThread) {
     uint32_t t = ARG(0);
     (void)rdram;
     if (!t || t == self()->t) {
-        if (t) wr16(t + TH_STATE, OS_STATE_STOPPED);
-        park();
+        Thr* me = self();
+        if (me->t) wr16(me->t + TH_STATE, OS_STATE_STOPPED);
+        stop_wait(me);
+        return;
     }
     xhw_logf("[OS] osStopThread of another thread (%08x): not supported, ignored", (unsigned)t);
 }
@@ -190,8 +230,15 @@ ULTRA(osStopThread) {
 ULTRA(osDestroyThread) {
     uint32_t t = ARG(0);
     (void)rdram;
-    if (!t || t == self()->t) park();
-    xhw_logf("[OS] osDestroyThread of another thread (%08x): ignored", (unsigned)t);
+    static unsigned s_logged;
+    if (!t || t == self()->t) {
+        if (t) wr16(t + TH_STATE, OS_STATE_STOPPED);
+        stop_wait(self());
+        return;
+    }
+    /* another thread: it is stopped (HAL's object manager stops them first)
+     * and stays so until it is created again */
+    if (s_logged++ < 4) xhw_logf("[OS] osDestroyThread of another thread (%08x): it stays stopped", (unsigned)t);
 }
 
 ULTRA(osSetThreadPri) {

@@ -10,7 +10,15 @@ hold a ROM offset R, a KSEG0 address V and a size N, with R + N inside the
 ROM and V outside every known segment, is a candidate. A candidate becomes a
 segment when the known code calls into it (a `jal` whose target falls in
 [V, V + N)): its bytes at V are then the code being called. Nothing here
-needs the callee to be identified."""
+needs the callee to be identified.
+
+Overlays: V may lie inside a known segment when the ROM range is another
+one (levels loaded one at a time at the same address). A call counts as
+"into the unknown" when no known segment has a function at its target, so
+a call into an overlay's address range that the overlay found first does
+not explain brings in the next one. Kill switch: N64RX_OVERLAYS=0 (the
+old rule: V outside every known segment)."""
+import os
 from .funcs import Segment
 from .mips import Ins, SP
 
@@ -101,7 +109,7 @@ def candidates(img, funcs, rom_size):
                 if not 0x1000 <= r < rom_size:
                     continue
                 for kv, v in args.items():
-                    if not 0x80000000 <= v < 0x80800000 or img.seg(v):
+                    if not 0x80000000 <= v < 0x80800000 or _taken(img, r, v):
                         continue
                     after = ORDER[max(pos[kr], pos[kv]) + 1] if max(pos[kr], pos[kv]) + 1 < len(ORDER) else None
                     for kn, n in args.items():
@@ -130,9 +138,31 @@ def in_data(img, rom_size):
     for i in range(len(ws) - 2):
         a, b, c = ws[i], ws[i + 1], ws[i + 2]
         for v, r, e in ((a, b, c), (c, a, b)):
-            if 0x80000400 <= v < 0x80800000 and not v & 3 and 0x1000 <= r < e <= rom_size and not r & 3 and                     0x100 <= e - r <= 0x400000 and not img.seg(v):
-                out.add((r, v, e - r, f'a load described in ROM data at {4 * i:#x}', 2))
+            if 0x80000400 <= v < 0x80800000 and not v & 3 and 0x1000 <= r < e <= rom_size and not r & 3 and                     0x100 <= e - r <= 0x400000 and not _taken(img, r, v):
+                # (start, end, RAM, text start, text end, ...): a descriptor
+                # that says where its code is (HAL's overlay tables) names a
+                # segment even when no known code calls into it (a scene's
+                # entry reached through a pointer): natural 3
+                text = (OVERLAYS and (v, r, e) == (c, a, b) and i + 4 < len(ws) and ws[i + 3] == v and
+                        v < ws[i + 4] <= v + (e - r) and not ws[i + 4] & 3)
+                out.add((r, v, e - r, f'a load described in ROM data at {4 * i:#x}', 3 if text else 2))
+                if text:
+                    img.text_ends[(r, v)] = ws[i + 4]
     return out
+
+
+OVERLAYS = os.environ.get('N64RX_OVERLAYS', '1') != '0'
+
+
+def _taken(img, r, v):
+    """a load to v from ROM r explains nothing new: v is in a known segment
+    (with overlays off), in the boot segment, or r is a known segment's ROM"""
+    if not OVERLAYS:
+        return img.seg(v) is not None
+    for i, s in enumerate(img.segments):
+        if s.rom <= r < s.rom + s.size or (i == 0 and s.has(v)):
+            return True
+    return False
 
 
 def _starts_like_function(img, t):
@@ -148,6 +178,19 @@ def _starts_like_function(img, t):
     return p1 == 0 or p2 == 0x03E00008
 
 
+def weak(seg, inside):
+    """the roots a call gave that may be another overlay's (every one but
+    the start of a described text), with overlays on"""
+    return [t for t in inside if t != seg.vram or not seg.code_end] if OVERLAYS else []
+
+
+def _name(img, r, v):
+    """seg_<vram>, and seg_<vram>_<rom> when a known segment has that name
+    (two overlays at one address)"""
+    n = f'seg_{v:08X}'
+    return n if all(s.name != n for s in img.segments) else f'{n}_{r:X}'
+
+
 def find(img, funcs_by_seg, rom_size):
     """New segments: candidates the known code calls into. Each (ROM, vram,
     size) a call offers is tried: the bytes at every call target must look
@@ -157,24 +200,38 @@ def find(img, funcs_by_seg, rom_size):
     smallest size."""
     from .funcs import discover
     known = [f for fs in funcs_by_seg for f in fs.values()]
+    starts = {f.start for f in known}
     targets = set()
     for f in known:
-        targets |= {t for t in f.calls | f.tails if not img.seg(t)}
+        targets |= {t for t in f.calls | f.tails if (t not in starts if OVERLAYS else not img.seg(t))}
     allf = {f.start: f for f in known}
     trials = []
     found_in = list(candidates(img, allf, rom_size))
-    if targets:
+    if targets or OVERLAYS:
         found_in += sorted(in_data(img, rom_size), key=lambda c: c[:3])
     for r, v, n, pc, natural in found_in:
         inside = sorted(t for t in targets if v <= t < v + n)
-        if not inside:
+        if not inside and natural != 3:
             continue
-        seg = Segment(f'seg_{v:08X}', r, v, n)
+        seg = Segment(_name(img, r, v), r, v, n, img.text_ends.get((r, v), 0) if natural == 3 else 0)
         img.segments.append(seg)
-        score = sum(_starts_like_function(img, t) for t in inside) / len(inside)
+        prev, img.focus = img.focus, seg
+        like = [t for t in inside if _starts_like_function(img, t)]
+        if natural == 3:
+            # the text starts with a function (the walks from it must be
+            # clean); targets that do not look like starts are another
+            # overlay's at the same address
+            like = inside = sorted(set(like) | {v})
+        img.focus = prev
+        score = len(like) / len(inside)
         ok = score >= 0.9
+        if not ok and OVERLAYS and natural >= 2 and score >= 0.75 and len(like) >= 4:
+            # a load table's (start, end, RAM): where overlays share the
+            # range some targets are another overlay's; the ones that look
+            # like starts are this one's
+            ok, inside = True, like
         if ok:
-            fs = discover(img, seg, inside)
+            fs = discover(img, seg, inside, weak(seg, inside))
             ok = bool(fs) and not any(f.bad for f in fs.values())
         img.segments.remove(seg)
         if ok:
