@@ -97,6 +97,7 @@ jobs:
           python tools/xbox/test_fbfx.py
           python tools/xbox/test_yaz0.py
           python tools/xbox/test_mmio.py
+          python tools/xbox/test_entry.py
           python tools/xbox/test_asp_hle.py --bench 0
 
       - name: The platform and runtime alone (no game)

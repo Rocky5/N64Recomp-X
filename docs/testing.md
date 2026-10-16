@@ -21,6 +21,7 @@ python tools/xbox/test_saves.py         # saves: pak CRCs and PIF round trips, t
 python tools/xbox/test_f3dex.py         # the display-list interpreter on a fake back end: Fast3D, F3DEX (old and new), F3DEX2, the ucode switch, CI textures
 python tools/xbox/test_fbfx.py          # framebuffer readback's bookkeeping: colour-image slots, stale/hot marks, the RGBA5551/8888 conversion
 python tools/xbox/test_yaz0.py          # Yaz0 ROMs on a synthetic ROM: the decoder's every code path, the DMA table found by behaviour, files at their vrom, the table rewritten
+python tools/xbox/test_entry.py         # the analyser's entry-code shapes on hand-assembled entries (SDK, start-to-end + jal, empty clears, the stack and j/jal, refusals)
 python tools/xbox/test_analyze.py       # the analyser against every decomp + ROM pair present (skips without ROMs: CI); N64RX_ROMS=<folder>
 ```
 
