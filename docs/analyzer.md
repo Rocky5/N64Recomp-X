@@ -98,6 +98,13 @@ function pointers, then faults in recompiled goddard code (a read of the
 address `04000650`, frame ~225): goddard maps `0x04000000` through the TLB
 (its renderer's `osMapTLB` calls, read in the decomp) and the runtime has
 no TLB. Not the net: the runtime needs TLB mapping for SM64's head screen.
+With the TLB (`tlb.c`, `docs/decisions.md` "The TLB") the same build
+draws Mario's head and PRESS START; two more learn rounds (437, then ~470
+learnt functions: goddard's and the engine's function pointers) and START,
+START, A, A reach the castle grounds' Lakitu intro (xemu, emulator only).
+The analyser names osMapTLB, osUnmapTLBAll and osMapTLBRdb (`_tlb` rule);
+goddard's dynlists are read through `0x04000000` -> 64 KB pages aliased in
+the page tables.
 
 Interpreted code reaches the runtime's libultra by address:
 `gen/xrc_interp.c` carries `xrc_ultra_table` (each `ULTRA(name)` of
@@ -121,8 +128,8 @@ counts agree; "placed" below).
 |---|---|---|---|---|
 | Pilotwings 64 (US) | 1952 / 1956 (the 4: libultra's exception handler) | boot + app, exact | 75 / 0; live set identical to the decomp names' | title, menus, flight, results, saves, sound: the same as the decomp-symbol build |
 | Mario Kart 64 (US) | 3157 / 3159 placed; main 2657 of 2676, racing 413 of 415, ending 133 of 133 | boot + both race segments | 66 / 0 | title screen drawn; races need F3DEX |
-| Super Mario 64 (US, -O0) | main 3516 of 3573, engine 283 of 284, goddard 693 of 699 (by count; few addresses to pin) | boot + engine (DMA) + goddard (a level script's load) | 66 / 0 | title logo drawn, sound; stops when goddard maps 0x04000000 with `osMapTLB` (the runtime has no TLB) |
-| Dr. Mario 64 (US) | boot 262 / 270 | boot; the main segment is gzip-compressed (not found) | 56 / 0; live set identical | not tried |
+| Super Mario 64 (US, -O0) | main 3516 of 3573, engine 283 of 284, goddard 693 of 699 (by count; few addresses to pin) | boot + engine (DMA) + goddard (a level script's load) | 66 / 0 | title head, the interactive head screen, castle grounds (Lakitu intro) after three `--learn` rounds and the TLB; the head's shading is off |
+| Dr. Mario 64 (US) | boot 262 / 270 | boot; the main segment is gzip-compressed (not found) | 56 / 0; live set identical | links; boots, the net runs 4 functions, then interpreted code reads PI_STATUS through KSEG1 (`a4600010`) and faults; its gzip main segment is not found |
 | Paper Mario (US, GCC) | 2443 / 2680 in the segments found | main, engine1, engine2, evt, engine4, one partner and one map (overlays sharing a vram: one each) | 56 / 0 (87 missing: GCC-built libultra, Flash, the Pfs family) | not tried |
 
 ## Known gaps
@@ -142,8 +149,9 @@ counts agree; "placed" below).
 - libultra built by GCC (Paper Mario) and the later 2.0I/2.0J layouts: many
   rules are IDO-shaped; Paper Mario misses `osContInit`, `osSetEventMesg`,
   `osEPiStartDma`, `osSpTaskLoad`, the Flash and Pfs families.
-- The TLB: Super Mario 64's goddard maps its dynlists at 0x04000000; the
-  runtime ignores `osMapTLB` (`ultra/more.c`) and the read faults.
+- The TLB: mapped KUSEG pages are aliased in the Xbox page tables
+  (`xhw_alias.c`, `rt/tlb.c`; Super Mario 64's goddard dynlists); code
+  linked at TLB addresses, KSEG2/3 and the ASID are not handled.
 - Microcode families: graphics Fast3D, F3DEX, F3DEX2 (S2DEX's own commands
   skipped; `docs/renderer.md`). Audio: `aspMain`, the nead family (Mario
   Kart 64, the Zelda microcode) and `n_aspMain` are recognised at run time

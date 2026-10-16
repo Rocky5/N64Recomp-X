@@ -475,3 +475,43 @@ microcode was never logged and its resampler table never searched.
 - Overlays sharing a vram (Paper Mario's maps and partners), GCC-built
   libultra rules (Paper Mario: osContInit, osSetEventMesg, osEPiStartDma,
   Flash, Pfs); compressed code (Dr. Mario 64's main segment).
+## The TLB and more libultra for ROM-only games (2026-10-16, branch `agent/tlb`)
+
+**Done**
+
+- `xbox/src/rt/tlb.c` (new): the 32 TLB entries; a valid entry's pages are
+  aliased at the host address the generated code computes (`rdram + V` =
+  P + V, user space) by `xbox/src/hw/xhw_alias.c` (new, nxdk triple): it
+  reserves the 4 MB regions from the kernel, makes page tables, writes PTEs
+  onto the window's frames. `-DXRC_TLB=0` keeps the entries, aliases
+  nothing. `docs/decisions.md` "The TLB" has the options weighed.
+- `interp.c`: tlbwi/tlbwr/tlbr/tlbp go to `tlb.c` (osMapTLB code the
+  recompiler refuses runs there). `ultra/more2.c` (new): osMapTLB,
+  osUnmapTLB, osUnmapTLBAll, osSetTLBASID, osMapTLBRdb, __osProbeTLB, the
+  __osGetTLB* readers, __osEnqueueAndYield (a 1 ms pause with the interrupt
+  lock let go, `thread.c`'s new `xu_pause_unlocked`). `ultra/misc.c`:
+  osVirtualToPhysical translates TLB addresses.
+- `libultra.py`: `_tlb` rule (osMapTLB, osUnmapTLB, osUnmapTLBAll,
+  osMapTLBRdb by their COP0 writes and arguments; osYieldThread by its three
+  calls). PW64's osMapTLBRdb `80243650` matches the decomp's symbols.
+- Host: `test_interp.py` (a TLB case: map, tlbp, tlbr, translate, unmap,
+  the page-table side recorded), `test_n64rx.py`, `test_time.py` pass.
+- xemu (emulator only, slot 14): Super Mario 64 from its ROM alone, three
+  `--learn` rounds: the title's head, the interactive head screen, the
+  castle grounds' Lakitu intro (`[TLB] 0: 04000000-0400ffff -> 00390000`
+  ...). Dr. Mario 64 links and boots (see its row in `docs/analyzer.md`).
+- `[MEM]`/`[CLOCK]`: not re-measured on a console; xemu: free 25,288 KB
+  in SM64's level (each aliased 4 MB region costs one 4 KB page table).
+
+**Not verified / gaps**
+
+- No console run: the page-table writes are checked in xemu only (QEMU's
+  MMU). The kernel's reaction to PTEs it did not write, inside a region it
+  reserved for us, is assumed benign (it never commits there).
+- The ASID is ignored; KSEG2/3 mappings and code linked at TLB addresses
+  (not in the function table) are not supported; a host range already in
+  use is logged `not aliased` and faults.
+- SM64: the head's shading is wrong (graphics); later rounds still log
+  `[LEARN]` lines (`out-sm64/serial5.log` holds 37 more).
+- Dr. Mario 64: interpreted code reads PI registers through KSEG1; its main
+  code segment is not found or learnt.

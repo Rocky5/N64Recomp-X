@@ -392,3 +392,41 @@ counts as right when its neighbours line up too. No build, any OS.
 the optimiser never leaves (Super Mario 64 ~0.8 per `jr ra`, the -O2 games
 under 0.02). Only there is a bare `jr ra; nop` after another one folded into
 the function before; elsewhere it is an empty function.
+
+## The TLB (2026-10-16)
+
+**Mapped pages are aliased in the Xbox page tables; the hot path does not
+change.** The generated code computes `rdram + vaddr` with `rdram` = P,
+the window's physical base, so a TLB-mapped vaddr V (KUSEG) is host
+`P + V`, in user space (SM64's `0x04000650` was `07a31650`). When the game
+maps V onto N64 physical X, `xhw_alias.c` reserves the 4 MB regions around
+that host range from the kernel (so it never commits there or shares a
+page table with us), then maps each host page onto Xbox physical `P + X`,
+the frame the window already shows at `rdram + 0x80000000 + X`, by writing
+the x86 page tables (ring 0, one address space, self-mapped at
+`0xC0000000`/`0xC0300000`). A region already in use refuses the mapping.
+Weighed against: (b) relocating TLB-linked segments at build
+time, which needs relocations a ROM does not carry (SM64's goddard dynlists
+hold absolute `0x04xxxxxx` pointers); (c) translating in `MEM_*`, a compare
+on every load and store of every game for the few that map; copying the
+mapped bytes to a private buffer, which the RSP (reading the physical
+pages) would not see. Limits: a vaddr whose host range the XBE or the heap
+already uses, or KSEG2/3 (host addresses in the kernel's system space),
+cannot be aliased (logged as `[TLB] ... not aliased`); the ASID is not compared; code linked at TLB addresses is
+not in the function table. SM64 needs none of these: goddard's code is
+KSEG0, only its dynlist data is read at `0x04000000` (64 KB pages onto a
+heap buffer). Kill switch `-DXRC_TLB=0`.
+
+**The TLB routines run where they are found.** Named by the analyser
+(`_tlb` in `libultra.py`: they write Index, EntryHi, EntryLo0/1 and run
+`tlbwi`; arguments and PageMask tell osMapTLB, osUnmapTLB, osUnmapTLBAll
+and osMapTLBRdb apart), the runtime's `ultra/more2.c` replaces them;
+unnamed, N64Recomp refuses them (mtc0 EntryHi) and the interpreter's
+`tlbwi`/`tlbp`/`tlbr` reach the same `tlb.c`.
+
+**`__osEnqueueAndYield` is a 1 ms pause with the interrupt lock let go.**
+Libultra code the analyser did not name (Dr. Mario 64's osYieldThread
+before the `_tlb` rule named it) calls it; the runtime's threads are the
+kernel's, so there is no run queue to join. Every libultra caller rechecks
+its condition in a loop, so returning early is a spurious wake-up; the
+millisecond keeps a busy caller from starving lower kernel priorities.

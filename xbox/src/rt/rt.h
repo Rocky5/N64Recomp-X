@@ -18,6 +18,14 @@ extern uint32_t xrc_rdram_size;
 int xrc_mem_init(uint32_t mb);
 /* host pointer of a KSEG0/KSEG1/physical N64 address inside the window, or NULL */
 void* xrc_host(uint32_t vram, uint32_t bytes);
+/* tlb.c: the N64 TLB's 32 entries; a valid entry's pages are aliased at
+ * the host address the generated code computes for them (-DXRC_TLB=0: kept,
+ * not aliased). _probe is tlbp's Index (bit 31: no match); _to_phys ~0 when
+ * unmapped. */
+void xrc_tlb_write(unsigned idx, uint32_t mask, uint32_t hi, uint32_t lo0, uint32_t lo1);
+void xrc_tlb_read(unsigned idx, uint32_t* mask, uint32_t* hi, uint32_t* lo0, uint32_t* lo1);
+uint32_t xrc_tlb_probe(uint32_t hi);
+uint32_t xrc_tlb_to_phys(uint32_t vaddr);
 /* a 32-bit word of the image as the game sees it (words are native) */
 static inline uint32_t xrc_word(uint32_t vram) { return *(uint32_t*)(xrc_rdram + (vram & 0x1FFFFFFFu) + 0x80000000u); }
 
