@@ -39,6 +39,7 @@
 #include "ultra/ultra.h"
 
 #include "f3d_gbi.h"
+#include "fbfx.h"
 #include "f3d_interp.h"
 #include "f3dex_gbi.h"
 #include "texconv.h"
@@ -508,6 +509,8 @@ static struct { uint32_t frame, addr, key; TexEntry* e; } s_memo[MEMO];
 #endif
 
 static void tex_miss(const char* why, int tidx);
+static void fb_touch(uint32_t addr, uint32_t bytes);
+static uint32_t s_cimg_w, s_cimg_siz, s_cimg_maxy;   /* the colour image's width and pixel size; the frame's lowest scissor row */
 
 /* The texture tile `tidx` samples: converted, padded to powers of two,
  * uploaded once and cached. NULL when it can't be made. */
@@ -545,6 +548,8 @@ static TexEntry* texture_for_tile(int tidx) {
             return s_memo[m].e;
     }
 #endif
+    if (fbfx_stale_count())   /* a frame the game draws with: RDRAM gets it first */
+        fb_touch(ld->addr, ld->tile ? (ld->rows - 1u) * ld->stride + ld->row_bytes : bytes);
     /* the change check hashes the image as it is (its byte order does not matter for that) */
     sample = sample_hash(host(ld->addr), ld->tile ? ld->row_bytes : bytes) ^
              (ld->tile ? sample_hash(host(ld->addr + (ld->rows - 1u) * ld->stride), ld->row_bytes) : 0);
@@ -1047,6 +1052,7 @@ static void do_fillrect(uint32_t w0, uint32_t w1) {
     int cycle = (R.omh >> F3D_G_MDSFT_CYCLETYPE) & 3;
     f3d_fillrect_decode(w0, w1, &lrx, &lry, &ulx, &uly);
     if (cycle >= 2) { lrx++; lry++; }   /* fill/copy include the lower-right edge */
+    if (R.cimg != R.zimg && lry > 0 && (uint32_t)lry > s_cimg_maxy) s_cimg_maxy = (uint32_t)lry;
     if (R.cimg == R.zimg && R.cimg) {   /* z-buffer clear (Birdman64 gfx.md) */
         float x0 = ulx, y0 = uly, x1 = lrx, y1 = lry;
         s_zclears++;
@@ -1604,6 +1610,10 @@ static void run_dl(const uint32_t* pc) {
             case F3D_G_SETFILLCOLOR: R.fill = w1; break;
             case F3D_G_SETCIMG: {
                 uint32_t c = seg(w1);
+                if (c != R.zimg) {   /* the frame's colour image as the RDP has it (framebuffer readback) */
+                    s_cimg_siz = (w0 >> 19) & 3u;
+                    s_cimg_w = (w0 & 0xFFFu) + 1u;
+                }
                 if ((R.cimg == R.zimg) != (c == R.zimg)) DIRTY();
                 if (R.cimg == R.zimg && R.cimg && c != R.zimg) s_shadow_rec = 0;   /* pass 1 ended */
                 R.cimg = c;
@@ -1616,6 +1626,7 @@ static void run_dl(const uint32_t* pc) {
                 f3d_scissor_decode(w0, w1, &mode, &ulx, &uly, &lrx, &lry);
                 s_scissor[0] = ulx * 0.25f; s_scissor[1] = uly * 0.25f;
                 s_scissor[2] = lrx * 0.25f; s_scissor[3] = lry * 0.25f;
+                if ((uint32_t)(lry >> 2) > s_cimg_maxy) s_cimg_maxy = lry >> 2u;
                 clip_rect_update();
                 break;
             }
@@ -1855,6 +1866,157 @@ void f3d_present_held(const uint32_t* img, int tw, int th, int pw, int ph, int f
     xgfx_present();
 }
 
+/* ---------------------------------------------- framebuffer effects (fbfx.h)
+ * The frame is drawn on the NV2A and never lands in RDRAM; a game that reads
+ * it back (Mario Kart 64's big screens copy the frame before with the CPU:
+ * render_courses.c in the decomp; Pokemon Snap's photos) found stale memory.
+ * DIVERGES: none meant: RDRAM gets the picture the game drew, at N64 size.
+ * At the end of every frame one draw copies the picture, N64 size, onto the
+ * back end's readback stage (a quarter of it per colour image, fbfx.c).
+ * At the start of the next frame (the GPU is done with it by then) the
+ * colour image's pages are looked at (xhw_watch_pages: the x86's accessed
+ * bits, armed every frame): a frame some thread read or wrote since is hot
+ * for FBFX_HOT frames, and a hot frame's stage picture is converted into
+ * RDRAM (RGBA5551 or RGBA8888, word-swapped) every frame. So the first read
+ * after a quiet spell sees the picture before (MK64's screen: one frame
+ * late, once); a game that never reads its frame pays the copy draw and the
+ * page arming, no CPU conversion. A texture load from a frame not yet
+ * converted (the interpreter's own read: a frame used as a texture the frame
+ * after) converts it first (fb_touch).
+ * XGFX_FB_READBACK (default 0, off): 1 as above, 2 every frame (Pokemon Snap's one-shot
+ * photo reads would need it; ~1 ms a frame of CPU on the console, not
+ * measured), 0 off (the old renderer: RDRAM keeps what the game wrote).
+ * Not done: a colour image drawn and textured from within the same frame
+ * (render to texture: Zelda's pause, Banjo's jigsaw) draws on the screen as
+ * before (XGFX_FB_RTT is reserved for it; docs/renderer.md). */
+#ifndef XGFX_FB_READBACK
+#define XGFX_FB_READBACK 0   /* off by default: Pilotwings 64 touches its frames every ~2 s and ran at half speed in xemu */
+#endif
+#ifndef XGFX_FB_DUMP
+#define XGFX_FB_DUMP 0   /* debug: n > 0 dumps RDRAM's frame after the n-th readback ([FBDUMP]) */
+#endif
+#if XGFX_FB_DUMP
+void xhw_fbdump(const void* fb, int w, int h, int bpp, int pitch);
+#endif
+static uint32_t s_fb_stage_w, s_fb_stage_h;
+static uint32_t s_fb_copies, s_fb_reads, s_fb_touched, s_fb_us;   /* per [GFX] interval */
+
+static int fb_watch(const FbfxSlot* sl, int arm) {
+    return XGFX_FB_READBACK == 1 ? xhw_watch_pages((uint32_t)(uintptr_t)xu_host(sl->addr), fbfx_bytes(sl), arm) : 0;
+}
+
+/* RDRAM gets slot i's picture (gfx lock held) */
+static void fb_resolve(int i) {
+    const FbfxSlot* sl = fbfx_slot(i);
+    const uint8_t* stage;
+    int32_t pitch, bpp, r[4];
+    uint64_t t0;
+    if (!sl || !sl->addr || !sl->stale) return;
+    t0 = xhw_time_us();
+    fbfx_mark(i, 0);
+    stage = (const uint8_t*)xgfx_stage_read(&pitch, &bpp);
+    if (!stage) return;
+    fbfx_rect(i, (int32_t)s_fb_stage_w, (int32_t)s_fb_stage_h, r);
+    fbfx_convert(sl, r, stage, pitch, bpp, xu_host(0), xrc_rdram_size);
+    s_fb_reads++;
+#if XGFX_FB_DUMP   /* debug: RDRAM's frame as the game reads it, the n-th time, as an [FBDUMP] */
+    {
+        static unsigned s_n;
+        static uint32_t s_img[320 * 240];
+        uint32_t x, y;
+        if (++s_n == XGFX_FB_DUMP && sl->siz == 2 && sl->w <= 320 && sl->h <= 240) {
+            for (y = 0; y < sl->h; y++)
+                for (x = 0; x < sl->w; x++) {
+                    uint32_t c = *(const uint16_t*)(xu_host(0) + ((sl->addr + 2u * (y * sl->w + x)) ^ 2u));
+                    s_img[y * sl->w + x] = 0xFF000000u | (c >> 11) << 19 | ((c >> 6) & 31) << 11 | ((c >> 1) & 31) << 3;
+                }
+            xhw_logf("[GFX] fb dump: readback %u of %08x", s_n, (unsigned)sl->addr);
+            xhw_fbdump(s_img, (int)sl->w, (int)sl->h, 32, (int)sl->w * 4);
+        }
+    }
+#endif
+    s_fb_us += (uint32_t)(xhw_time_us() - t0);
+}
+
+static void fb_touch(uint32_t addr, uint32_t bytes) {
+    int i;
+    while ((i = fbfx_find(seg(addr), bytes)) >= 0) fb_resolve(i);
+}
+
+/* the start of a frame: the frames read lately into RDRAM, the watch armed again */
+static void fb_frame_start(void) {
+    int i;
+    if (!XGFX_FB_READBACK) return;
+    for (i = 0; i < FBFX_SLOTS; i++) {
+        const FbfxSlot* sl = fbfx_slot(i);
+        int touched;
+        if (!sl->addr) continue;
+        touched = XGFX_FB_READBACK == 2 || fb_watch(sl, 0) > 0;
+        s_fb_touched += touched && XGFX_FB_READBACK == 1;
+        if (fbfx_frame_start(i, touched)) fb_resolve(i);
+        fb_watch(sl, 1);
+    }
+}
+
+/* the frame's picture onto the stage, its pages guarded (end of frame, before the port's own drawing) */
+static void fb_stage(void) {
+    FbfxSlot drop[FBFX_SLOTS];
+    int i, nd;
+    uint32_t back, h;
+    int32_t sw, sh, r[4];
+    float bw, bh, x0, y0, x1, y1;
+    if (!XGFX_FB_READBACK || !R.cimg || R.cimg == R.zimg || s_hold_tex) return;
+    /* the height: the frame's lowest scissor or fill row, at most 3/4 of the width (320 x 240) */
+    h = s_cimg_w * 3u / 4u;
+    if (s_cimg_maxy >= 8u && s_cimg_maxy < h) h = s_cimg_maxy;
+    i = fbfx_frame_end(R.cimg, s_cimg_w, h, s_cimg_siz, s_frames, xrc_rdram_size, drop, &nd);
+    (void)drop;
+    if (i < 0) return;
+    flush();
+    back = xgfx_tex_linear_back(&bw, &bh);
+    if (!back) return;
+    if (xgfx_target_stage(1, &sw, &sh)) {
+        XgfxState st;
+        XgfxVtx q[6];
+        const FbfxSlot* sl = fbfx_slot(i);
+        int k;
+        s_fb_stage_w = (uint32_t)sw;
+        s_fb_stage_h = (uint32_t)sh;
+        fbfx_rect(i, sw, sh, r);
+        /* the N64 frame's pixels on the screen: the same mapping the draws had */
+        x0 = s_ox;
+        y0 = s_oy;
+        x1 = s_ox + N64_W * s_sx * (float)sl->w / (float)s_cimg_w;
+        y1 = s_oy + N64_H * s_sy * (float)sl->h / ((float)s_cimg_w * 0.75f);
+        memset(&st, 0, sizeof st);
+        st.cc0 = cc_words_const(1 /* TEXEL0 */, 1, &st.cc1);
+        st.tex[0] = back;
+        st.wrap_s[0] = st.wrap_t[0] = XGFX_WRAP_CLAMP;
+        st.filter[0] = 1;   /* a 2:1 shrink through bilinear is a box filter */
+        st.color_write = 1;
+        st.scissor[0] = r[0];
+        st.scissor[1] = r[1];
+        st.scissor[2] = r[0] + r[2];
+        st.scissor[3] = r[1] + r[3];
+        memset(q, 0, sizeof q);
+        for (k = 0; k < 6; k++) {
+            static const uint8_t corner[6] = { 0, 1, 2, 2, 1, 3 };
+            int c = corner[k];
+            q[k].x = (float)((c & 1) ? r[0] + r[2] : r[0]);
+            q[k].y = (float)((c & 2) ? r[1] + r[3] : r[1]);
+            q[k].w = 1.0f;
+            q[k].s0 = (c & 1) ? x1 : x0;
+            q[k].t0 = (c & 2) ? y1 : y0;
+        }
+        xgfx_draw(&st, q, 2);
+        xgfx_target_stage(0, &sw, &sh);
+        DIRTY();
+        fbfx_mark(i, 1);
+        s_fb_copies++;
+    }
+    xgfx_tex_destroy(back);
+}
+
 void f3d_run(uint32_t dl) {
     uint64_t t0 = xhw_time_us();
     int i;
@@ -1864,6 +2026,8 @@ void f3d_run(uint32_t dl) {
         for (i = 0; i < 16; i++) R.mv[0][i >> 2][i & 3] = R.proj[i >> 2][i & 3] = (i % 5) == 0 ? 1.0f : 0.0f;
     }
     xgfx_frame_begin();
+    fb_frame_start();
+    s_cimg_maxy = 0;
     s_side_drawn = 0;
     side_clear();
     hold_frame();
@@ -1900,6 +2064,7 @@ void f3d_run(uint32_t dl) {
      * what was drawn, not on hor+ being on: at 720p with Widescreen Auto a
      * screen with no tagged world view is hor+ and drew nothing there (rc1b) */
     if (!s_side_drawn) side_clear();
+    fb_stage();
     wx_frame_overlay();   /* the port's own text (FPS counter, settings panel; patches/021) */
     {
         uint64_t t1 = xhw_time_us();
@@ -1937,6 +2102,10 @@ void f3d_run(uint32_t dl) {
     s_t_in = s_t_rej = s_t_cull = s_t_clip = s_vtx_loads = s_mtx_loads = 0;
     if (++s_frames % 600 == 0) {
         xhw_logf("[GFX] frame %u: display lists %u us a frame (avg over 600)", s_frames, (unsigned)(s_dl_us / 600));
+        if (XGFX_FB_READBACK)
+            xhw_logf("[GFX] framebuffer readback (mode %d): %u copies, %u frames touched, %u read back in %u us",
+                     XGFX_FB_READBACK, s_fb_copies, s_fb_touched, s_fb_reads, (unsigned)s_fb_us);
+        s_fb_copies = s_fb_reads = s_fb_touched = s_fb_us = 0;
         s_dl_us = 0;
         for (i = 0; i < 256; i++)
             if (s_unknown[i]) {

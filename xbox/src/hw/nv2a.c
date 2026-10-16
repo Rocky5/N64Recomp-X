@@ -309,6 +309,7 @@ static void pb_close(void) {
 }
 
 /* per-interval counters for the [NV2A] line */
+static uint32_t s_st_stage_reads;   /* readback stage reads (framebuffer effects) */
 static uint32_t s_st_flip_repairs, s_st_flip_waits, s_st_waits, s_st_tex_kb, s_st_verts, s_st_tex_fail, s_st_pb_peak, s_st_pb_resets, s_st_draws;
 static uint32_t s_frame, s_draws;
 
@@ -940,12 +941,13 @@ void xgfx_present(void) {
     if (s_frame % XGFX_STATS_EVERY == 0) {
         xhw_logf("[NV2A] frame %u: %u draws, tex pool %u KB free | per %u: %u idle waits, %u flip waits (%u repaired), %u KB textures, %u pool "
                  "allocations failed, %u verts, %u draws, pushbuffer peak %u of %u KB (%u restarts), combiners "
-                 "approximated %u",
+                 "approximated %u, stage reads %u",
                  s_frame, s_draws, xgfx_tex_pool_free_kb(), XGFX_STATS_EVERY, s_st_waits, s_st_flip_waits, s_st_flip_repairs, s_st_tex_kb,
                  s_st_tex_fail,
                  s_st_verts, s_st_draws, s_st_pb_peak / 1024, PB_BYTES / 1024, s_st_pb_resets,
-                 (unsigned)xgfx_cc_approximated());
+                 (unsigned)xgfx_cc_approximated(), s_st_stage_reads);
         nv2a_fault_log_ctx();
+        s_st_stage_reads = 0;
         s_st_flip_repairs = s_st_flip_waits = s_st_waits = s_st_tex_kb = s_st_verts = s_st_tex_fail = s_st_pb_peak = s_st_pb_resets = s_st_draws = 0;
     }
     s_draws = 0;
@@ -1378,6 +1380,69 @@ uint32_t xgfx_tex_linear_hold(float* w, float* h) {
     *w = (float)s_rw;
     *h = (float)s_rh;
     return linear_tex(s_hold_mem, s_rw, s_rh, color_pitch());
+}
+
+/* ---- the readback stage (docs/renderer.md "Framebuffer effects"): each
+ * finished frame drawn small (N64 size) into a quadrant of a 640 x 480
+ * surface in cached memory, so the CPU reads it at memory speed (the
+ * framebuffers are write-combined: ~244 ms a frame through the CPU). The
+ * GPU does not snoop the CPU's caches: the memory is written back and
+ * invalidated (wbinvd) once after allocation and before every read. ---- */
+#define STAGE_W 640
+#define STAGE_H 480
+static void* s_stage_mem;
+
+static uint32_t stage_pitch(void) { return STAGE_W * (uint32_t)(s_bpp / 8); }
+static void wbinvd(void) { __asm__ volatile("wbinvd" : : : "memory"); }
+
+uint32_t xgfx_tex_linear_back(float* w, float* h) {
+    *w = (float)s_fbw;
+    *h = (float)s_fbh;
+    return linear_tex(pb_back_buffer(), s_fbw, s_fbh, pb_back_buffer_pitch());
+}
+
+int xgfx_target_stage(int on, int32_t* w, int32_t* h) {
+    if (on && !s_stage_mem) {
+        static int s_failed;
+        if (s_failed) return 0;
+        s_stage_mem = MmAllocateContiguousMemoryEx(stage_pitch() * STAGE_H, 0, MAXRAM, 4096, PAGE_READWRITE);
+        if (!s_stage_mem) {
+            s_failed = 1;
+            xhw_log("[NV2A] readback stage: no contiguous memory (framebuffer readback off)");
+            return 0;
+        }
+        wbinvd();
+        xhw_logf("[NV2A] readback stage: %u KB at %08x", (unsigned)(stage_pitch() * STAGE_H / 1024),
+                 (unsigned)((uint32_t)(uintptr_t)s_stage_mem & 0x03FFFFFFu));
+    }
+    if (!s_stage_mem) return 0;
+    xgfx_frame_begin();
+    pb_open();
+    put1(NV097_WAIT_FOR_IDLE, 0);   /* the frame's last pixels are out before the draw samples them */
+    if (on) {
+        put1(NV097_SET_SURFACE_PITCH, stage_pitch() | zeta_pitch() << 16);
+        put1(NV097_SET_SURFACE_CLIP_HORIZONTAL, (uint32_t)STAGE_W << 16);
+        put1(NV097_SET_SURFACE_CLIP_VERTICAL, (uint32_t)STAGE_H << 16);
+        put1(NV097_SET_SURFACE_COLOR_OFFSET, (uint32_t)(uintptr_t)s_stage_mem & 0x03FFFFFFu);
+    } else {
+        put1(NV097_SET_SURFACE_PITCH, color_pitch() | zeta_pitch() << 16);
+        put1(NV097_SET_SURFACE_CLIP_HORIZONTAL, (uint32_t)s_rw << 16);
+        put1(NV097_SET_SURFACE_CLIP_VERTICAL, (uint32_t)s_rh << 16);
+        put1(NV097_SET_SURFACE_COLOR_OFFSET, render_color_phys());
+    }
+    *w = STAGE_W;
+    *h = STAGE_H;
+    return 1;
+}
+
+const void* xgfx_stage_read(int32_t* pitch, int32_t* bpp) {
+    if (!s_stage_mem || s_shut) return 0;
+    wait_idle();
+    wbinvd();
+    s_st_stage_reads++;
+    *pitch = (int32_t)stage_pitch();
+    *bpp = s_bpp;
+    return s_stage_mem;
 }
 
 uint32_t xgfx_capture_last(float* u_max, float* v_max) {

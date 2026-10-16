@@ -664,3 +664,14 @@ in func_80007F24 under omCreateProcess (main menu's func_800E4AF8: its
 omAddGObj seems to return NULL). MK64 ROM-only and PW64 (its pack) build and draw in xemu, no fault, no stall.
 Not verified: SM64 boot after these changes, real hardware, the
 title screen and Beach. `[MEM]`/`[CLOCK]`: xemu 64 MB, 733 MHz (not hardware).
+
+### Framebuffer effects (agent fbfx, 2026-10-16; xemu only)
+
+Built behind `-DXGFX_FB_READBACK=1` (default 0): the CPU-read frame path for
+Mario Kart 64's big screens (docs/renderer.md "Framebuffer effects").
+Verified: host tests (`test_fbfx.py`, `test_f3dex.py` test_readback); in
+xemu, MK64's race touches its frames and the readback runs; an RDRAM dump
+(`-DXGFX_FB_DUMP`) of the N64 logo frame is correct. Not verified: the big
+screen on screen (no scripted shot reached it), any console run, 720p.
+Gap carried on: Pilotwings 64 stays hot and slows to ~14 fps in xemu with
+it on; render to texture in the same frame is not done.
