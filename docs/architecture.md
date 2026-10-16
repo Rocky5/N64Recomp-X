@@ -80,6 +80,15 @@ docs/look/           baseline shots: the loading screen (xemu, STILL), the BACK 
 - Graphics and audio tasks run on the calling thread (`sp.c`): the
   interpreter for graphics, `asp_hle` for audio; their done events are put
   ahead of retraces already queued.
+- The audio microcode registry (`audio.c` at the first task,
+  `asp_hle_identify` in `xbox/src/hw/asp_abis.inc`): the microcode's data
+  segment holds its command jump table right before the ADPCM nibble masks
+  `f000 0f00 00f0 000f`; its place, its length and the entries that point
+  at opcode 0's handler pick the ABI: `aspMain` (ABI1: table at +0x10, 16
+  entries), the nead family (+0x10, 32 or 24 entries; variant flags from
+  which opcodes exist) or `n_aspMain` (+0x00, 16). `asp_hle_run` decodes
+  that ABI from then on; an unknown microcode is logged and plays silence.
+  Nothing from any microcode is stored.
 
 ## The BACK menu
 

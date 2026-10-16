@@ -125,4 +125,11 @@ decomps and keeps every result here.
   hot function it runs costs frame time until the rebuild.
 - Microcode families: Fast3D only (F3DEX/F3DEX2/S2DEX in M4); audio
   microcodes other than `aspMain` play silent.
+
+  only found when the game runs: the learning loop (§3.14 step 5) is next.
+- Microcode families: Fast3D only (F3DEX/F3DEX2/S2DEX in M4). Audio:
+  `aspMain`, the nead family (Mario Kart 64, the Zelda microcode) and
+  `n_aspMain` are recognised at run time from the microcode's jump table
+  (`docs/architecture.md`); others (MusyX, MP3, DK64/Conker's variants) play
+  silent with an `[AUDIO]` line saying so.
 - Controller Pak, Flash, SRAM: not yet.

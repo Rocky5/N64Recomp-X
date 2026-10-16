@@ -13,7 +13,7 @@ python tools/xbox/test_syms.py          # every committed symbol file against th
 python tools/xbox/test_scan64.py        # the register-width scan on hand-assembled functions (rabbitizer)
 python tools/xbox/test_time.py          # the counter follows the ACPI clock; nothing else reads the TSC
 python tools/xbox/test_interp.py        # the MIPS interpreter: each instruction class vs expected results, 64- and 32-bit registers, the learn log's spans
-python tools/xbox/test_asp_hle.py       # the audio HLE: every command vs a reference, SIMD = C, native = word-swapped RDRAM
+python tools/xbox/test_asp_hle.py       # the audio HLE: every command of every ABI vs a reference, SIMD = C, native = word-swapped RDRAM (hash: aspMain, hash2: nead + n_aspMain)
 python tools/xbox/test_xbe_rom.py       # the ROM inside the XBE: xbe_sections' $ROM, found and checked by xhw_rom.c's parser
 python tools/xbox/test_romcache.py      # the ROM page cache's core: chunk spans, word reads, the LRU and its cap, pins, failed fills
 ```
@@ -147,6 +147,8 @@ Timed events follow the ACPI clock.
 | `-DXRC_SAFETY_NET=0` | 1 | a call to an address with no function is the fatal card again (no interpreting, no `[LEARN]`, no `learn.txt`) |
 | `N64RX_WITHHOLD=<vram>,...` (env, n64rx) | unset | test: those functions left out of the analysis, so the safety net runs them (the learning loop's demo) |
 | `-DASP_HLE_WORDSWAP=0` | 1 on the console | `asp_hle` on a native-order RDRAM (Wings64-X's layout; the host tests' first group) |
+| `-DASP_HLE_NEAD=0` | 1 | the nead audio microcodes (Mario Kart 64, SM64 EU, Zelda) read as unknown: silent |
+| `-DASP_HLE_NAUDIO=0` | 1 | `n_aspMain` (Paper Mario, Smash Bros.) reads as unknown: silent |
 
 Wings64-X's platform switches (`XHW_*`, `XGFX_*`) carry over; its
 `docs/testing.md` lists them.

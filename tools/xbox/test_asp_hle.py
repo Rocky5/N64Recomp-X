@@ -35,6 +35,7 @@ SRCS = [
     os.path.join(ROOT, "tests", "xbox", "asp_ref.c"),
     os.path.join(ROOT, "xbox", "src", "hw", "asp_hle.c"),
 ]
+INC = os.path.join(ROOT, "xbox", "src", "hw", "asp_abis.inc")   # part of asp_hle.c
 WARN = ["-std=c99", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function"]
 
 # name, extra flags, hash group
@@ -127,10 +128,11 @@ def main():
     cc32 = find_cc32(a.cc32)
     out_dir = tempfile.mkdtemp(prefix="asp_hle_")
     hashes, rhashes, failed, exes = {}, {}, [], {}
+    hashes2, rhashes2 = {}, {}
     plan = [(cc, b, None) for b in BUILDS]
     if cc32:
         plan += [(cc32, b, None) for b in BUILDS_32]
-        if os.path.exists(NXDK_OBJ) and os.path.getmtime(NXDK_OBJ) >= os.path.getmtime(SRCS[2]):
+        if os.path.exists(NXDK_OBJ) and os.path.getmtime(NXDK_OBJ) >= max(os.path.getmtime(SRCS[2]), os.path.getmtime(INC)):
             plan.append((cc32, ("nxdk-object", ["-O2", "-march=pentium3", "-DASP_HLE_WORDSWAP=1"], "ws"),
                          SRCS[:2] + [NXDK_OBJ]))
         else:
@@ -147,8 +149,10 @@ def main():
             rc, out = run(comp, exe)
             h = [l.split()[1] for l in out.splitlines() if l.startswith("hash ")]
             rh = [l.split()[1] for l in out.splitlines() if l.startswith("rhash ")]
+            h2 = [l.split()[1] for l in out.splitlines() if l.startswith("hash2 ")]
+            rh2 = [l.split()[1] for l in out.splitlines() if l.startswith("rhash2 ")]
             summary = [l for l in out.splitlines() if l.startswith(("ok:", "FAIL"))]
-            print("%-16s %s  %s  [%s]" % (name, h[0] if h else "--------",
+            print("%-16s %s %s  %s  [%s]" % (name, h[0] if h else "--------", h2[0] if h2 else "--------",
                                           summary[-1] if summary else out.strip()[-200:], os.path.basename(comp)))
             if rc:
                 print(out)
@@ -157,6 +161,10 @@ def main():
                 hashes.setdefault(group, {})[name] = h[0]
             if rh and group != "pertap":
                 rhashes[name] = rh[0]
+            if h2:
+                hashes2.setdefault(group, {})[name] = h2[0]
+            if rh2 and group != "pertap":
+                rhashes2[name] = rh2[0]
             exes[name] = (comp, exe)
         for group, hs in hashes.items():
             if len(set(hs.values())) != 1:
@@ -165,6 +173,13 @@ def main():
         if len(set(rhashes.values())) > 1:
             print("RAM results differ between layouts: %s" % rhashes)
             failed.append("rhash")
+        for group, hs in hashes2.items():   # nead and n_aspMain (asp_abis.inc)
+            if len(set(hs.values())) != 1:
+                print("hash2 mismatch in group %s: %s" % (group, hs))
+                failed.append("hash2-" + group)
+        if len(set(rhashes2.values())) > 1:
+            print("nead / n_aspMain RAM results differ between layouts: %s" % rhashes2)
+            failed.append("rhash2")
         if a.bench and not failed:
             for name in ("mmx", "scalar", "ws-mmx", "i686-p3-mmx", "i686-p3-scalar", "i686-p3-ws", "nxdk-object"):
                 if name in exes:

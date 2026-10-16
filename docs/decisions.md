@@ -311,3 +311,15 @@ fill hands over zeros, logs and retries next time (the DMA's own "outside
 the ROM" zeros are the same policy). Kill switches: `-DXRC_ROM_RESIDENT_MB`
 (0: the cache for every ROM, 64: none), the pack's `[rom] resident =
 always | never`.
+
+**Audio microcodes are told apart by their jump table's shape, not a hash.**
+Every libultra-lineage audio microcode keeps its command table in its data
+segment right before the ADPCM nibble masks; where it sits, how long it is
+and which opcodes point at the no-op handler name the ABI and its variant
+(asp_abis.inc). A text hash would need a list of every microcode build
+(a fingerprint per ROM family) and would miss revisions; the table rule
+reads behaviour, holds no bytes, and an unknown shape plays silence with a
+log line instead of noise. The nead variants follow from which opcodes
+exist (no ADDMIXER = the first nead's envelope; a 32-entry table with
+opcode 14 = the old INTERLEAVE and POLEF; 24 entries = FILTER, DUPLICATE,
+HILOGAIN), checked against the maintainer's ROMs and the known variants.

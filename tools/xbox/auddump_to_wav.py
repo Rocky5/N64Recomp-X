@@ -27,7 +27,13 @@ def main():
         if body.startswith('rate '):
             rate = int(body.split()[1])
             continue
-        for i in range(0, len(body) - 3, 4):
+        # the hex run only, whole stereo frames: another thread's line can
+        # land in the middle of a dump line on COM1
+        n = 0
+        while n < len(body) and body[n] in '0123456789abcdef':
+            n += 1
+        body = body[:n - n % 8]
+        for i in range(0, len(body), 4):
             pcm += struct.pack('<H', int(body[i:i + 4], 16))
     if not pcm:
         sys.exit('no [AUDDUMP] lines (a test build with -DXRC_AUDIO_DUMP=<s>?)')
