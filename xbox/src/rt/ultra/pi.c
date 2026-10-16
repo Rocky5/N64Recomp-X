@@ -45,6 +45,21 @@ static uint32_t rom_offset(uint32_t dev) {
     return dev >= 0x10000000u ? dev - 0x10000000u : dev;
 }
 
+/* ROM -> RDRAM for every DMA entry point (the handle family in extra.c too); 0 = from the ROM */
+uint32_t xu_pi_dma(uint32_t dev, uint32_t dram, uint32_t n) {
+    const uint8_t* src = xu_rom_ptr(rom_offset(dev), n);
+    uint32_t i;
+    if (src) {
+        xu_to_rdram(dram, src, n);
+        return 0;
+    }
+    for (i = 0; i < n; i++) wr8(dram + i, 0);
+    if (s_bad++ < 16)
+        xhw_logf("[PI] DMA outside the ROM: dev %08x, %u bytes to %08x (zeros)", (unsigned)dev, (unsigned)n,
+                 (unsigned)dram);
+    return 1;
+}
+
 /* osPiStartDma(mb, pri, dir, devAddr, vAddr (0x10), nbytes (0x14), mq (0x18)) */
 ULTRA(osPiStartDma) {
     uint32_t mb = ARG(0), dir = ARG(2), dev = ARG(3), dram = ARG(4), n = ARG(5), mq = ARG(6);
@@ -69,6 +84,12 @@ ULTRA(osPiStartDma) {
     }
     if (mq) xu_send(mq, mb, 0, 0);
     RET(0);
+}
+
+uint32_t xu_pi_word(uint32_t dev);
+uint32_t xu_pi_word(uint32_t dev) {
+    const uint8_t* p = xu_rom_ptr(rom_offset(dev) & ~3u, 4);
+    return p ? ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3] : 0;
 }
 
 static uint32_t read_word(uint32_t dev) {

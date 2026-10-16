@@ -268,3 +268,101 @@ ULTRA(osEepromWrite) {
     (void)rdram;
     RET(eep_io(ARG(1) & 0xFF, ARG(2), 8, 1));
 }
+
+/* ---- the PIF, for the game's own SI code (PLAN.md 3.14) ----
+ * A game built from the ROM alone may run libultra's controller code that
+ * the rules did not name (the Controller Pak's, a game's own pad reader):
+ * it builds the 64-byte PIF command block itself and moves it with
+ * __osSiRawStartDma. The PIF is emulated on that block: per channel a
+ * transmit and a receive length, then the command; controllers 0-3 answer
+ * status (0x00/0xFF: a standard pad, no pak) and buttons (0x01); channel 4
+ * is the EEPROM (status, read and write a block of 8). Paks (0x02/0x03),
+ * absent ports and anything else answer "no response" (0x80 in the receive
+ * length byte), as an empty port does. Every transfer raises the SI event. */
+static uint8_t s_pif[64];
+
+static void pif_channel(int ch, const uint8_t* cmd, int tx, uint8_t* resp, int rx, uint8_t* rxbyte) {
+    if (tx < 1) return;
+    if (ch < 4) {
+        if (ch > 0 && s_pads[ch].err) {
+            *rxbyte |= 0x80;
+            return;
+        }
+        if ((cmd[0] == 0x00 || cmd[0] == 0xFF) && rx >= 3) {
+            resp[0] = 0x05, resp[1] = 0x00, resp[2] = 0x00;   /* CONT_TYPE_NORMAL, no pak */
+        } else if (cmd[0] == 0x01 && rx >= 4) {
+            resp[0] = (uint8_t)(s_pads[ch].button >> 8), resp[1] = (uint8_t)s_pads[ch].button;
+            resp[2] = (uint8_t)s_pads[ch].x, resp[3] = (uint8_t)s_pads[ch].y;
+        } else {
+            *rxbyte |= 0x80;
+        }
+        return;
+    }
+    if (ch == 4 && xrc_game.eeprom_bytes) {
+        eep_load();
+        if (cmd[0] == 0x00 && rx >= 3) {
+            resp[0] = 0x00, resp[1] = s_eep_size == 2048 ? 0xC0 : 0x80, resp[2] = 0x00;
+        } else if (cmd[0] == 0x04 && tx >= 2 && rx >= 8 && cmd[1] * 8u + 8 <= s_eep_size) {
+            xhw_mutex_lock(s_eep_lock);
+            memcpy(resp, s_eep + cmd[1] * 8u, 8);
+            xhw_mutex_unlock(s_eep_lock);
+        } else if (cmd[0] == 0x05 && tx >= 10 && cmd[1] * 8u + 8 <= s_eep_size) {
+            xhw_mutex_lock(s_eep_lock);
+            memcpy(s_eep + cmd[1] * 8u, cmd + 2, 8);
+            s_eep_dirty = 1;
+            xhw_mutex_unlock(s_eep_lock);
+            eep_start_writer();
+            if (rx >= 1) resp[0] = 0x00;
+        } else {
+            *rxbyte |= 0x80;
+        }
+        return;
+    }
+    *rxbyte |= 0x80;
+}
+
+static void pif_run(void) {
+    int i = 0, ch = 0, buttons = 0;
+    for (i = 0; i < 63; i++)
+        if (s_pif[i] == 0xFE) break;
+        else if (s_pif[i] == 0x01 && i > 0) buttons = 1;
+    if (buttons) read_pads();
+    i = 0;
+    while (i < 63) {
+        int t = s_pif[i], tx, rx;
+        if (t == 0xFE) break;
+        if (t == 0xFF || t == 0xFD) {   /* padding */
+            i++;
+            continue;
+        }
+        if (t == 0) {                   /* this channel skipped */
+            ch++, i++;
+            continue;
+        }
+        if (i + 1 >= 63) break;
+        tx = t & 0x3F, rx = s_pif[i + 1] & 0x3F;
+        if (i + 2 + tx + rx > 63) break;
+        pif_channel(ch, s_pif + i + 2, tx, s_pif + i + 2 + tx, rx, s_pif + i + 1);
+        i += 2 + tx + rx, ch++;
+    }
+}
+
+/* __osSiRawStartDma(direction, dramAddr): OS_WRITE (1) gives the PIF its
+ * block and runs it, OS_READ (0) reads the answers back */
+ULTRA(__osSiRawStartDma) {
+    uint32_t dir = ARG(0), dram = ARG(1);
+    (void)rdram;
+    if (dir == 1) {
+        xu_from_rdram(s_pif, dram, 64);
+        pif_run();
+    } else {
+        xu_to_rdram(dram, s_pif, 64);
+    }
+    xu_post_event(OS_EVENT_SI);
+    RET(0);
+}
+
+ULTRA(__osSiGetAccess) { (void)rdram; (void)ctx; }
+ULTRA(__osSiRelAccess) { (void)rdram; (void)ctx; }
+ULTRA(__osSiCreateAccessQueue) { (void)rdram; (void)ctx; }
+ULTRA(__osSiDeviceBusy) { (void)rdram; RET(0); }

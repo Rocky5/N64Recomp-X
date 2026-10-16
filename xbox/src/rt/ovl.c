@@ -30,6 +30,12 @@ int32_t* section_addresses = s_section_addr_store;
 
 uint32_t xrc_ovl_function_count(void) { return s_nfuncs; }
 
+/* the routines n64rx hands to the interpreter (interp.c, PLAN.md 3.14):
+ * gen/xrc_interp.c defines these when there are any */
+typedef struct { uint32_t vram; recomp_func_t* fn; } XrcInterpEntry;
+__attribute__((weak)) const XrcInterpEntry xrc_interp_table[1];
+__attribute__((weak)) const unsigned xrc_interp_count;
+
 static int enter(uint32_t vram, recomp_func_t* f) {
     uint32_t off = vram - 0x80000000u, page = off >> PAGE_SHIFT;
     if (vram < 0x80000000u || page >= MAX_PAGES || (vram & 3)) return 0;
@@ -45,6 +51,7 @@ static int enter(uint32_t vram, recomp_func_t* f) {
 int xrc_ovl_init(void) {
     size_t i, j, total = 0;
     for (i = 0; i < xrc_game.num_sections; i++) total += xrc_game.sections[i].num_funcs;
+    total += xrc_interp_count;
     if (total > 65535) {
         xhw_logf("[RECOMP] %u functions: more than the table holds", (unsigned)total);
         return 0;
@@ -62,7 +69,11 @@ int xrc_ovl_init(void) {
                 return 0;
             }
     }
-    xhw_logf("[RECOMP] %u functions in %u sections", (unsigned)s_nfuncs, (unsigned)xrc_game.num_sections);
+    for (i = 0; i < xrc_interp_count; i++)
+        if (!enter(xrc_interp_table[i].vram, xrc_interp_table[i].fn)) return 0;
+    xhw_logf("[RECOMP] %u functions in %u sections%s", (unsigned)s_nfuncs, (unsigned)xrc_game.num_sections,
+             xrc_interp_count ? " (some interpreted: hand-written code)" : "");
+    if (xrc_interp_count) xhw_logf("[RECOMP] %u routines run interpreted", (unsigned)xrc_interp_count);
     {   /* the code's size: the MIPS text the functions came from, and the span
          * their x86 occupies (the generated objects link together; an
          * estimate under ThinLTO, which may move a few). PLAN.md 3.11's
@@ -82,6 +93,15 @@ int xrc_ovl_init(void) {
                      (unsigned)((hi - lo) * 10 / mips % 10));
     }
     return 1;
+}
+
+recomp_func_t* xrc_try_function(uint32_t vram) {
+    uint32_t off = vram - 0x80000000u, page = off >> PAGE_SHIFT;
+    if (vram < 0x80000000u || page >= MAX_PAGES || !s_pages[page]) return NULL;
+    {
+        uint16_t i = s_pages[page][(off >> 2) & (PAGE_WORDS - 1)];
+        return i ? s_funcs[i] : NULL;
+    }
 }
 
 recomp_func_t* get_function(int32_t vram) {
