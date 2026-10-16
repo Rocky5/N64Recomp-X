@@ -188,5 +188,42 @@ is 480i only: needs an HD AV pack), a save moved to or from Wings64-X
   step 5) is not built.
 - The analyser has no host test yet: `test_analyze.py` (synthetic MIPS
   fixtures) and `decomp_check.py` are the V track's first files.
-- Decided, to build: the ROM inside the XBE (`$ROM`, PLAN.md §3.5); the
-  output folder still holds the ROM next to `default.xbe`.
+- The ROM inside the XBE: built, see below.
+
+### The ROM inside the XBE (2026-10-16, branch `agent/romxbe`)
+
+Windows 11, xemu slot 12; the maintainer's own ROMs, never in the tree.
+
+**Verified**
+
+- `n64rx build` writes `default.xbe` with the normalised ROM as `$ROM`
+  (flags inserted + head/tail read-only, no preload, VirtualSize 0, raw
+  offset 4 KB aligned, the last thing in the file); the folder is
+  `default.xbe`, `default.tbn`, `TitleImage.xbx`, `TitleMeta.xbx`, the
+  README. Host: `test_xbe_rom.py` (a synthetic XBE and the platform XBE,
+  the test ROM, found by the runtime's parser, `xrom_verify` on the
+  embedded bytes, a flipped bit caught) and `test_n64rx.py` (the folder,
+  `--rom-beside`).
+- xemu, `--fast` builds staged as the XBE alone: Pilotwings 64 (`[ROM]
+  $ROM in D:\default.xbe at 0x2e6000, 8388608 bytes`, SHA-1 ok, 8 MB read
+  in ~60 ms, the game running ~33 fps) and Mario Kart 64 from its ROM
+  alone (12 MB, SHA-1 ok, running). `[MEM]` the same to the KB as the
+  `--rom-beside` builds: `[MEM] boot: 65536 KB of RAM, nothing to hold`;
+  Pilotwings 57212 KB free at boot, 26152 KB after nv2a; Mario Kart 57000 /
+  21712 KB. The first try gave `$ROM` a virtual range (SizeOfImage grown
+  over it): 4 KB less free at boot for 8 MB (page tables), hence
+  VirtualSize 0.
+- Failure cards in xemu: `-DXHW_ROM_IN_XBE=0` with no file beside: "No ROM
+  found"; a flipped byte inside: "Bad or modified ROM dump" (message: copy
+  `default.xbe` again); an XBE cut 1 MB short: "default.xbe is cut short"
+  (the kernel still starts it: `$ROM` is never loaded).
+
+**Not verified / gaps**
+
+- The console (a retail kernel; modded BIOSes): `$$XTIMAGE`, also not
+  preloaded and unsigned, runs there; `$ROM` has not. `[CLOCK] cpu 733 MHz
+  (TSC against the ACPI timer, 3375000 Hz)` (xemu; nothing timed changed).
+- An XBE over a DVD-R (`n64rx xiso`): one big file, not tried.
+- `n64rx deploy` uploads the folder's files as before (now without a ROM
+  file) and refuses a folder with no ROM inside or beside; not run against
+  a console here.

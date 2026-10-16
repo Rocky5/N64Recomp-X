@@ -1,6 +1,6 @@
 """n64rx's command line (PLAN.md 5.1).
 
-  n64rx build <rom> [--out DIR] [--engine docker|native|auto] [--video auto|480|720] [--fast]
+  n64rx build <rom> [--out DIR] [--engine docker|native|auto] [--video auto|480|720] [--fast] [--rom-beside]
   n64rx doctor [--install]
   n64rx games
   n64rx deploy <folder> --ftp HOST [--user xbox --pass xbox] [--to /E/Games]
@@ -15,6 +15,7 @@ import io
 import json
 import pathlib
 import shutil
+import struct
 import subprocess
 import sys
 
@@ -22,7 +23,8 @@ from . import ROOT, VERSION, N64rxError, doctor, engines, packs, pipeline, rom a
 
 
 def cmd_build(a):
-    pipeline.build(a.rom, out=a.out, engine=a.engine, video=a.video, fast=a.fast, gpr=a.gpr, analyze=a.analyze)
+    pipeline.build(a.rom, out=a.out, engine=a.engine, video=a.video, fast=a.fast, gpr=a.gpr, analyze=a.analyze,
+                   rom_beside=a.rom_beside)
     return 0
 
 
@@ -62,10 +64,27 @@ def _title_id(folder):
     return None
 
 
+def rom_inside(xbe):
+    """the XBE holds the ROM as its $ROM section (PLAN.md 3.5)"""
+    with open(xbe, 'rb') as f:
+        d = f.read(0x1000)
+    try:
+        base, nsec, tab = struct.unpack_from('<I', d, 0x104)[0], *struct.unpack_from('<II', d, 0x11C)
+        names = [struct.unpack_from('<I', d, tab - base + i * 0x38 + 20)[0] - base for i in range(nsec)]
+        return any(d[n:n + 5] == b'$ROM\0' for n in names)
+    except struct.error:
+        return False
+
+
 def cmd_deploy(a):
     folder = pathlib.Path(a.folder)
     if not (folder / 'default.xbe').exists():
         raise N64rxError(f'{folder} has no default.xbe.', 'Give the folder n64rx build made (out/<game>).')
+    # one file holds the game and the ROM; a --rom-beside build needs its ROM file too
+    if not rom_inside(folder / 'default.xbe') and not any(
+            p.suffix.lower() in ('.z64', '.n64', '.v64', '.rom', '.bin') for p in folder.iterdir()):
+        raise N64rxError(f'{folder} has no ROM: not inside default.xbe and no ROM file next to it.',
+                         'Build it again with n64rx build <your ROM> (the ROM goes inside default.xbe).')
     f = _ftp(a.ftp, a.user, a.password)
     tid = _title_id(folder)
     if tid:   # logs first: the next boot overwrites them
@@ -159,6 +178,8 @@ def parser():
     b.add_argument('--video', choices=('auto', '480', '720'), default='auto', help='the default video mode')
     b.add_argument('--fast', action='store_true', help='-O1, no LTO: a quicker first look')
     b.add_argument('--analyze', action='store_true', help='analyse the ROM even when a game pack knows it (PLAN.md 3.14)')
+    b.add_argument('--rom-beside', action='store_true',
+                   help='the ROM as a file next to default.xbe instead of inside it (PLAN.md 3.5)')
     b.add_argument('--gpr', choices=('32', '64'), help=argparse.SUPPRESS)
     b.set_defaults(fn=cmd_build)
     d = sub.add_parser('doctor', help='what is installed, what is missing')

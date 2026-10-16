@@ -255,3 +255,16 @@ singular package for the user to manage"; decided, not built yet, PLAN.md
 the page cache unchanged, the SHA-1 check on the embedded bytes. Nothing
 changes about publishing: a built XBE was never shareable (it holds the
 game's recompiled code). Until then the ROM sits next to `default.xbe`.
+
+**Built: `$ROM` has no virtual range** (2026-10-16). The first version
+gave the section a virtual address past the image and grew SizeOfImage
+over it, as the format suggests; xemu's `[MEM] boot` showed 4 KB less free
+for an 8 MB ROM (the kernel's page tables for the image range; up to 64 KB
+for a 64 MB one). With VirtualSize 0 and SizeOfImage untouched the boot is
+the same to the KB as with the ROM beside the XBE. Nothing maps the
+section, so the range was never used. The runtime reads the section table
+from the header the kernel mapped (no descriptor file to keep in step), and
+a ROM given to a test build by name (`MX_ROM`) still wins over `$ROM`. A
+bad hash on an embedded ROM says to copy `default.xbe` again (the build
+checked the ROM on the PC). Kill switches: `n64rx build --rom-beside`
+(no section, the file as before) and `-DXHW_ROM_IN_XBE=0`.

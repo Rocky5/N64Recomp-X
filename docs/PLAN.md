@@ -391,19 +391,26 @@ cooperative single-thread shim the siblings keep in reserve, same API.
 ### 3.5 The ROM (`pi.c`, `xhw_rom.c`)
 
 **The ROM lives inside the XBE** (maintainer, 2026-10-16: one file per game
-to copy and manage; decided, to be built). `n64rx` puts the normalised
+to copy and manage; built 2026-10-16, `xbe_sections.py --rom`,
+`xhw_rom.c`). `n64rx` puts the normalised
 (decompressed, for Yaz0 games) image into `default.xbe` as a section of its
 own, `$ROM`, that the kernel never loads (no preload flag, not in any
-`XeLoadSection` call): it costs no RAM until the runtime reads it. At boot
-the runtime finds `$ROM` in its own section headers, reads its bytes from
+`XeLoadSection` call, and no virtual range: VirtualSize 0, SizeOfImage
+unchanged, since the kernel builds page tables for the whole image range
+and a 64 MB range would cost up to 64 KB): it costs no RAM until the
+runtime reads it (xemu: `[MEM]` the same to the KB as with the ROM beside
+the XBE). At boot
+the runtime finds `$ROM` in its own section headers (the image header the
+kernel mapped at 0x10000, `xrom_xbe_section`), reads its bytes from
 `D:\default.xbe` at the section's raw offset (the same file reads the
 resident load and the page cache already do, so both sources below stay
 as they are), SHA-1s them against the table the build wrote, and refuses
 anything else with the hash shown. The output folder is then
 `default.xbe`, `default.tbn` and the README; the built XBE already holds
 the game's recompiled code, so publishing it was never allowed and nothing
-changes there. Until it is built (and as the fallback the boot keeps for a
-build without `$ROM`): the ROM next to `default.xbe`, Wings64-X §3.1
+changes there. The fallback the boot keeps for a build without `$ROM`
+(`n64rx build --rom-beside`; at run time `-DXHW_ROM_IN_XBE=0`): the ROM
+next to `default.xbe`, Wings64-X §3.1
 generalised (any name, `.z64/.n64/.v64/.rom/.bin`, normalised in place).
 Then one of two sources:
 
