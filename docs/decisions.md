@@ -268,3 +268,26 @@ a ROM given to a test build by name (`MX_ROM`) still wins over `$ROM`. A
 bad hash on an embedded ROM says to copy `default.xbe` again (the build
 checked the ROM on the PC). Kill switches: `n64rx build --rom-beside`
 (no section, the file as before) and `-DXHW_ROM_IN_XBE=0`.
+
+## The safety net and the learning loop (2026-10-16, PLAN.md 3.14 step 5)
+
+**A miss interprets instead of stopping, through a stub per address.**
+`get_function` returns a bare `recomp_func_t*`; a global "pending address"
+would race between the game's preemptive threads, thread-local storage is
+not dependable on the game triple, and the generated code does not set ra.
+A 22-byte x86 stub per address (`push vram; push ctx; push rdram; call`)
+is thread-safe, costs nothing after the first lookup, and keeps
+interpreting whatever RDRAM holds, so an overlay that replaces the code
+needs no invalidation. No decoded-block cache: correctness first.
+
+**The interpreter follows the generated code, not the VR4300, where they
+differ** (odd FPRs in .s ops, round.w as lround, comparisons that ignore
+NaN): a function must behave the same interpreted on one build and
+recompiled on the next, after `--learn`.
+
+**Learnt facts become analysis inputs, not a pack.** A learnt function is
+a root of the segment holding it; one outside every segment brings its DMA
+in as a segment; both stay in the build folder. The runtime merges a DMA
+that continues the last one, so a game that loads a segment in 4 KB chunks
+(SM64) yields the whole segment.
+

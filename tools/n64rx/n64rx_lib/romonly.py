@@ -17,6 +17,7 @@ from . import ROOT, N64rxError
 from .packs import Pack
 from .analyze import AnalysisError, analyze
 from .analyze import emit, libultra
+from . import learn
 
 # 16 Kbit EEPROM games by game code (first three letters); the rest of the
 # EEPROM games are 4 Kbit. Facts, not ROM bytes.
@@ -30,15 +31,20 @@ def _title_id(code):
     return 0x4E520000 | h
 
 
-def make(rom, bdir, base=None):
+def make(rom, bdir, base=None, learnt=None):
     """(Pack, info) for this ROM from the analysis; info has the live set and
-    the names for the pipeline's retry"""
+    the names for the pipeline's retry. learnt: what the console's safety
+    net ran (learn.py, --learn)"""
+    learnt = learnt or learn.Learnt()
     try:
         a = analyze(rom.data)
     except AnalysisError as e:
         raise N64rxError(f'This ROM could not be analysed: {e}.',
                          'It may use a boot or entry code n64rx does not know yet; '
                          'tell the project which game it is.')
+    learn.withhold(a, learn.withheld(learnt))   # the learning loop (learn.py): its test switch,
+    if learnt:                                  # then what the console learnt
+        learn.apply(a, learnt, len(rom.data))
     ids, _N = libultra.identify(a.img, a.all_funcs())
     lists = emit.recomp_lists(ROOT)
     replaced = lists['reimplemented_funcs'] | lists['ignored_funcs']
@@ -46,6 +52,9 @@ def make(rom, bdir, base=None):
     live = emit.reachable(a, nm, replaced)
     pdir = pathlib.Path(bdir) / 'pack'
     pdir.mkdir(parents=True, exist_ok=True)
+    if learnt:
+        live = learn.extend_live(a, live, learnt.funcs, nm, replaced)
+        learn.write(learnt, pdir / 'learned.txt')
     emit.write_syms(a, nm, pdir / 'syms.toml')
     ignored, patches = _from_base(base, a, nm)
     # dead code is not recompiled: libultra's internals that only the

@@ -23,8 +23,12 @@ from . import ROOT, VERSION, N64rxError, doctor, engines, packs, pipeline, rom a
 
 
 def cmd_build(a):
+    for f in a.learn or ():
+        if not pathlib.Path(f).is_file():
+            raise N64rxError(f'No learn file at {f}.', r'Copy E:\UDATA\<title id>\learn.txt off the Xbox (n64rx log '
+                             '--pull <ip> fetches the logs), or pass the serial log of the run.')
     pipeline.build(a.rom, out=a.out, engine=a.engine, video=a.video, fast=a.fast, gpr=a.gpr, analyze=a.analyze,
-                   rom_beside=a.rom_beside)
+                   learn=tuple(a.learn or ()), rom_beside=a.rom_beside)
     return 0
 
 
@@ -142,7 +146,7 @@ def cmd_log(a):
     pack = packs.load(packs.GAMES / info['pack'])
     f = _ftp(a.pull, a.user, a.password)
     mp = pathlib.Path(info['folder']) / 'debug/n64recomp_x.map'
-    for name in ('boot.log', 'crash.log'):
+    for name in ('boot.log', 'crash.log', 'learn.txt'):
         buf = io.BytesIO()
         try:
             f.retrbinary(f'RETR /E/UDATA/{pack.title_id_hex}/{name}', buf.write)
@@ -150,6 +154,11 @@ def cmd_log(a):
             continue
         text = buf.getvalue().decode('utf-8', 'replace')
         print(f'--- {name} ---\n{text}')
+        if name == 'learn.txt':   # the safety net's log (PLAN.md 3.14): the next build's --learn
+            saved = pathlib.Path(info['folder']) / 'debug/learn.txt'
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            saved.write_text(text, encoding='utf-8')
+            print(f'saved as {saved}: n64rx build <rom> --learn "{saved}" recompiles that code')
         if name == 'crash.log' and mp.exists():
             saved = pathlib.Path(info['folder']) / 'debug/crash.log'
             saved.write_text(text, encoding='utf-8')
@@ -180,6 +189,9 @@ def parser():
     b.add_argument('--analyze', action='store_true', help='analyse the ROM even when a game pack knows it (PLAN.md 3.14)')
     b.add_argument('--rom-beside', action='store_true',
                    help='the ROM as a file next to default.xbe instead of inside it (PLAN.md 3.5)')
+    b.add_argument('--learn', action='append', metavar='FILE',
+                   help='learn.txt from the console (or its serial log): recompile the code the safety net ran '
+                        '(PLAN.md 3.14); implies --analyze')
     b.add_argument('--gpr', choices=('32', '64'), help=argparse.SUPPRESS)
     b.set_defaults(fn=cmd_build)
     d = sub.add_parser('doctor', help='what is installed, what is missing')

@@ -27,7 +27,7 @@ ULTRA(osInvalDCache) {
 }
 ULTRA(osInvalICache) {
     (void)rdram;
-    (void)ctx;
+    xrc_learn_inval(ARG(0), ARG(1));   /* learn.c: code there may be new */
 }
 
 ULTRA(osVirtualToPhysical) {

@@ -13,8 +13,9 @@ import sys
 import time
 
 from . import ROOT, VERSION, N64rxError, engines, packs, romonly, rom as romlib
+from . import learn as learnmod
 
-GEN_VERSION = 3   # bump when what n64rx writes into gen/ changes (the cache key)
+GEN_VERSION = 4   # bump when what n64rx writes into gen/ changes (the cache key)
 VIDEO = {'auto': 0, '480': 2, '720': 3}
 EEPROM = {'eep4k': 512, 'eep16k': 2048}
 FATX_BAD = '<>:"/\\|?*'
@@ -160,6 +161,7 @@ def write_interp_c(pack, gen):
                 'const XrcInterpEntry xrc_interp_table[] = {']
         out += [f'    {{ 0x{v:08X}u, {n} }},' for n, v in rows]
         out += ['};', f'const unsigned xrc_interp_count = {len(rows)};']
+    out += _ultra_table(pack)
     (gen / 'xrc_interp.c').write_text('\n'.join(out) + '\n', encoding='utf-8', newline='\n')
     return len(rows)
 
@@ -195,6 +197,30 @@ def write_extern_h(gen):
                                       " * declare (the runtime's libultra, a pack's host functions) */\n"
                                       '#pragma once\n#include "recomp.h"\n' + body, encoding='utf-8', newline='\n')
     return extern
+
+
+def _ultra_table(pack):
+    """the runtime's libultra (ULTRA(name) in xbox/src/rt) at the game's
+    addresses, for the function table: interpreted code (the safety net,
+    xbox/src/rt/learn.c) that calls osVirtualToPhysical by address must
+    reach the runtime's, not run libultra's own"""
+    import tomllib
+    have = set()
+    for c in (ROOT / 'xbox/src/rt').rglob('*.c'):
+        have.update(re.findall(r'^ULTRA\((\w+)\)', c.read_text(encoding='utf-8', errors='replace'), re.M))
+    try:
+        cfg = tomllib.loads((pack.dir / 'recomp.toml').read_text(encoding='utf-8'))
+        sp = pack.dir / cfg['input'].get('symbols_file_path', '')
+        secs = tomllib.loads(sp.read_text(encoding='utf-8')).get('section', []) if sp.is_file() else []
+    except (OSError, KeyError, tomllib.TOMLDecodeError):
+        secs = []
+    rows = sorted({(f['vram'], f['name']) for s in secs for f in s.get('functions', []) if f['name'] in have})
+    out = ['', "/* the runtime's libultra at the game's addresses (xbox/src/rt/ovl.c enters them) */",
+           'typedef struct { uint32_t vram; recomp_func_t* fn; } XrcUltraEntry;']
+    out += [f'void {n}_recomp(uint8_t* rdram, recomp_context* ctx);' for n in sorted({n for _v, n in rows})]
+    out += ['const XrcUltraEntry xrc_ultra_table[] = {'] + [f'    {{ 0x{v:08X}u, {n}_recomp }},' for v, n in rows]
+    out += ['    { 0, 0 }', '};', f'const unsigned xrc_ultra_count = {len(rows)};']
+    return out
 
 
 def write_game_c(pack, gpr_bits, gen):
@@ -258,7 +284,7 @@ This folder contains your game's code: keep it to yourself.
 
 
 def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None, echo=None, eng=None,
-          analyze=False, rom_beside=False):
+          analyze=False, rom_beside=False, learn=()):
     echo = echo or (lambda s: print(s, flush=True))
     prog = Progress(echo, 5)
     prog.step('Reading the ROM')
@@ -270,14 +296,17 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     eng = eng or engines.pick(engine)
     out_root = pathlib.Path(out) if out else pathlib.Path.cwd() / 'out'
     if eng.name == 'docker':
-        return _build_in_docker(eng, rom, out_root, video, fast, gpr, prog, rom_beside)
+        return _build_in_docker(eng, rom, out_root, video, fast, gpr, prog, rom_beside, learn)
     ainfo = None
-    if analyze or pack is None:
+    learnt = learnmod.read(learn) if learn else None   # --learn: the console's learn.txt (learn.py)
+    if analyze or pack is None or learnt is not None:
         base = pack
         bdir = ROOT / 'build-xbox' / ((base.id + '-rom') if base else re.sub(r'[^a-z0-9]', '', rom.code.lower()))
         bdir.mkdir(parents=True, exist_ok=True)
         t0 = time.time()
-        pack, ainfo = romonly.make(rom, bdir, base)
+        pack, ainfo = romonly.make(rom, bdir, base, learnt)
+        if learnt is not None:
+            prog.note(f'learnt on the console: {len(learnt.funcs)} functions, {len(learnt.dmas)} DMAs ({", ".join(map(str, learn))})')
         a = ainfo['analysis']
         prog.note(f'{pack.title}: {rom.describe()}, {rom.order} byte order, '
                   + ('analysed from the ROM over its pack' if base else 'no pack: analysed from the ROM alone'))
@@ -303,7 +332,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     else:
         if gen.exists():
             shutil.rmtree(gen)
-        for _attempt in range(40):
+        for _attempt in range(400):   # one refused function a run (SM64 ROM-only: ~100, jal into a segment found only at run time)
             cfg = write_recomp_config(pack, rom_file, gen, bdir / 'cfg')
             start = log.stat().st_size
             if not eng.recompile(cfg, log) and (gen / 'funcs.h').exists():
@@ -373,7 +402,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     return folder
 
 
-def _build_in_docker(eng, rom, out_root, video, fast, gpr, prog, rom_beside=False):
+def _build_in_docker(eng, rom, out_root, video, fast, gpr, prog, rom_beside=False, learn=()):
     out_root.mkdir(parents=True, exist_ok=True)
     log = cache_dir() / 'docker.log'
     log.write_text('', encoding='utf-8')
@@ -384,6 +413,9 @@ def _build_in_docker(eng, rom, out_root, video, fast, gpr, prog, rom_beside=Fals
         args += ['--gpr', str(gpr)]
     if rom_beside:
         args.append('--rom-beside')
+    for i, f in enumerate(learn):   # the learn files ride in the output folder (mounted at /out)
+        shutil.copyfile(f, out_root / f'.learn-{i}.txt')
+        args += ['--learn', f'/out/.learn-{i}.txt']
     prog.note(f'in the SDK image {engines.image_name()} (the first build pulls it)')
     if eng.run_inside(args, rom.path.resolve().parent, out_root.resolve(), log):
         raise N64rxError('The build inside Docker failed.', f'{tail(log)}\nfull log: {log}')

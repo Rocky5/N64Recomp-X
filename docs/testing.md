@@ -12,6 +12,7 @@ python tools/xbox/test_recomp_h.py      # our recomp.h vs upstream's: x86-64, i6
 python tools/xbox/test_syms.py          # every committed symbol file against the function table's rules
 python tools/xbox/test_scan64.py        # the register-width scan on hand-assembled functions (rabbitizer)
 python tools/xbox/test_time.py          # the counter follows the ACPI clock; nothing else reads the TSC
+python tools/xbox/test_interp.py        # the MIPS interpreter: each instruction class vs expected results, 64- and 32-bit registers, the learn log's spans
 python tools/xbox/test_asp_hle.py       # the audio HLE: every command vs a reference, SIMD = C, native = word-swapped RDRAM
 python tools/xbox/test_xbe_rom.py       # the ROM inside the XBE: xbe_sections' $ROM, found and checked by xhw_rom.c's parser
 ```
@@ -54,6 +55,16 @@ against the decomp's lists, then the XBE in xemu. A crash card that says
 card's second number is the host return address (`tools/xbox/sym.py --map
 <folder>/debug/n64recomp_x.map 0x...` names the recompiled caller).
 `[INTERP]` lines name the hand-written routines that run interpreted.
+
+## The learning loop (`docs/analyzer.md`)
+
+```sh
+N64RX_WITHHOLD=8022E920 n64rx build pw64.z64 --analyze --fast --out out-wh   # PW64's app thread entry withheld
+# run it: the serial log has "[LEARN] safety net: 8022e920 ..." and "[LEARN] func ..." lines
+grep -a '\[LEARN\]' serial.log > out-wh/learn.txt                               # or n64rx log --pull <ip>
+N64RX_WITHHOLD=8022E920 n64rx build pw64.z64 --fast --out out-learnt --learn out-wh/learn.txt
+# run it: no [LEARN] lines
+```
 
 ## xemu (`tools/xbox/xemu_run.sh`)
 
@@ -129,6 +140,8 @@ Timed events follow the ACPI clock.
 | `-DXRC_AUDIO_DUMP=<s>` | 0 | test builds: 3 s of the output from second `<s>` as `[AUDDUMP]` lines (`tools/xbox/auddump_to_wav.py serial.log out.wav`: the WAV and its numbers, RMS, L/R correlation, the energy below 4 kHz; the WAV stays outside the tree) |
 | `-DXRC_MENU=0` | 1 | no BACK menu (settings.ini still works) |
 | `-DXHW_ROM_IN_XBE=0` | 1 | ignore `default.xbe`'s `$ROM` section: the ROM is looked for next to the XBE (the build-side switch is `n64rx build --rom-beside`, which leaves the section out and writes the file) |
+| `-DXRC_SAFETY_NET=0` | 1 | a call to an address with no function is the fatal card again (no interpreting, no `[LEARN]`, no `learn.txt`) |
+| `N64RX_WITHHOLD=<vram>,...` (env, n64rx) | unset | test: those functions left out of the analysis, so the safety net runs them (the learning loop's demo) |
 | `-DASP_HLE_WORDSWAP=0` | 1 on the console | `asp_hle` on a native-order RDRAM (Wings64-X's layout; the host tests' first group) |
 
 Wings64-X's platform switches (`XHW_*`, `XGFX_*`) carry over; its
