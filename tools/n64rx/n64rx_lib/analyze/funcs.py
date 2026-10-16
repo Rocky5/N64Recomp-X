@@ -72,26 +72,40 @@ class Image:
 
 def parse_entry(rom, entry):
     """The SDK entry: lui/addiu t0 = BSS start, lui/ori t1 = BSS size, a clear
-    loop, then the stack and a jump to main (jr t2 or j main). Returns
-    (bss_start, bss_size, main) or None when the entry is something else."""
-    regs, bss, size, main = {}, None, None, None
-    for i in range(32):
+    loop, then the stack and a jump to main (jr t2 or j main). The variants
+    other toolchains wrote are read too: the loop from a start to an end
+    address (t1 = the end, `sw zero, -4(t0)` after the increment) and main
+    called with jal (Forsaken, Turok 2: the entry spins after main returns).
+    Returns (bss_start, bss_size, main) or None when the entry is something
+    else."""
+    regs, bss, size, main, snap = {}, None, None, None, None
+    for i in range(48):
         o = 0x1000 + 4 * i
         ins = Ins(int.from_bytes(rom[o:o + 4], 'big'), entry + 4 * i)
         d = ins.dest
+        if ins.is_branch and snap is None and bss is None:
+            snap = dict(regs)   # the registers as the loop starts (before its increments)
         if ins.op == 15:   # lui
             regs[ins.rt] = ins.imm << 16
         elif ins.op in (9, 8) and ins.rs in regs:   # addiu / addi
             regs[ins.rt] = (regs[ins.rs] + ins.simm) & 0xFFFFFFFF
         elif ins.op == 13 and ins.rs in regs:      # ori
             regs[ins.rt] = regs[ins.rs] | ins.imm
-        elif ins.op == 43 and ins.rt == 0 and bss is None and ins.rs in regs:   # sw zero, 0(t0): the clear loop
-            bss = regs[ins.rs]
-            size = regs.get(9)
+        elif ins.op == 43 and ins.rt == 0 and bss is None and ins.rs in regs:   # sw zero, off(t0): the clear loop
+            src = snap if snap is not None and ins.rs in snap else regs
+            bss = src[ins.rs]
+            other = src.get(9)
+            if other is not None and other >= 0x80000000 and other > bss:   # an end address, not a size
+                size = other - bss
+            else:
+                size = other
         elif ins.is_jr:
             main = regs.get(ins.rs)
             break
         elif ins.is_j:
+            main = ins.target
+            break
+        elif ins.is_jal and bss is not None:   # main called, the entry spins after it
             main = ins.target
             break
         elif d is not None and d not in (8, 9, 10, 29):
