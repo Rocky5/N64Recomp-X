@@ -1,0 +1,37 @@
+# Pilotwings 64 (US): G0, the A/B against Wings64-X (PLAN.md 5.3). The
+# symbol file comes from the n64decomp/pw64 decomp (MIT) at 1a8558f, through
+# tools/xbox/syms_tools.py from-splat.
+[game]
+id = "pw64"
+title = "Pilotwings 64"
+code = "NPWE"
+title_id = 0x4E520001
+sha1 = ["ec771aedf54ee1b214c25404fb4ec51cfd43191a"]
+rom_size = 8388608
+
+[rom]
+compressed = "none"
+resident = "always"
+
+[cpu]
+entrypoint = 0x80200050
+boot_size = 0x100000
+rdram_mb = 4
+gpr = "auto"
+
+[rsp]
+gfx = ["F3D"]
+audio = "hle"
+
+[save]
+type = "eep16k"                # 16 Kbit: Wings64-X's osEepromProbe (hardware-tested)
+
+[video]
+widescreen = "auto"
+cull_patch = false
+
+[input]
+layout = "default"
+
+[status]
+stage = "planned"

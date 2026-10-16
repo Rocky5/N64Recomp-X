@@ -1,0 +1,16 @@
+# N64Recomp config for Pilotwings 64 (US, NPWE). n64rx fills in @ROM@ and @OUT@.
+[input]
+entrypoint = 0x80200050
+symbols_file_path = "pw64.us.syms.toml"
+rom_file_path = "@ROM@"
+output_func_path = "@OUT@"
+recomp_include = "#include \"recomp.h\""
+functions_per_output_file = 50
+
+[patches]
+# func_80231A10 (kernel/decompress_mio0.s, handwritten): mfc0 v0, Count;
+# mtc0 a0, Count. The recompiler has no COP0 Count and stops on it. Nothing
+# in the game calls it (no reference in the generated code), so it is left
+# out; if a call ever appears, the link names it and the runtime's clock
+# (osGetCount / osSetCount, ultra/time.c) gives it a body.
+ignored = ["func_80231A10"]

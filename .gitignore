@@ -24,7 +24,7 @@ rsp/*.cpp
 /build/
 /build-xbox*/
 /build-host/
-/out/
+/out*/
 /dist/
 /.n64rx/
 __pycache__/

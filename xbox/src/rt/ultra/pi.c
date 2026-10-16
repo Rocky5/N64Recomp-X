@@ -1,0 +1,110 @@
+/* pi.c - cartridge DMA from the resident ROM (PLAN.md 3.3, 3.5).
+ *
+ * The ROM is the verified, normalised (z64) image in RAM (resident: ROMs up
+ * to 16 MB; the page cache for bigger ones is M5). osPiStartDma copies at
+ * once into the word-swapped RDRAM image and sends the request's message;
+ * the PI manager thread the game created is never needed for that, but its
+ * queue is set up. osPiReadIo returns the big-endian word, as the bus did.
+ * Overlay tracking by DMA source is M5 (no relocatable sections yet). */
+#include "ultra.h"
+
+static const uint8_t* s_rom;
+static uint32_t s_rom_size;
+static unsigned s_bad;
+
+void xu_pi_set_rom(const uint8_t* rom, uint32_t size) {
+    s_rom = rom;
+    s_rom_size = size;
+}
+
+const uint8_t* xu_rom_ptr(uint32_t off, uint32_t n) {
+    if (!s_rom || off >= s_rom_size || n > s_rom_size - off) return NULL;
+    return s_rom + off;
+}
+
+void xu_to_rdram(uint32_t dst, const uint8_t* src, uint32_t n) {
+    uint32_t i = 0;
+    /* the unaligned head, a byte at a time */
+    for (; i < n && ((dst + i) & 3); i++) wr8(dst + i, src[i]);
+    /* whole words: big-endian bytes to a native word */
+    for (; i + 4 <= n; i += 4)
+        wr32(dst + i, ((uint32_t)src[i] << 24) | ((uint32_t)src[i + 1] << 16) | ((uint32_t)src[i + 2] << 8) | src[i + 3]);
+    for (; i < n; i++) wr8(dst + i, src[i]);
+}
+
+void xu_from_rdram(uint8_t* dst, uint32_t src, uint32_t n) {
+    uint32_t i;
+    for (i = 0; i < n; i++) dst[i] = rd8(src + i);
+}
+
+/* osPiStartDma's and osPiReadIo's device addresses are offsets into the
+ * cartridge domain: libultra ORs osRomBase (0xB0000000) in itself. A full
+ * PI bus or KSEG1 address is accepted too. */
+static uint32_t rom_offset(uint32_t dev) {
+    dev &= 0x1FFFFFFFu;
+    return dev >= 0x10000000u ? dev - 0x10000000u : dev;
+}
+
+/* osPiStartDma(mb, pri, dir, devAddr, vAddr (0x10), nbytes (0x14), mq (0x18)) */
+ULTRA(osPiStartDma) {
+    uint32_t mb = ARG(0), dir = ARG(2), dev = ARG(3), dram = ARG(4), n = ARG(5), mq = ARG(6);
+    const uint8_t* src;
+    (void)rdram;
+    if (dir != 0) {   /* OS_WRITE: SRAM/Flash, M2+ */
+        xhw_logf("[PI] write to the cart domain %08x (%u bytes): ignored", (unsigned)dev, (unsigned)n);
+    } else if ((src = xu_rom_ptr(rom_offset(dev), n)) != NULL) {
+        xu_to_rdram(dram, src, n);
+    } else {
+        uint32_t i;
+        for (i = 0; i < n; i++) wr8(dram + i, 0);
+        if (s_bad++ < 16)
+            xhw_logf("[PI] DMA outside the ROM: dev %08x, %u bytes to %08x (zeros)", (unsigned)dev, (unsigned)n,
+                     (unsigned)dram);
+    }
+    if (mb) {
+        wr32(mb + IO_RETQUEUE, mq);
+        wr32(mb + IO_DRAMADDR, dram);
+        wr32(mb + IO_DEVADDR, dev);
+        wr32(mb + IO_SIZE, n);
+    }
+    if (mq) xu_send(mq, mb, 0, 0);
+    RET(0);
+}
+
+static uint32_t read_word(uint32_t dev) {
+    const uint8_t* p = xu_rom_ptr(rom_offset(dev) & ~3u, 4);
+    return p ? ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3] : 0;
+}
+
+/* osPiReadIo(devAddr, u32* data) */
+ULTRA(osPiReadIo) {
+    (void)rdram;
+    wr32(ARG(1), read_word(ARG(0)));
+    RET(0);
+}
+
+ULTRA(osPiRawReadIo) {
+    (void)rdram;
+    wr32(ARG(1), read_word(ARG(0)));
+    RET(0);
+}
+
+/* osCreatePiManager(pri, cmdQ, cmdBuf, cmdMsgCnt): the queue, for anything
+ * that looks at it; DMA does not go through it here */
+ULTRA(osCreatePiManager) {
+    uint32_t mq = ARG(1);
+    (void)rdram;
+    if (mq) {
+        wr32(mq + MQ_MTQUEUE, 0);
+        wr32(mq + MQ_FULLQUEUE, 0);
+        wr32(mq + MQ_VALIDCOUNT, 0);
+        wr32(mq + MQ_FIRST, 0);
+        wr32(mq + MQ_MSGCOUNT, ARG(3));
+        wr32(mq + MQ_MSG, ARG(2));
+    }
+}
+
+ULTRA(osPiGetStatus) {
+    (void)rdram;
+    RET(0);
+}

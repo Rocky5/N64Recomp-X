@@ -13,10 +13,7 @@ void xrc_fatal_vram(const char* what, uint32_t vram, uint32_t extra) {
     xhw_fatal("The game stopped", line);
 }
 
-/* The interrupt-enable bit per thread and the recursive lock it stands for
- * come with the libultra surface (M1); until then the register is kept. */
-void cop0_status_write(recomp_context* ctx, gpr value) { ctx->status_reg = (uint32_t)value; }
-gpr cop0_status_read(recomp_context* ctx) { return (gpr)(int32_t)ctx->status_reg; }
+/* cop0_status_write / _read: ultra/thread.c (the interrupt mask) */
 
 void switch_error(const char* func, uint32_t vram, uint32_t jtbl) {
     xhw_logf("[RECOMP] %s: jump table %08x has no case for the value at %08x", func, (unsigned)jtbl, (unsigned)vram);

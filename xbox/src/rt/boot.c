@@ -9,7 +9,13 @@
  *                 The test pack (games/test): "Preparing memory" (the RDRAM
  *                 window), "Loading code" (the function table), "Starting"
  *                 (the recompiled entrypoint runs on the window), then a card
- *                 with what its checks found. A game: M1.
+ *                 with what its checks found. A game: the ROM ("Reading ROM",
+ *                 "Checking the ROM (SHA-1)", xhw_rom.c against the pack's
+ *                 dumps), the window with the boot block and the boot
+ *                 segment the IPL3 would have copied, the function table,
+ *                 the video mode, then the recompiled entrypoint on this
+ *                 thread (it becomes the boot code; the game's first
+ *                 osStartThread parks it, ultra/thread.c).
  *   the holds     xhw_splash_finish waits out the minimum hold and returns
  *                 what BACK / BACK + START latched; the settings apply it
  */
@@ -20,6 +26,8 @@
 #include "settings.h"
 #include "xhw.h"
 #include "xrc_build.h"
+#include "xrom.h"
+#include "ultra/ultra.h"
 
 #define TEST_RES 0x80100000u
 #define TEST_MAGIC 0x4E525831u   /* "NRX1": tools/xbox/make_test_rom.py */
@@ -84,8 +92,7 @@ static void test_rom(void) {
     snprintf(l[0], sizeof l[0], "Starting %s", xrc_game.title);
     xhw_splash_stage(l[0]);
     xhw_splash_progress(0.8f);
-    memset(&ctx, 0, sizeof ctx);
-    ctx.r29 = (gpr)(int32_t)(0x80000000u + xrc_rdram_size - 16);   /* the N64 stack at the top of the window */
+    xrc_ctx_init(&ctx, 0x80000000u + xrc_rdram_size - 16);   /* the N64 stack at the top of the window */
     set_cop1_cs(0);
     t0 = xhw_time_us();
     xrc_game.entry(xrc_rdram, &ctx);
@@ -111,6 +118,69 @@ static void test_rom(void) {
     xhw_error_card(magic == TEST_MAGIC && !fails ? "Test ROM: passed" : "Test ROM: FAILED", lines, 30);
 }
 
+/* the renderer's start once the mode is set (the interpreter, M1); weak until it exists */
+__attribute__((weak)) void xrc_gfx_boot(void) {}
+
+/* what the IPL3 and the boot ROM leave in low RDRAM (libultra's os globals) */
+static void boot_block(void) {
+    uint32_t i;
+    wr32(0x80000300, 1);                 /* osTvType: NTSC */
+    wr32(0x80000304, 0);                 /* osRomType: cartridge */
+    wr32(0x80000308, 0xB0000000u);       /* osRomBase */
+    wr32(0x8000030C, 0);                 /* osResetType: cold */
+    wr32(0x80000310, 2);                 /* osCicId: 6102 */
+    wr32(0x80000314, 0);                 /* osVersion */
+    wr32(0x80000318, xrc_rdram_size);    /* osMemSize */
+    for (i = 0; i < 64; i += 4) wr32(0x8000031C + i, 0);   /* osAppNMIBuffer */
+}
+
+static void game(void) {
+    xrom_target t;
+    xrom_info info;
+    const uint8_t* rom;
+    recomp_context ctx;
+    uint32_t boot, i;
+    char line[72];
+    memset(&t, 0, sizeof t);
+    snprintf(t.title, sizeof t.title, "%s", xrc_game.title);
+    snprintf(t.code, sizeof t.code, "%s", xrc_game.code ? xrc_game.code : "");
+    t.size = xrc_game.rom_size;
+    for (i = 0; i < 4 && xrc_game.sha1[i]; i++) snprintf(t.sha1[t.nsha1++], sizeof t.sha1[0], "%s", xrc_game.sha1[i]);
+    rom = xhw_rom_load_verified(&t, &info);
+    xu_pi_set_rom(rom, info.size);
+
+    xhw_splash_stage("Preparing memory");
+    xhw_splash_progress(0.3f);
+    if (!xrc_mem_init(xrc_game.rdram_mb ? xrc_game.rdram_mb : 4))
+        xhw_fatal("Out of memory", "No room for the N64's RAM.");
+    boot_block();
+    boot = xrc_game.boot_size;
+    if (boot > info.size - 0x1000) boot = info.size - 0x1000;
+    xu_to_rdram(xrc_game.entrypoint, rom + 0x1000, boot);   /* the IPL3's copy */
+    xhw_logf("[RECOMP] boot segment: %u KB from ROM 0x1000 to %08x", (unsigned)(boot >> 10),
+             (unsigned)xrc_game.entrypoint);
+
+    xhw_splash_stage("Loading code");
+    xhw_splash_progress(0.6f);
+    if (!xrc_ovl_init()) xhw_fatal("Can't load the code", "The function table could not be built.");
+
+    snprintf(line, sizeof line, "Starting %s", xrc_game.title);
+    xhw_splash_stage(line);
+    xhw_splash_progress(1.0f);
+    finish_loading_screen();
+    /* the hold may have changed the settings: the mode follows them */
+    xhw_video_set_pref(g_xrc_settings.output, g_xrc_settings.progressive);
+    xhw_video_set_confirmed(g_xrc_settings.video_confirmed);
+    xhw_video_boot();
+    xrc_gfx_boot();
+
+    xrc_ctx_init(&ctx, 0x80000000u + xrc_rdram_size - 16);
+    set_cop1_cs(0);
+    xhw_logf("[RECOMP] entrypoint %08x, %d-bit registers", (unsigned)xrc_game.entrypoint, xrc_game.gpr_bits);
+    xrc_game.entry(xrc_rdram, &ctx);
+    xhw_fatal("The game returned", "The boot code came back; the game's threads never started.");
+}
+
 void xrc_boot(void) {
     xhw_logf("[RECOMP] N64Recomp-X %s, game %s, title id " XRC_TITLE_ID_HEX, XRC_VERSION,
              xrc_game.id ? xrc_game.id : "(none)");
@@ -120,5 +190,5 @@ void xrc_boot(void) {
     xhw_splash_card_set(xrc_game.title, xrc_game.test_rom ? "the ROM-free end-to-end test" : xrc_game.id,
                         xrc_game.icon);
     if (xrc_game.test_rom) test_rom();
-    xhw_fatal("Not yet", "Games run from milestone M1 on.");
+    game();
 }

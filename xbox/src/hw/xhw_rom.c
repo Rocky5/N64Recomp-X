@@ -1,15 +1,17 @@
-/* xhw_rom.c - find, load and validate the user's Pilotwings 64 ROM (PLAN.md 3.1).
+/* xhw_rom.c - find, load and validate the user's ROM (PLAN.md 3.5; from
+ * Wings64-X's, made game-agnostic).
  *
  * The port ships no game data: the ROM is the user's own, next to default.xbe.
- * Nothing runs on an image that has not passed the SHA-1 check against
- * xrom_known.h, so a bad dump, another game or a Japanese/European release
- * stops here with a card that says what was found and what is expected.
+ * Nothing runs on an image that has not passed the SHA-1 check against the
+ * game pack's list (the runtime hands it over as an xrom_target), so a bad
+ * dump, another game or another release stops here with a card that says
+ * what was found and what is expected.
  *
  * Two halves. The pure functions (detect order, normalise, parse header,
  * check size/header/hash) call no kernel routines and build on a host with
- * -DXROM_HOST_TEST: tests/xbox/test_rom_check.c drives every verdict through
- * them. The Xbox half (find the file in D:\, read it in 256 KB pieces under
- * the splash's load bar, hash, report) is behind #ifndef XROM_HOST_TEST.
+ * -DXROM_HOST_TEST. The Xbox half (find the file in D:\, read it in 256 KB
+ * pieces under the loading screen's bar, hash, report) is behind
+ * #ifndef XROM_HOST_TEST.
  *
  * The extension is only a hint to find the file; the first four bytes decide
  * the byte order (.z64 as is, .v64 swapped pairs, .n64 reversed words) and
@@ -19,7 +21,6 @@
 #include <string.h>
 
 #include "xrom.h"
-#include "xrom_known.h"
 
 #ifndef XROM_HOST_TEST
 #include <stdarg.h>
@@ -93,77 +94,76 @@ static uint32_t fail(xrom_info* info, uint32_t verdict) {
     return verdict;
 }
 
-uint32_t xrom_check_size(xrom_info* info, uint32_t size) {
+uint32_t xrom_check_size(xrom_info* info, const xrom_target* t, uint32_t size) {
     info->size = size;
-    if (size == XROM_SIZE) return XROM_OK;
-    snprintf(info->message, sizeof info->message,
-             "This is not a Pilotwings 64 ROM (size %u bytes; expected 8 MB).", (unsigned)size);
+    if (t->size ? size == t->size : size >= 0x100000u && size <= 0x4000000u) return XROM_OK;
+    if (t->size)
+        snprintf(info->message, sizeof info->message, "This is not a %s ROM (size %u bytes; expected %u MB).",
+                 t->title, (unsigned)size, (unsigned)(t->size >> 20));
+    else
+        snprintf(info->message, sizeof info->message, "This file's size (%u bytes) is not an N64 ROM's.",
+                 (unsigned)size);
     return fail(info, XROM_BAD_SIZE);
 }
 
-uint32_t xrom_check_header(xrom_info* info) {
+uint32_t xrom_check_header(xrom_info* info, const xrom_target* t) {
     if (info->order == XROM_ORDER_UNKNOWN) {
         snprintf(info->message, sizeof info->message, "Not an N64 ROM (bad header).");
         return fail(info, XROM_BAD_HEADER);
     }
-    if (strcmp(info->code, "NPWE") == 0) return XROM_OK;
-    if (strcmp(info->code, "NPWJ") == 0 || strcmp(info->code, "NPWP") == 0) {
+    if (!t->code[0] || strcmp(info->code, t->code) == 0) return XROM_OK;
+    if (strncmp(info->code, t->code, 3) == 0) {
         snprintf(info->message, sizeof info->message,
-                 "%s Pilotwings 64 is not supported; the port is built from the US release (NPWE).",
-                 info->code[3] == 'J' ? "Japanese" : "European");
+                 "This %s is release %s; this build is made from %s. Use the ROM you built it from.", t->title,
+                 info->code, t->code);
         return fail(info, XROM_WRONG_REGION);
     }
-    snprintf(info->message, sizeof info->message, "This ROM is not Pilotwings 64 (game code %s).", info->code);
+    snprintf(info->message, sizeof info->message, "This ROM is not %s (\"%s\", game code %s).", t->title,
+             info->title, info->code);
     return fail(info, XROM_WRONG_GAME);
 }
 
-uint32_t xrom_check_hash(xrom_info* info, const xrom_known* table, int count) {
-    const xrom_known* want = NULL;
-    int i;
+uint32_t xrom_check_hash(xrom_info* info, const xrom_target* t) {
+    uint32_t i;
     xsha1_hex(info->sha1, info->sha1_hex);
-    for (i = 0; i < count; i++) {
-        if (strcmp(table[i].sha1, info->sha1_hex) == 0) {
-            snprintf(info->label, sizeof info->label, "%s", table[i].label);
+    for (i = 0; i < t->nsha1 && i < XROM_MAX_SHA1; i++) {
+        if (strcmp(t->sha1[i], info->sha1_hex) == 0) {
+            snprintf(info->label, sizeof info->label, "%s", t->code);
             info->message[0] = '\0';
             info->verdict = XROM_OK;
             return XROM_OK;
         }
-        if (!want && strcmp(table[i].code, info->code) == 0 && table[i].version == info->version) want = &table[i];
     }
-    if (!want && count > 0) want = &table[0];
     snprintf(info->message, sizeof info->message,
-             "Bad or modified dump: SHA-1 is %s, expected %s. Re-dump your cartridge.", info->sha1_hex,
-             want ? want->sha1 : "(none)");
+             "Bad or modified dump: SHA-1 is %s, expected %s. Use the ROM this build was made from.",
+             info->sha1_hex, t->nsha1 ? t->sha1[0] : "(none)");
     return fail(info, XROM_BAD_HASH);
 }
 
-uint32_t xrom_verify_with_table(uint8_t* buf, uint32_t size, xrom_info* info, const xrom_known* table, int count) {
+uint32_t xrom_verify(uint8_t* buf, uint32_t size, xrom_info* info, const xrom_target* t) {
     xsha1_ctx c;
     memset(info, 0, sizeof *info);
-    if (xrom_check_size(info, size) != XROM_OK) return info->verdict;
+    if (xrom_check_size(info, t, size) != XROM_OK) return info->verdict;
     info->order = xrom_detect_order(buf);
-    if (info->order == XROM_ORDER_UNKNOWN) return xrom_check_header(info);
+    if (info->order == XROM_ORDER_UNKNOWN) return xrom_check_header(info, t);
     xrom_normalise(buf, size, info->order);
     xrom_parse_header(buf, info);
-    if (xrom_check_header(info) != XROM_OK) return info->verdict;
+    if (xrom_check_header(info, t) != XROM_OK) return info->verdict;
     xsha1_init(&c);
     xsha1_update(&c, buf, size);
     xsha1_final(&c, info->sha1);
-    return xrom_check_hash(info, table, count);
-}
-
-uint32_t xrom_verify(uint8_t* buf, uint32_t size, xrom_info* info) {
-    return xrom_verify_with_table(buf, size, info, xrom_known_table, XROM_KNOWN_COUNT);
+    return xrom_check_hash(info, t);
 }
 
 /* ---- Xbox part ---- */
 #ifndef XROM_HOST_TEST
 
 #define CHUNK (256u * 1024u)
-#define CARD_LINES 24
-#define CARD_COLS 72   /* the debug screen is 80 columns wide; 4 are the indent */
+#define CARD_LINES 8
+#define CARD_COLS 70   /* the card's lines: the loading screen's safe width */
 
 static xrom_info s_info;
+static xrom_target s_target;
 
 const xrom_info* xhw_rom_info(void) { return &s_info; }
 
@@ -225,16 +225,12 @@ static void __attribute__((noreturn)) no_rom_card(void) {
     card c;
     xhw_logf("[ROM] no ROM found in %s", xhw_game_dir());
     xhw_exit_reason("ROM check failed (no ROM)");
-    xhw_logf("[ROM] lastexit.txt will say: ROM check failed (no ROM)");
     c.n = 0;
-    card_line(&c, "This needs your own copy of Pilotwings 64 (US release, NPWE).");
+    card_line(&c, "This needs your own copy of %s (%s),", s_target.title, s_target.code);
+    card_line(&c, "in the same folder as default.xbe (n64rx build puts it there).");
     card_line(&c, "");
-    card_line(&c, "Put the ROM in the same folder as default.xbe, e.g.");
-    card_line(&c, "    E:\\Games\\Wings64-X\\default.xbe");
-    card_line(&c, "    E:\\Games\\Wings64-X\\Pilotwings 64 (U).z64");
-    card_line(&c, "");
-    card_line(&c, "Any file name works; accepted extensions: .z64 .n64 .v64 .rom .bin");
-    card_line(&c, "The ROM is an 8 MB file. Nothing is bundled with this game.");
+    card_line(&c, "Any file name works: .z64 .n64 .v64 .rom .bin");
+    card_line(&c, "Nothing is bundled with this build.");
     xhw_error_card("No ROM found", c.ptr, 30);
 }
 
@@ -245,21 +241,15 @@ static void __attribute__((noreturn)) fail_card(const xrom_info* info, const cha
     xhw_logf("[ROM] FAILED: %s", info->message);
     snprintf(reason, sizeof reason, "ROM check failed (%s)", xrom_verdict_name(info->verdict));
     xhw_exit_reason(reason);
-    xhw_logf("[ROM] lastexit.txt will say: %s", reason);
     c.n = 0;
     card_wrap(&c, info->message);
     card_line(&c, "");
-    card_line(&c, "File: D:\\%s", info->file);
-    if (info->size) card_line(&c, "Size: %u bytes", (unsigned)info->size);
-    if (info->order != XROM_ORDER_UNKNOWN || info->code[0]) {
-        card_line(&c, "Byte order: %s", order_name(info->order));
-        card_line(&c, "Title: \"%s\"  code %s  region %c  version %u", info->title, info->code,
-                  info->region >= 0x20 && info->region < 0x7F ? (int)info->region : '?', (unsigned)info->version);
-        card_line(&c, "CRC: %08x %08x", (unsigned)info->crc1, (unsigned)info->crc2);
-    }
+    card_line(&c, "File: D:\\%s (%u bytes, %s)", info->file, (unsigned)info->size, order_name(info->order));
+    if (info->code[0])
+        card_line(&c, "Title \"%s\", code %s, version %u", info->title, info->code, (unsigned)info->version);
     if (info->verdict == XROM_BAD_HASH) {
-        card_line(&c, "SHA-1 found:    %s", info->sha1_hex);
-        card_line(&c, "SHA-1 expected: %s", xrom_known_table[0].sha1);
+        card_line(&c, "SHA-1 %s (yours)", info->sha1_hex);
+        card_line(&c, "SHA-1 %s (expected)", s_target.nsha1 ? s_target.sha1[0] : "");
     }
     xhw_error_card(title, c.ptr, 30);
 }
@@ -291,16 +281,17 @@ static int find_rom(char* name, int cap) {
     return 0;
 }
 
-const uint8_t* xhw_rom_load_verified(xrom_info* out) {
-    char path[96];
+const uint8_t* xhw_rom_load_verified(const xrom_target* target, xrom_info* out) {
+    char path[96], stage[64];
     xrom_info* info = &s_info;
     HANDLE h;
     DWORD hi = 0, lo;
     uint8_t* buf;
-    uint32_t done = 0;
+    uint32_t done = 0, size;
     uint64_t t0, t1, t2;
     xsha1_ctx sha;
 
+    s_target = *target;
     memset(info, 0, sizeof *info);
     if (!find_rom(info->file, (int)sizeof info->file)) no_rom_card();
     snprintf(path, sizeof path, "D:\\%s", info->file);
@@ -314,20 +305,22 @@ const uint8_t* xhw_rom_load_verified(xrom_info* out) {
         fail_card(info, "ROM can't be read");
     }
     lo = GetFileSize(h, &hi);
-    if (hi || xrom_check_size(info, lo) != XROM_OK) {
+    if (hi || xrom_check_size(info, &s_target, lo) != XROM_OK) {
         CloseHandle(h);
-        if (hi) xrom_check_size(info, 0xFFFFFFFFu);
-        fail_card(info, "Not a Pilotwings 64 ROM");
+        if (hi) xrom_check_size(info, &s_target, 0xFFFFFFFFu);
+        fail_card(info, "Not the right ROM");
     }
-
-    buf = (uint8_t*)malloc(XROM_SIZE);
-    if (!buf) xhw_fatal("Out of memory", "Can't allocate the 8 MB ROM buffer.");
-    xhw_commit(buf, XROM_SIZE);
+    size = lo;
+    buf = (uint8_t*)malloc(size);
+    if (!buf) xhw_fatal("Out of memory", "Can't allocate the ROM's buffer.");
+    xhw_commit(buf, size);
+    snprintf(stage, sizeof stage, "Reading ROM (%u MB)", (unsigned)((size + (1u << 20) - 1) >> 20));
+    xhw_splash_stage(stage);
+    xhw_splash_progress(0.0f);
     t0 = xhw_time_us();
-    xhw_splash_progress(0.1f);
-    while (done < XROM_SIZE) {
-        DWORD got = 0;
-        if (!ReadFile(h, buf + done, CHUNK, &got, NULL) || got == 0) {
+    while (done < size) {
+        DWORD got = 0, want = size - done < CHUNK ? size - done : CHUNK;
+        if (!ReadFile(h, buf + done, want, &got, NULL) || got == 0) {
             snprintf(info->message, sizeof info->message, "Read error after %u bytes (error %u).", (unsigned)done,
                      (unsigned)GetLastError());
             CloseHandle(h);
@@ -335,36 +328,40 @@ const uint8_t* xhw_rom_load_verified(xrom_info* out) {
             fail_card(info, "ROM can't be read");
         }
         done += got;
-        xhw_splash_progress(0.1f + 0.8f * (float)done / (float)XROM_SIZE);
+        xhw_splash_progress((float)done / (float)size);
     }
     CloseHandle(h);
     t1 = xhw_time_us();
 
     info->order = xrom_detect_order(buf);
     if (info->order == XROM_ORDER_UNKNOWN) {
-        xrom_check_header(info);
+        xrom_check_header(info, &s_target);
         fail_card(info, "Not an N64 ROM");
     }
-    xrom_normalise(buf, XROM_SIZE, info->order);
+    xrom_normalise(buf, size, info->order);
     xrom_parse_header(buf, info);
     xhw_logf("[ROM] title \"%s\" code %s region %c v%u crc 0x%08x 0x%08x order %s", info->title, info->code,
              (char)info->region, (unsigned)info->version, (unsigned)info->crc1, (unsigned)info->crc2,
              order_name(info->order));
-    if (xrom_check_header(info) != XROM_OK)
-        fail_card(info, info->verdict == XROM_WRONG_REGION ? "Unsupported ROM region" : "Not Pilotwings 64");
+    if (xrom_check_header(info, &s_target) != XROM_OK)
+        fail_card(info, info->verdict == XROM_WRONG_REGION ? "Another release of the game" : "Not the right game");
 
+    xhw_splash_stage("Checking the ROM (SHA-1)");
     xsha1_init(&sha);
-    for (done = 0; done < XROM_SIZE; done += CHUNK) xsha1_update(&sha, buf + done, CHUNK);
+    for (done = 0; done < size; done += CHUNK) {
+        xsha1_update(&sha, buf + done, size - done < CHUNK ? size - done : CHUNK);
+        xhw_splash_progress((float)done / (float)size);
+    }
     xsha1_final(&sha, info->sha1);
     t2 = xhw_time_us();
     xhw_splash_progress(1.0f);
-    xhw_logf("[ROM] loaded %u KB in %u ms, SHA-1 in %u ms", XROM_SIZE >> 10, (unsigned)((t1 - t0) / 1000),
+    xhw_logf("[ROM] loaded %u KB in %u ms, SHA-1 in %u ms", (unsigned)(size >> 10), (unsigned)((t1 - t0) / 1000),
              (unsigned)((t2 - t1) / 1000));
-    if (xrom_check_hash(info, xrom_known_table, XROM_KNOWN_COUNT) != XROM_OK) {
+    if (xrom_check_hash(info, &s_target) != XROM_OK) {
         xhw_logf("[ROM] SHA-1 %s", info->sha1_hex);
         fail_card(info, "Bad or modified ROM dump");
     }
-    xhw_logf("[ROM] verified: %s SHA-1 ok", info->label);
+    xhw_logf("[ROM] verified: %s %s, SHA-1 ok", s_target.title, info->label);
     if (out) *out = *info;
     return buf;
 }

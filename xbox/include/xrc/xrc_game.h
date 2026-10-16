@@ -26,6 +26,10 @@ typedef struct XrcGame {
     const SectionTableEntry* sections; /* recomp_overlays.inl's section_table */
     size_t num_sections;
     const uint32_t* icon;              /* 64x64 ARGB from the pack's icon.png, or NULL */
+    const char* code;                  /* the header's game code, "NPWE" */
+    uint32_t rom_size;                 /* bytes; 0: any */
+    const char* sha1[4];               /* the known dumps (normalised image), NULL-ended */
+    uint32_t eeprom_bytes;             /* 512 (4 Kbit), 2048 (16 Kbit), 0: none */
 } XrcGame;
 
 extern const XrcGame xrc_game;

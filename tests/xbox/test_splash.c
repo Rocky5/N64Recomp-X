@@ -71,10 +71,11 @@ static xhw_splash_state loading(void) {
     st.t_ms = 1800;
     st.wordmark = "TechProGabe Presents...";
     /* the longest title a pack may have (card_title holds 39 characters) */
-    snprintf(st.card_title, sizeof st.card_title, "%s", "The Legend of Zelda: Majora's Mask (US)X");
+    snprintf(st.card_title, sizeof st.card_title, "%s", "The Legend of Zelda: Majora's Mask (US)");
     snprintf(st.card_sub, sizeof st.card_sub, "%s", "the ROM-free end-to-end test, longest sub-line here");
     snprintf(st.version, sizeof st.version, "%s", "N64Recomp-X 10.20.30-dev");
-    snprintf(st.stage, sizeof st.stage, "Starting %s", st.card_title);
+    memcpy(st.stage, "Starting ", 9);
+    memcpy(st.stage + 9, st.card_title, strlen(st.card_title) + 1);
     snprintf(st.stage_ms, sizeof st.stage_ms, "%s", "99999 ms");
     st.progress = 0.6f;
     snprintf(st.video, sizeof st.video, "%s", "Video: 720p 16:9 (the last boot did not confirm its mode).");

@@ -153,6 +153,8 @@ def game_sources():
 
 def command(source, obj, dep):
     flags = [*CFLAGS, *(GEN_WARNINGS if is_gen(source) else PORT_WARNINGS), *EXTRA]
+    if is_gen(source) and (GEN / 'xrc_extern.h').exists():   # n64rx's prototypes for the calls funcs.h lacks
+        flags += ['-include', str(GEN / 'xrc_extern.h')]
     if posix(unit_name(source)) in OPT_QUARANTINE:
         flags.append('-O0')
     return [str(CLANG), *flags, '-MMD', '-MF', str(dep), '-MT', str(obj), '-c', str(source), '-o', str(obj)]

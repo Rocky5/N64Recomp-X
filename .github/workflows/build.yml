@@ -39,23 +39,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: MSYS2 (Windows)
-        if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          location: C:\
-          update: false
-          install: >-
-            make git bison flex cmake ninja patch mingw-w64-x86_64-clang mingw-w64-x86_64-lld
-            mingw-w64-x86_64-llvm mingw-w64-x86_64-python mingw-w64-x86_64-python-pillow
-
+      # Windows: the runner's own MSYS2 in C:\msys64; setup.sh installs the packages into it
       - name: Toolchain locations
         run: |
           # Windows: the defaults everywhere (MSYS2 in C:/msys64, nxdk in C:/xdev/nxdk)
           if [ "$RUNNER_OS" != Windows ]; then
             echo "NXDK_DIR=$HOME/toolchain/nxdk" >> "$GITHUB_ENV"
-            [ "$RUNNER_OS" = Linux ] && echo "LLVM=$HOME/toolchain/llvm21" >> "$GITHUB_ENV"
+          fi
+          if [ "$RUNNER_OS" = Linux ]; then
+            echo "LLVM=$HOME/toolchain/llvm21" >> "$GITHUB_ENV"
           fi
 
       # nxdk, LLVM and N64Recomp take most of the time; they change with setup.sh or the pins
