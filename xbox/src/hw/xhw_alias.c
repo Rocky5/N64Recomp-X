@@ -29,7 +29,10 @@
  *   page tables) refuses the whole range: the caller logs it and the access
  *   faults where it would have, with the crash guard's card.
  * Interrupts are off while the tables change; each page is invlpg'd.
- * Kill switch: the runtime's -DXRC_TLB=0 never calls here. */
+ * The same mapping serves KSEG1 (the window again at P + 0xA0000000, mem.c)
+ * and the register pages of the runtime's RCP model (xhw_alias_page, mmio.c).
+ * Kill switches: the runtime's -DXRC_TLB=0, -DXRC_KSEG1=0 and -DXRC_MMIO=0
+ * each keep their caller from coming here. */
 #include <windows.h>
 #include <xboxkrnl/xboxkrnl.h>
 #include <string.h>
@@ -164,4 +167,15 @@ void xhw_alias_unmap(uint32_t va, uint32_t bytes) {
         invlpg(v);
     }
     irq_restore(f);
+}
+
+void* xhw_alias_page(uint32_t va) {
+    void* p = MmAllocateContiguousMemoryEx(4096, 0, 0xFFFFFFFFu, 4096, PAGE_READWRITE);
+    if (!p) return NULL;
+    memset(p, 0, 4096);
+    if (!xhw_alias_map(va, (uint32_t)MmGetPhysicalAddress(p) & 0xFFFFF000u, 4096)) {
+        MmFreeContiguousMemory(p);
+        return NULL;
+    }
+    return p;
 }

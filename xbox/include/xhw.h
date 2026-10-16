@@ -84,6 +84,10 @@ void* xhw_rdram_alloc(uint32_t bytes);
  * only what _map did. */
 int xhw_alias_map(uint32_t va, uint32_t pa, uint32_t bytes);
 void xhw_alias_unmap(uint32_t va, uint32_t bytes);
+/* A fresh zeroed page of our own mapped at va (the RCP register pages the
+ * runtime's register model keeps, xbox/src/rt/mmio.c): the page's address in
+ * the kernel's physical window, or NULL (va in use, no memory). Never freed. */
+void* xhw_alias_page(uint32_t va);
 /* 128 MB consoles run as 64 MB ones (xhw_ramlock.c): call first in main_body.
  * _log writes the [MEM] line once the log is open. */
 void xhw_ram_lock64(void);

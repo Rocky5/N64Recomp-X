@@ -181,6 +181,30 @@ Lamborghini, Rampage, Tetris 64, Tetrisphere, Wayne Gretzky's 3D Hockey,
 Stunt Racer 64, World Driver Championship, Air Boarder 64, Body Harvest,
 Pilotwings 64, Mario Kart 64 (frames presented, not judged playable).
 
+### The RCP's registers through KSEG1 (agent `mmio`, 2026-10-16)
+
+The analyser now sends every live function with a constant hardware
+address that the runtime does not replace to the interpreter
+(`emit.hw_funcs`, `N64RX_MMIO_INTERP=0` to turn it off), and the runtime
+models the registers (`xbox/src/rt/mmio.c`) and aliases KSEG1 RDRAM
+(`docs/decisions.md` "Hardware registers through KSEG1"). Marked per game:
+Mario Kart 64, Super Mario 64, Dr. Mario 64 none; Pilotwings 64 one (its
+RSP-hang recovery); Ogre Battle 64 seven (PI, SI, SP); FIFA 64 its boot
+loader (`0x80000F00`, which DMAs the game in through PI). Rebuilt and booted
+in xemu for 45 s (not hardware), 18 games of the KSEG1 categories plus the
+two references: **none stops on KSEG1 any more**; every register page and
+the KSEG1 alias were mapped (no `[MMIO]`/`[MEM] KSEG1` line).
+
+| in xemu (the 18) | games |
+|---|---|
+| frames presented | 4: Bottom of the 9th (1163), Chameleon Twist 2, Cruis'n USA, Ogre Battle 64 (1 each: the first frame) |
+| fatal: `eret` (`0x42000018`) in code the safety net interprets (the game's own thread switch, unnamed libultra) | 4: FIFA 64, NHL 99, Blast Corps, Mario Tennis |
+| crash: a KUSEG address near 0 (a null pointer, or the TLB) | 4: Triple Play 2000, Bomberman Hero, F-1 World Grand Prix, Jet Force Gemini |
+| no frames | 5: Chameleon Twist, Donkey Kong 64, Killer Instinct Gold, Hydro Thunder, Dr. Mario 64 |
+| fatal: no function at an address | 1: Rampage 2 |
+
+Mario Kart 64 (1165 frames) and Pilotwings 64 (1616) present as before.
+
 ## Known gaps
 
 - Code loaded with computed addresses (overlay tables, compressed code) is

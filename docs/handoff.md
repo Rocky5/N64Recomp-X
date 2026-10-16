@@ -584,3 +584,41 @@ IMEM, 1 `mtc0 EPC`; unnamed libultra versions that touch the RCP registers
 versions (`osCartRomInit`, the raw PI/SI/SP I/O) or trap KSEG1 registers.
 `[MEM]`/`[CLOCK]` (xemu, Ogre Battle 64): 64 MB console, 34368 KB free after
 nv2a with a 40 MB ROM on the page cache; cpu 734 MHz (ACPI), TSC unused.
+
+### The RCP's registers through KSEG1 (2026-10-16, branch `agent/mmio`)
+
+**Done.** KSEG1 RDRAM is the window aliased again at host P + 0xA0000000
+(`mem.c`, `xhw_alias.c`; `-DXRC_KSEG1=0`). The RCP's registers, the PIF and
+the cartridge past RDRAM are a register model (`xbox/src/rt/mmio.c`;
+`-DXRC_MMIO=0`): the analyser sends live, unreplaced functions with a
+constant hardware address to the interpreter (`emit.hw_funcs`, used by
+`romonly.py`; `N64RX_MMIO_INTERP=0`), whose KSEG1 accesses go to the model;
+PI/SI/AI/VI/SP writes act through the runtime's own paths. Each register
+block's page is a page of ours aliased at its host address
+(`xhw_alias_page`) so recompiled code reads the idle machine; the VI thread
+refreshes the status words (`ultra/vi.c`, one line).
+
+**Verified how.** Host: `test_mmio.py` (new; 64- and 32-bit registers),
+`test_interp.py`, `test_n64rx.py`. xemu (slot 13, 45 s each, not
+hardware): 18 games of the sweep's KSEG1 categories rebuilt from the ROM
+alone: none stops on KSEG1; 4 present frames (Bottom of the 9th 1163; three
+show one frame), the others stop further on (`docs/analyzer.md`). Mario Kart
+64 and Pilotwings 64 still present frames (1165, 1616). The whole category
+(85 games) is in `build-host/sweep/mm2/` when its run finishes.
+
+**Not verified.** No console run: whether the kernel ever hands out
+0xA0000000 + P or the PIF page's 0xC0000000+ range on hardware is unproven
+(each mapping is checked free first; refused ones are logged). The SP task
+by DMEM, AI by registers and VI_ORIGIN paths are host-tested only; no game
+in the 18 was seen using them on screen.
+
+The 85-game run built 83: 64 Oozumou 2 and Ridge Racer 64 now fail to
+compile (`use of undeclared label`), probably because a function sent to
+the interpreter is left out of the recompile while a neighbour branches
+into it; unconfirmed (check with `N64RX_MMIO_INTERP=0`).
+
+**Gaps carried on.** `eret` in safety-net code (the game's own thread
+switch; 4 of 18); null-ish KUSEG reads (4); a recompiled store to a
+register still has no effect (only the interpreter's do). The Expansion
+Pak probe (`0xA0400000`: Zelda, Hybrid Heaven) now reads 0 instead of
+faulting, so those games see 4 MB: their packs need `rdram_mb = 8`.

@@ -101,6 +101,17 @@ def write_syms(a: Analysis, nm, path):
     pathlib.Path(path).write_text('\n'.join(lines), encoding='utf-8', newline='\n')
 
 
+def hw_funcs(a: Analysis, live, nm, replaced):
+    """the live functions the recompiler would translate that reach a hardware
+    register by a constant KSEG1 address (libultra the rules did not name:
+    a later osCartRomInit polling PI_STATUS, a raw SI or AI routine; a game's
+    own register code): the runtime's interpreter runs them, its loads and
+    stores there going to the register model (xbox/src/rt/mmio.c). A function
+    the rules named and the runtime replaces stays replaced."""
+    return {x: nm[x] for x, f in a.all_funcs().items()
+            if x in live and x != a.entry and nm[x] not in replaced and features(a.img, f).hw}
+
+
 def report(a: Analysis, ids, live, nm, replaced):
     funcs = a.all_funcs()
     out = ['n64rx: what the analysis found (PLAN.md 3.14)', '']
