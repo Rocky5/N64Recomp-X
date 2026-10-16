@@ -15,12 +15,14 @@ runs [Melee-X](https://github.com/TechProGabe/Melee-X),
 **Status: in development, not released.** `n64rx` takes your ROM and
 builds an XBE **from the ROM alone**: it finds the game's code, its
 segments and its libultra functions itself, with no decompilation and no
-per-game file needed. Pilotwings 64 runs on a real Xbox (sound, saves, the
-settings menu, 720p and widescreen in xemu); Mario Kart 64, built from its
-ROM with nothing else, reaches its title screen. Many games will not work
-yet: the graphics microcodes beyond Fast3D, more audio microcodes and the
-Controller Pak are still to come. The plan is [`docs/PLAN.md`](docs/PLAN.md);
-what was verified, and how, is [`docs/handoff.md`](docs/handoff.md).
+per-game file needed. On a real Xbox: Pilotwings 64 (sound, saves, the
+settings menu) and Mario Kart 64 built from its ROM with nothing else
+(races at 30 fps, sound, Controller Pak saves). In xemu, Super Mario 64
+reaches the castle grounds. Across a whole library, 143 of 246 games build
+today and far fewer run yet; what blocks the rest is tracked in
+[`docs/analyzer.md`](docs/analyzer.md). The plan is
+[`docs/PLAN.md`](docs/PLAN.md); what was verified, and how, is
+[`docs/handoff.md`](docs/handoff.md).
 
 ## Three steps
 
@@ -52,7 +54,7 @@ python tools/xbox/make_test_rom.py build-host/test/test.z64
 |---|---|
 | hold BACK while it loads | safe video: this boot runs 480i 4:3, and it is saved |
 | hold BACK + START | safe video and the default settings |
-| BACK (a tap) | the port's settings menu, over the paused game |
+| BACK (a tap) | the port's settings menu, over the paused game (video, widescreen, volume, controllers, Controller Paks per port) |
 | BACK + WHITE | a screenshot (test builds, or with screenshots on) |
 | L + R + BACK + BLACK | back to the dashboard, anywhere |
 | L + R + BACK + WHITE | restart, anywhere |

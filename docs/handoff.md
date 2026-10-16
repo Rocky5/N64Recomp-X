@@ -4,6 +4,40 @@ One entry per milestone: what was verified, how, and where ("xemu" results
 are emulator-only; timing, audio, memory and HDD latency are judged on the
 console).
 
+## Where things stand (2026-10-16, end of the parallel round)
+
+The newest state first; the entries below are the record, oldest first.
+
+| game (US) | how built | xemu | console (red) |
+|---|---|---|---|
+| Pilotwings 64 | its pack, or the ROM alone (`--analyze`): the same | title to results, saves, sound, 720p + hor+, the BACK menu | `vnrx1`: plays, sound, EEPROM saves, the BACK menu, the combos; 53-59 fps |
+| Mario Kart 64 | the ROM alone | title, menus, races (F3DEX), sound (nead), Controller Pak, 720p 16:9 | `vmk2`/`vmk4`: races at 29.9 fps (display lists 2-3 ms), sound, the ROM inside the XBE, the BACK menu and its Paks page, EEPROM and pak files; the map screen's framebuffer effect is wrong |
+| Super Mario 64 | the ROM alone + three `--learn` rounds | head screen, Lakitu intro, castle grounds (TLB aliasing); head shading off | not tried |
+| Dr. Mario 64 | the ROM alone | links, boots, faults on PI_STATUS through KSEG1 | - |
+| Pokémon Snap | the ROM alone | does not build: overlays at one vram (agent `snap`) | - |
+| the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | 143 build an XBE, 17 present frames in 45 s | - |
+
+Built and merged in the round (each with host tests and a kill switch; the
+entries below say how each was verified): the ROM inside the XBE, the ROM
+page cache (ROMs over 16 MB), the safety net and the learning loop
+(`--learn`), the graphics microcode registry with F3DEX/F3DEX2, the audio
+microcode registry with nead and `n_aspMain`, every save type (Controller
+Pak, SRAM, FlashRAM), the BACK menu's Paks page, the TLB, the V track's
+`decomp_check.py`/`test_analyze.py`, the library sweep. Agents still running
+when this was written: `snap` (overlays sharing a vram), `fbfx`
+(framebuffer effects), `mmio` (the RCP registers and RDRAM through KSEG1).
+
+**Open, in the order they block the most games** (counts from the sweep):
+the RCP's registers reached through KSEG1 by libultra the analyser did not
+name (75 games), entry code that is not the SDK's (71), TLB-mapped
+addresses (23, before the TLB merge), no graphics task (14), boot segments
+below the entrypoint (14), branches into another function's body (12),
+KSEG1 RDRAM (9); then overlays sharing a vram (Snap, Paper Mario), Yaz0 and
+gzip-compressed code (the Zeldas, Dr. Mario 64), S2DEX's own commands,
+framebuffer effects, MusyX and other audio microcodes, M2's leftovers (720p
+on the console, the 30-minute soak, Pilotwings' pack README), M3's
+measurement gate.
+
 ## M0: skeleton, toolchain, the tool's shape (2026-10-16, branch `dev`)
 
 Built on Windows 11 with MSYS2 (clang 21.1.8), nxdk `58427c0`, N64Recomp
@@ -174,21 +208,23 @@ is 480i only: needs an HD AV pack), a save moved to or from Wings64-X
   boot segment and both race segments, 71 libultra functions named, one
   hand-written routine interpreted (`80040C54`), 32-bit registers. xemu:
   the title screen drawn correctly. Deployed to the console (red) as
-  `vmk1`; not yet reported.
+  `vmk1` (superseded by `vmk2`/`vmk4`, below).
 - Runtime additions for ROM-only builds: the interpreter, the PIF, the
   `osEPi*` family, rumble, the remaining reimplemented names; `__ll_rem`
   corrected to libultra's unsigned remainder.
 
 **Not verified / gaps**
 
-- Mario Kart 64 past its title: races use F3DEX (the interpreter is Fast3D
-  only: M4); no Controller Pak; the console run. (Its sound: see the audio
-  registry below.)
-- The learning loop for code loaded with computed addresses (PLAN.md 3.14
-  step 5) is not built.
-- The analyser has no host test yet: `test_analyze.py` (synthetic MIPS
-  fixtures) and `decomp_check.py` are the V track's first files.
-- The ROM inside the XBE: built, see below.
+- (All closed by the parallel round below: Mario Kart 64's races, sound and
+  Controller Pak; the learning loop; `decomp_check.py`/`test_analyze.py`;
+  the ROM inside the XBE.)
+
+## The parallel round: ROM-only toward the library (2026-10-16)
+
+Agents on the maintainer's console API credit, one git worktree and xemu
+slot each (slots 9-14), merged into `dev` by the orchestrating session after
+review; the orchestrator's own merges and fixes are noted where they
+happened.
 
 ### The ROM inside the XBE (2026-10-16, branch `agent/romxbe`)
 
@@ -475,7 +511,7 @@ microcode was never logged and its resampler table never searched.
 - Overlays sharing a vram (Paper Mario's maps and partners), GCC-built
   libultra rules (Paper Mario: osContInit, osSetEventMesg, osEPiStartDma,
   Flash, Pfs); compressed code (Dr. Mario 64's main segment).
-## The TLB and more libultra for ROM-only games (2026-10-16, branch `agent/tlb`)
+### The TLB and more libultra for ROM-only games (2026-10-16, branch `agent/tlb`)
 
 **Done**
 
@@ -584,3 +620,36 @@ IMEM, 1 `mtc0 EPC`; unnamed libultra versions that touch the RCP registers
 versions (`osCartRomInit`, the raw PI/SI/SP I/O) or trap KSEG1 registers.
 `[MEM]`/`[CLOCK]` (xemu, Ogre Battle 64): 64 MB console, 34368 KB free after
 nv2a with a 40 MB ROM on the page cache; cpu 734 MHz (ACPI), TSC unused.
+
+### Mario Kart 64 on the console (red, `vmk2` then `vmk4`)
+
+ThinLTO release builds from the ROM alone, the ROM inside `default.xbe`, in
+`F:\Applications\N64Recomp-X-MK64\`, title ID `4E520DF7`.
+
+**Verified (console)**
+
+- `vmk2` (commit `ec17492`): `[ROM] $ROM in D:\default.xbe at 0x324000,
+  12582912 bytes, not preloaded`, read in 686 ms, SHA-1 in 1582 ms (the
+  ROM inside the XBE works on the retail kernel). Races at 29.9 fps,
+  display lists 2-3 ms, audio 2.5-3.5 ms a frame at 59 tasks a second, the
+  rest idle; the maintainer: "game is stable, sound works". The BACK menu
+  opened (the game froze and dimmed) but showed no card: 141 failed
+  texture-pool allocations, the 1 MB card had no room.
+- The fix (commit `1545bc3`, `-DXGFX_HOLD_EVICT`): the menu drops the
+  interpreter's texture cache when the card or the held frame finds no
+  room. xemu over a race with 788 KB free: the card drawn, the race's
+  textures back after closing.
+- `vmk4` (commit `408d0b3`, + the Paks page): `[GFX] menu card: texture
+  pool full, the game's texture cache dropped (card shown)`; the Paks page
+  opened on port 1; Exit to dashboard from the menu named by
+  `lastexit.txt`; EEPROM (512 bytes) and `nkte.mpk` loaded; mostly 29.9 fps
+  (the slower seconds and 500-690 ms frames are the boot's and menus'
+  loads). The maintainer: "worked fine".
+- `[MEM]` 21.3 MB free after nv2a; `[CLOCK] cpu 733 MHz`.
+
+**Not verified / gaps**
+
+- The map screen's framebuffer effect is wrong (agent `fbfx`); drift boost
+  unconfirmed. MK64 rewrites `nkte.mpk` at every boot (probably the game
+  repairing the pak ID it reads); the menu's card texture is rebuilt every
+  frame it shows (the `[NV2A]` texture counter inflates).

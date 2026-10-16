@@ -17,6 +17,8 @@ python tools/xbox/test_asp_hle.py       # the audio HLE: every command of every 
 python tools/xbox/test_xbe_rom.py       # the ROM inside the XBE: xbe_sections' $ROM, found and checked by xhw_rom.c's parser
 python tools/xbox/test_romcache.py      # the ROM page cache's core: chunk spans, word reads, the LRU and its cap, pins, failed fills
 python tools/xbox/test_saves.py         # saves: pak CRCs and PIF round trips, the blank format, Rumble, osPfs*, Flash, SRAM by PI DMA
+python tools/xbox/test_f3dex.py         # the display-list interpreter on a fake back end: Fast3D, F3DEX (old and new), F3DEX2, the ucode switch, CI textures
+python tools/xbox/test_analyze.py       # the analyser against every decomp + ROM pair present (skips without ROMs: CI); N64RX_ROMS=<folder>
 ```
 
 CI (`.github/workflows/build.yml`) is manual-only, for the maintainer's free

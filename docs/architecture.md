@@ -10,26 +10,36 @@ games/<id>/          game packs (optional since PLAN.md 3.14): game.toml, symbol
   test/              the ROM-free end-to-end test (tools/xbox/make_test_rom.py)
   pw64/              Pilotwings 64: the A/B game; its MIT decomp's symbols are the analyser's first answer key
 tools/recomp/        N64Recomp at ffb39cd (submodule, unmodified)
-tools/n64rx/         the user's tool: n64rx.py + n64rx_lib/ (cli, rom, packs, pipeline, engines, doctor,
-                     romonly: the generated pack) and n64rx_lib/analyze/ (the ROM analyser)
-tools/xbox/          build (compile_game.py, thinlto_link.py, patch_pbkit.py, xbe_sections.py), setup.sh,
-                     docker/, msys/, recomp_scan64.py, syms_tools.py, make_test_rom.py, make_logo.py,
-                     xemu_run.sh, eeprom_video.py, console.py, sym.py, fbdump_to_png.py, auddump_to_wav.py,
-                     rom_leak_check.py, scenarios/, the host tests
+tools/n64rx/         the user's tool: n64rx.py + n64rx_lib/: cli, rom, packs, pipeline (recompile, the
+                     refusal retries, gen/ extras: xrc_interp.c, xrc_missing.c, the ultra table), engines,
+                     doctor, romonly (the generated pack), learn (--learn), saves (libultra globals the
+                     saves need), analyze/ (the ROM analyser: mips, funcs, segments, features, libultra, emit)
+tools/xbox/          build: compile_game.py, thinlto_link.py, patch_pbkit.py, xbe_sections.py (title, icon,
+                     $ROM), setup.sh, docker/, msys/
+                     checks: decomp_check.py (the analyser against a decomp), sweep.py (every ROM in a
+                     folder), rom_leak_check.py, recomp_scan64.py, syms_tools.py, make_test_rom.py
+                     console + xemu: xemu_run.sh, scenarios/, console.py, sym.py, fbdump_to_png.py,
+                     auddump_to_wav.py, eeprom_video.py, make_logo.py
+                     host tests: test_*.py (docs/testing.md)
 xbox/include/        xhw.h, xgfx.h, xrom.h (the structs both triples share), xbuiltin.h
 xbox/include/xrc/    recomp.h (the generated code's contract), librecomp/sections.h, xrc_game.h, xrc_prelude.h
-xbox/src/hw/         the platform (nxdk triple): Wings64-X's, plus xhw_combo.c, the loading screen and the
-                     BACK menu's card (xhw_splash_draw.c), asp_hle.c on the word-swapped image
-xbox/src/gfx/        the display-list interpreter (game triple): Wings64-X's Fast3D, reading RDRAM by
-                     N64 address, plus F3DEX/F3DEX2 (f3dex_gbi.h) and the microcode registry (ucode.c;
-                     docs/renderer.md), CI textures, generic hor+, the held frame for the BACK menu
-xbox/src/rt/         the runtime (game triple): boot, settings, settings_menu (the BACK menu), video
-                     (the probation's A and timeout), audio (asp_hle and the AI), gfx, mem, ovl (the
-                     function table), interp (hand-written code), learn (the safety net, the learn log), hooks, nogame/
-xbox/src/rt/ultra/   libultra's surface: threads, queues, events, time, VI, PI (and the osEPi family), SI
-                     (pads, EEPROM, the PIF), SP, AI, misc, extra (rumble, paks, Flash, VRU, probes)
+xbox/src/hw/         the platform (nxdk triple): Wings64-X's, plus xhw_combo.c (exit combos), the loading
+                     screen and the BACK menu's card (xhw_splash_draw.c), xhw_rom.c ($ROM, the SHA-1),
+                     xhw_romcache.c (the ROM page cache), xhw_alias.c (page-table aliases for the TLB),
+                     asp_hle.c + asp_abis.inc (audio HLE: aspMain, nead, n_aspMain, on the word-swapped image)
+xbox/src/gfx/        the display-list interpreter (game triple): Wings64-X's Fast3D reading RDRAM by N64
+                     address, plus F3DEX/F3DEX2 (f3dex_gbi.h), the microcode registry (ucode.c), CI
+                     textures (texconv.c), generic hor+, the BACK menu's held frame (docs/renderer.md)
+xbox/src/rt/         the runtime (game triple): boot, settings, settings_menu (the BACK menu, the Paks
+                     page), video (the probation), audio (the registry, the AI), gfx, mem (the RDRAM
+                     window), ovl (the function table), interp (the MIPS interpreter), learn (the safety
+                     net, learn.txt), tlb, hooks, nogame/
+xbox/src/rt/ultra/   libultra's surface: thread, time, vi, pi (ROM reads, domain 2), si (pads, the PIF,
+                     paks), sp, ai, misc, extra (osEPi*, motor, Flash, probes), save + savedev + pfs
+                     (every save type), more2 (the TLB family, __osEnqueueAndYield), more3 (internals
+                     N64Recomp leaves bodiless)
 tests/xbox/          the host tests' C
-docs/look/           baseline shots: the loading screen (xemu, STILL), the BACK menu card (host)
+docs/look/           baseline shots: the loading screen (xemu, STILL); the BACK menu card and Paks page (host)
 ```
 
 ## Boot
@@ -41,22 +51,22 @@ docs/look/           baseline shots: the loading screen (xemu, STILL), the BACK 
    bar, video line).
 3. The controllers come up (SDL, USB; ~1.5 s) behind it; the BACK window
    starts.
-4. `xrc_boot` (`rt/boot.c`): `settings.ini`, the video line, then: no game
-   (a card), the test pack (its checks on a card), or a game: the ROM read
-   (`xhw_rom.c`: `default.xbe`'s own `$ROM` section, found in the image
-   header at 0x10000 and read from `D:\default.xbe` at its raw offset; a
-   ROM file beside the XBE when the build has none) and checked by SHA-1:
-   up to 16 MB read whole into RAM (resident), bigger streamed through a
-   256 KB buffer for the hash and then served by the page cache
-   (`xhw_romcache.c`: the ROM's size reserved, 64 KB chunks committed and
-   read on first touch, an LRU over 16 MB, 12 at 720p; the pack's
-   `[rom] pin` ranges held). Every reader of the image (PI DMA, the
-   `osEPi*` family, `osPiReadIo`, the boot copy) goes through
-   `xhw_rom_read` (`xrom.h`; pi.c's `xu_rom_to_rdram`/`xu_rom_read`),
-   the RDRAM window, the boot block (`osTvType` ...
-   `osMemSize`), the boot copy (1 MB from ROM 0x1000), the function table,
-   the mode switch (`xhw_video_boot`), the renderer, the recompiled
-   entrypoint.
+4. `xrc_boot` (`rt/boot.c`): `settings.ini`, the video line, then no game
+   (a card), the test pack (its checks on a card), or a game:
+   - **the ROM** (`xhw_rom.c`): `default.xbe`'s own `$ROM` section, found in
+     the image header the kernel mapped at 0x10000 and read from
+     `D:\default.xbe` at its raw offset (a ROM file beside the XBE when the
+     build has none), checked by SHA-1. Up to 16 MB it is read whole into
+     RAM (resident); a bigger one is hashed through a 256 KB buffer and then
+     served by the page cache (`xhw_romcache.c`: the ROM's size reserved,
+     64 KB chunks committed and read on first touch, an LRU over 16 MB, 12
+     at 720p, the pack's `[rom] pin` ranges held). Every reader of the
+     image (PI DMA, the `osEPi*` family, `osPiReadIo`, the boot copy) goes
+     through `xhw_rom_read` (`xrom.h`; `pi.c`'s `xu_rom_to_rdram` /
+     `xu_rom_read`);
+   - the RDRAM window, the boot block (`osTvType` ... `osMemSize`), the
+     boot copy (1 MB from ROM 0x1000), the function table, the mode switch
+     (`xhw_video_boot`), the renderer, the recompiled entrypoint.
 5. `xhw_splash_finish`: the minimum hold and the BACK window; the latched
    hold goes to `xrc_settings_apply_hold`.
 
@@ -97,6 +107,12 @@ docs/look/           baseline shots: the loading screen (xemu, STILL), the BACK 
   work on the same images as a game's own recompiled libultra reaching
   them through the PIF (`si.c`) or the handle family. The SRAM-or-Flash
   question is answered on the game's first domain-2 access.
+- libultra functions N64Recomp leaves without a body and nothing else
+  provides get a weak body in `gen/xrc_missing.c` that logs `[ULTRA]
+  missing <name>` once and returns 0; the runtime's own (`ULTRA(...)`)
+  replaces it. The runtime's libultra is also entered in the function
+  table at the game's addresses (`gen/xrc_interp.c`'s ultra table), so
+  interpreted code calling it by address reaches the replacement.
 - Graphics and audio tasks run on the calling thread (`sp.c`): the
   interpreter for graphics, `asp_hle` for audio; their done events are put
   ahead of retraces already queued.
@@ -117,8 +133,11 @@ The VI thread stops posting retraces (the game waits at its retrace), the
 controller reads go neutral, a graphics task that arrives waits. The menu's
 thread holds the renderer and presents the held game frame, dimmed, with the
 card (`xhw_panel_render`: the loading screen's aurora, sparks, light sweep
-and green bar) composited on the GPU; the VI thread reads the pads. Close:
-`settings.ini` saved when something changed.
+and green bar) composited on the GPU; the VI thread reads the pads. When the
+texture pool has no room for the card (1 MB) or the held frame, the
+interpreter's texture cache is dropped (the game is frozen; its textures
+reload from RDRAM after; `-DXGFX_HOLD_EVICT=0`). Close: `settings.ini`
+saved when something changed.
 
 The "Controller Pak" row (per port) opens the **Paks page** on the same
 card (`docs/look/paks-page-host.png`): Port, In the port (Auto, Controller

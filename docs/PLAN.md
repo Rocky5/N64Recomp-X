@@ -1147,6 +1147,17 @@ M1), the host tests green on the three OSes, a `docs/handoff.md` entry
 "console" is the maintainer's hardware (red: HDTV pack; gold: 480i only)
 through `console.py`/`n64rx deploy`, logs pulled before every relaunch.
 
+**Progress (2026-10-16; `docs/handoff.md` "Where things stand").** M0 and M1
+done; M2 mostly done. Built ahead of the order, for the ROM-only goal (V):
+from M4 the F3DEX/F3DEX2 command sets and the graphics microcode registry
+(by version text; S2DEX's own commands not yet), the audio registry with the
+nead and `n_aspMain` ABIs, rumble; from M5 the ROM page cache (pins; no
+prefetch hints, no PI thread), SRAM and FlashRAM, the Controller Pak; from
+M6 the BACK menu's Paks page; and the TLB, the safety net with the learning
+loop, `decomp_check.py`, the library sweep. Not yet: overlay tracking by DMA
+source (M5's `[OVL]`), Yaz0 in `n64rx`, `XeLoadSection`, F3DZEX2, M3's
+measurement gate, G1's pack.
+
 ### M0: skeleton, toolchain on three OSes, the tool's shape
 - **Goal**: Wings64-X's platform layer copied (Melee parts already gone), an
   XBE that boots to the loading screen of §5.5 in its first form (the

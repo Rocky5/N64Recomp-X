@@ -14,11 +14,15 @@ ROM itself (`docs/analyzer.md`, PLAN.md §3.14); packs only add fixes on top.
 The decomps are the answer keys that make the ROM-only path stable
 (PLAN.md §6 "V"): read, compared against, never shipped.
 
-**Status (`docs/handoff.md`): M1 done; M2 mostly done (Pilotwings 64 on the
-console: sound, saves, the BACK menu, the combos; 720p and hor+ in xemu).
-ROM-only builds work: Pilotwings 64 from its ROM alone matches the
-decomp-symbol build; Mario Kart 64 from its ROM alone reaches its title
-screen. Next: the V track (decomp-checked ROM-only analysis). CI is
+**Status (`docs/handoff.md`, "Where things stand"): M1 done; M2 mostly
+done (Pilotwings 64 on the console). From the ROM alone: Mario Kart 64 plays
+on the console (races at 30 fps, sound, Controller Pak, the BACK menu and its
+Paks page, the ROM inside the XBE); Super Mario 64 reaches the castle
+grounds in xemu (`--learn`, the TLB); 143 of 246 library games build an XBE
+(`tools/xbox/sweep.py`), 17 present frames. Built ahead of the milestone
+order: F3DEX/F3DEX2, the audio registry (nead, `n_aspMain`), every save
+type, the ROM page cache, the safety net and learning loop. Next: what
+blocks the most games (`docs/analyzer.md`'s library tables). CI is
 manual-only (free minutes).** `docs/PLAN.md` is binding on
 the approach (§1), the architecture (§3), the build, game packs and tests
 (§4), the feature specs (§5), the milestone order and exit checks (§6).
@@ -94,12 +98,12 @@ the approach (§1), the architecture (§3), the build, game packs and tests
 | `docs/research.md` | the evidence: N64Recomp and its header, the GPL runtime's surface (read only), Zelda64Recomp's structure, the Xbox section-loading and memory facts, what each sibling gives, candidate games with "verify" marks |
 | `docs/architecture.md` | what exists: the tree, the boot, the runtime's pieces, the generated code's world, the BACK menu, the exit combos |
 | `docs/renderer.md` | the graphics side as built: the microcode registry, the GBI families in the interpreter, what each game draws, gaps |
-| `docs/analyzer.md` | the ROM-only path as built: the analyser's steps, the interpreter, the PIF, how well it does per game, gaps |
+| `docs/analyzer.md` | the ROM-only path as built: the analyser's steps, what the runtime adds (interpreter, safety net, PIF, TLB), the learning loop, how well it does per game (decomps) and across the library (the sweep), gaps |
 | `docs/toolchain.md` | the two triples, setup per OS, Docker, N64Recomp, LTO |
-| `docs/testing.md` | host tests, the xemu runner, scripted input (`t<ms>` events), the switch table |
+| `docs/testing.md` | host tests, the xemu runner, scripted input, the decomp check and the library sweep, the switch table |
 | `docs/decisions.md` | decisions made while building and why (incl. the plan's departures) |
-| `docs/handoff.md` | per milestone: verified how, not verified, gaps carried on |
-| `docs/look/` | the loading screen's baseline shots (xemu, STILL); the BACK menu card's host preview |
+| `docs/handoff.md` | where things stand (games x xemu x console), then per milestone and per piece of work: verified how, not verified, gaps |
+| `docs/look/` | the loading screen's baseline shots (xemu, STILL); the BACK menu card's and Paks page's host previews |
 | `games/README.md` | how a game pack is made |
 | `LICENSE.md` | MIT; what came from where; what was only read |
 

@@ -90,10 +90,20 @@ every family.
 | game | microcode | from the ROM alone |
 |---|---|---|
 | Pilotwings 64 | Fast3D (`RSP SW Version: 2.0D`) | as before the registry; the BACK menu over the held frame |
-| Mario Kart 64 | F3DEX 0.95 (F3D_OLD) | the title, game/player/map select, a Luigi Raceway race driven with A held (HUD, karts, track, items, the course map), `scenarios/mk64_race`; no texture misses, no unhandled commands. At 720p 16:9 (`scenarios/mk64_hd`, Widescreen Auto) the race is hor+ (the world to the edges, the HUD in the 4:3 box), the title in the box |
-| Paper Mario | F3DEX2 | not reached: the analyser stops at its boot segment (`n64rx: This ROM could not be analysed`) |
+| Mario Kart 64 | F3DEX 0.95 (F3D_OLD) | on the console (red): races at 29.9 fps, display lists 2-3 ms a frame; in xemu: the title, game/player/map select, a Luigi Raceway race driven with A held (HUD, karts, track, items, the course map), `scenarios/mk64_race`; no texture misses, no unhandled commands. At 720p 16:9 (`scenarios/mk64_hd`, Widescreen Auto) the race is hor+ (the world to the edges, the HUD in the 4:3 box), the title in the box |
+| Super Mario 64 | Fast3D | the head screen and the castle grounds (`--learn`, the TLB); the head's shading is off |
+| Paper Mario | F3DEX2 | not reached: the analyser now passes its boot; the build stops at overlays sharing a vram |
 
 ## Gaps
+
+- Framebuffer effects (a frame used as a texture or read by the CPU): the
+  frame never lands in RDRAM, so Mario Kart 64's map screen shows stale
+  memory (seen on the console); Pokémon Snap's photos need the same (agent
+  `fbfx`).
+- The BACK menu's card is a 1 MB texture made every frame it shows; when the
+  pool has no room the texture cache is dropped (`-DXGFX_HOLD_EVICT`,
+  `docs/decisions.md`). Keeping one card texture for the menu's life would
+  be cheaper.
 
 - Mario Kart 64: a white translucent puff covers the driver's back in every
   race shot: the kart's smoke particles (the decomp draws them with
@@ -105,8 +115,8 @@ every family.
   from its ROM alone).
 - F3DEX2's forced matrix (`G_MV_MATRIX` + `G_MW_FORCEMTX`), `G_MV_POINT`,
   G_LINE3D, `G_DMA_IO`, `G_SPECIAL_*`: skipped (counted).
-- F3DEX2 is verified on the host only (no F3DEX2 game builds from its ROM
-  yet: Paper Mario, Smash Bros. and Pokemon Snap stop in the analyser, Dr.
-  Mario 64 at the link).
+- F3DEX2 is verified on the host only (no F3DEX2 game runs from its ROM
+  yet: Paper Mario and Pokémon Snap stop at overlays sharing a vram, Dr.
+  Mario 64 at a KSEG1 register read, Smash Bros. in the analyser).
 - Lighting: F3DEX2's lookat (`G_MV_LIGHT` offsets 0 and 24) is not kept;
   texgen uses the eye-space normal as for Fast3D.

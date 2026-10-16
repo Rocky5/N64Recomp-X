@@ -50,10 +50,21 @@ machine and stays in their build folder.
   generated code does. `-DXRC_SAFETY_NET=0` brings the card back.
 - **The PIF** (`ultra/si.c`): the game's own SI code (a Controller Pak
   driver, a game's own pad reader) gets real answers from
-  `__osSiRawStartDma`: pad status and buttons, the EEPROM, no pak.
-- **The whole reimplemented list** (`ultra/extra.c`): the `osEPi*` handle
-  DMA family, the later libultras' init and debugger probes, the Rumble Pak
-  on the pad's motors, no Controller Pak / Flash / VRU yet.
+  `__osSiRawStartDma`: pad status and buttons, the EEPROM, the Controller
+  Pak's read/write commands with their CRCs, the Rumble Pak.
+- **The whole reimplemented list** (`ultra/extra.c`, `pfs.c`, `save.c`,
+  `more2.c`, `more3.c`): the `osEPi*` handle DMA family (with SRAM and
+  FlashRAM on domain 2), the later libultras' init and debugger probes,
+  `osPfs*` and `osMotor*` on the same pak images, `osFlash*`, the TLB
+  family, `__osEnqueueAndYield`; a game whose own recompiled pak code counts
+  ports by `__osMaxControllers` gets it set (`n64rx_lib/saves.py` finds it
+  in the game's `osContInit`).
+- **Bodies for what nothing provides**: libultra internals N64Recomp leaves
+  bodiless get a weak body in `gen/xrc_missing.c` that logs `[ULTRA]
+  missing <name>` once (`-DXRC_MISSING_FATAL=1`: the card instead).
+- **The TLB** (`rt/tlb.c`, `hw/xhw_alias.c`): a mapped KUSEG page is
+  aliased in the Xbox page tables at the host address the generated code
+  computes (`docs/architecture.md`).
 
 ## The learning loop (PLAN.md 3.14 step 5)
 
@@ -127,9 +138,10 @@ counts agree; "placed" below).
 | game | functions found / the decomp's | segments | replaced libultra right / wrong | runs (xemu) |
 |---|---|---|---|---|
 | Pilotwings 64 (US) | 1952 / 1956 (the 4: libultra's exception handler) | boot + app, exact | 75 / 0; live set identical to the decomp names' | title, menus, flight, results, saves, sound: the same as the decomp-symbol build |
-| Mario Kart 64 (US) | 3157 / 3159 placed; main 2657 of 2676, racing 413 of 415, ending 133 of 133 | boot + both race segments | 66 / 0 | title screen drawn; races need F3DEX |
+| Mario Kart 64 (US) | 3157 / 3159 placed; main 2657 of 2676, racing 413 of 415, ending 133 of 133 | boot + both race segments | 66 / 0 | title, menus, races (F3DEX), sound (nead), the Controller Pak; **on the console (red)**: races at 29.9 fps, the BACK menu and its Paks page |
 | Super Mario 64 (US, -O0) | main 3516 of 3573, engine 283 of 284, goddard 693 of 699 (by count; few addresses to pin) | boot + engine (DMA) + goddard (a level script's load) | 66 / 0 | title head, the interactive head screen, castle grounds (Lakitu intro) after three `--learn` rounds and the TLB; the head's shading is off |
 | Dr. Mario 64 (US) | boot 262 / 270 | boot; the main segment is gzip-compressed (not found) | 56 / 0; live set identical | links; boots, the net runs 4 functions, then interpreted code reads PI_STATUS through KSEG1 (`a4600010`) and faults; its gzip main segment is not found |
+| Pokémon Snap (US) | not compared yet (decomp at `build-host/decomps/pokemonsnap`) | boot + level overlays sharing a vram | — | does not build: overlays at one vram get the same `func_<vram>` names and N64Recomp's refusal loop never ends (agent `snap`) |
 | Paper Mario (US, GCC) | 2443 / 2680 in the segments found | main, engine1, engine2, evt, engine4, one partner and one map (overlays sharing a vram: one each) | 56 / 0 (87 missing: GCC-built libultra, Flash, the Pfs family) | not tried |
 
 ### The whole library (`tools/xbox/sweep.py`, 2026-10-16)
@@ -193,8 +205,10 @@ Pilotwings 64, Mario Kart 64 (frames presented, not judged playable).
 - Loads described by plain words in the ROM are found statically (Super
   Mario 64's goddard). Compressed code (Dr. Mario 64's gzip main segment)
   is not.
-- Overlays that share a vram (Paper Mario's maps, battles, partners): the
-  first one found takes the range; the rest are not tried yet.
+- Overlays that share a vram (Paper Mario's maps, battles, partners; Pokémon
+  Snap's levels): names collide (`func_<vram>`) and the function table maps
+  a vram to one function; tracking which overlay is loaded (PLAN.md §3.4,
+  M5) is the next step.
 - libultra built by GCC (Paper Mario) and the later 2.0I/2.0J layouts: many
   rules are IDO-shaped; Paper Mario misses `osContInit`, `osSetEventMesg`,
   `osEPiStartDma`, `osSpTaskLoad`, the Flash and Pfs families.

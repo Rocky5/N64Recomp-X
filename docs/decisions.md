@@ -496,3 +496,30 @@ headers become "N64 game <code>". cxbe's title passes CMake's post-build
 shell line unquoted, so an apostrophe ("Cruis'n USA", "Majora's Mask")
 broke the link step; it gets a safe subset and `xbe_sections.py` writes the
 real title afterwards.
+
+## The BACK menu on a full texture pool (2026-10-16, Mario Kart 64 on red)
+
+**The menu drops the game's texture cache when its card finds no room**
+(`f3d_present_held`, `hold_frame`; `-DXGFX_HOLD_EVICT=0`). The card is a
+512x512 texture (1 MB) made each frame it shows; Mario Kart 64's races
+leave the pool with ~1 MB free in pieces, so on the console the menu opened
+with no card. Reserving 1 MB for the card for the whole game was the other
+choice: it costs every game a megabyte of texture pool for something shown
+only while the game is frozen. Dropping the cache costs nothing while the
+game runs; after the menu closes the textures reload from RDRAM (a few
+frames of uploads).
+
+## Working in parallel (2026-10-16)
+
+**Agents work in git worktrees on their own branches, never commit, and
+the orchestrating session reviews and merges** (the maintainer's direction:
+"create these subagents and ... review their work and then merge it back
+in"). Each agent ran headless (`claude -p`, auto permission mode: the
+classifier refused agents with permission checks skipped) on the
+maintainer's console API credit with a hard `--max-budget-usd` cap, kept
+`AGENT_PROGRESS.md` current so a cap never lost work, owned a named set of
+files and an xemu slot of its own (slots 9-14 with separate HDD images), and
+noted every touch outside its files. Docs conflicts were merged as the
+union of both sides; code conflicts by hand, then the host tests and a
+no-game build before each merge commit, and Mario Kart 64 / Pilotwings 64
+builds after the larger ones.
