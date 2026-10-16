@@ -108,6 +108,18 @@ def _anchors(N):
                 N.one([a], 'osInvalICache', 'hit invalidate I-cache over a range')
         if 'tlbp' in ft.special and 'tlbwi' not in ft.special:
             N.one([a], '__osProbeTLB', 'tlbp')
+        # the TLB writers: osMapTLB(index, pm, vaddr, even, odd, asid) takes
+        # everything from its arguments, osUnmapTLB(index) only the index,
+        # osUnmapTLBAll loops over every entry, osMapTLBRdb maps a fixed one
+        if 'tlbwi' in ft.special and 'tlbp' not in ft.special and not ft.calls:
+            if ft.args_used >= {0, 1, 2, 3}:
+                N.one([a], 'osMapTLB', 'tlbwi of an entry made from its arguments')
+            elif ft.args_used == {0}:
+                N.one([a], 'osUnmapTLB', 'tlbwi of an invalid entry at the index in arg0')
+            elif not ft.args_used and ft.branches:
+                N.one([a], 'osUnmapTLBAll', 'tlbwi of an invalid entry at every index, in a loop')
+            elif not ft.args_used:
+                N.one([a], 'osMapTLBRdb', 'tlbwi of a fixed entry, no arguments')
     _ll_helpers(N)
 
 
@@ -142,40 +154,48 @@ def _ll_helpers(N):
 
 
 def _hardware(N):
+    # every function is tried first; a name is given only when one fits
+    cands = {}
+
+    def one(c, name, why):
+        cands.setdefault(name, [set(), why])[0].update(c)
     for a, ft in N.f.items():
         sz = ft.size
         if ft.leaf and N.only_hw(a, (AI, 4)) and sz <= 0x14:
-            N.one([a], 'osAiGetLength', 'reads AI_LEN')
+            one([a], 'osAiGetLength', 'reads AI_LEN')
         if ft.leaf and N.only_hw(a, (AI, 0xC)) and sz <= 0x10:
-            N.one([a], 'osAiGetStatus', 'reads AI_STATUS')
-        if N.hw(a, AI, 0x10, 'w') and N.hw(a, AI, 0x14, 'w'):
-            N.one([a], 'osAiSetFrequency', 'writes AI_DACRATE and AI_BITRATE')
+            one([a], 'osAiGetStatus', 'reads AI_STATUS')
+        # (__osInitialize_common of 2.0I and later writes the two rates too, among other blocks)
+        if N.hw(a, AI, 0x10, 'w') and N.hw(a, AI, 0x14, 'w') and all(k & 0xFFFF0000 == AI for k in ft.hw):
+            one([a], 'osAiSetFrequency', 'writes AI_DACRATE and AI_BITRATE')
         if N.hw(a, AI, 0, 'w') and N.hw(a, AI, 4, 'w'):
-            N.one([a], 'osAiSetNextBuffer', 'writes AI_DRAM_ADDR and AI_LEN')
+            one([a], 'osAiSetNextBuffer', 'writes AI_DRAM_ADDR and AI_LEN')
         if N.hw(a, DP, 0, 'w') and N.hw(a, DP, 4, 'w'):
-            N.one([a], 'osDpSetNextBuffer', 'writes DPC_START and DPC_END')
+            one([a], 'osDpSetNextBuffer', 'writes DPC_START and DPC_END')
         if N.hw(a, SP, 0x10) and N.hw(a, 0x04080000, 0, 'w'):
-            N.one([a], '__osSpSetPc', 'writes SP_PC')
+            one([a], '__osSpSetPc', 'writes SP_PC')
         if ft.leaf and N.only_hw(a, (SP, 0x10)) and 'w' in ft.hw.get(SP + 0x10, '') and sz <= 0x14:
-            N.one([a], '__osSpSetStatus', 'writes SP_STATUS only')
+            one([a], '__osSpSetStatus', 'writes SP_STATUS only')
         if ft.leaf and N.only_hw(a, (SP, 0x10)) and ft.hw.get(SP + 0x10) == 'r':
-            N.one([a] if sz <= 0x10 else [], '__osSpGetStatus', 'reads SP_STATUS only')
+            one([a] if sz <= 0x10 else [], '__osSpGetStatus', 'reads SP_STATUS only')
         if N.hw(a, SP, 0, 'w') and N.hw(a, SP, 4, 'w') and N.hw(a, SP, 8, 'w'):
-            N.one([a], '__osSpRawStartDma', 'writes SP_MEM_ADDR, SP_DRAM_ADDR, SP_RD/WR_LEN')
+            one([a], '__osSpRawStartDma', 'writes SP_MEM_ADDR, SP_DRAM_ADDR, SP_RD/WR_LEN')
         if N.hw(a, PI, 0, 'w') and N.hw(a, PI, 4, 'w') and (N.hw(a, PI, 8, 'w') or N.hw(a, PI, 0xC, 'w')):
             # the first argument is a direction in osPiRawStartDma, a handle in osEPiRawStartDma
             if any(k[0] == 0 for k in ft.arg):
-                N.one([a], 'osEPiRawStartDma', 'PI DMA registers, the handle\'s fields read')
+                one([a], 'osEPiRawStartDma', 'PI DMA registers, the handle\'s fields read')
             else:
-                N.one([a], 'osPiRawStartDma', 'PI DMA registers')
+                one([a], 'osPiRawStartDma', 'PI DMA registers')
         if N.hw(a, SI, 0, 'w') and N.hw(a, SI, 0x10, 'w') or N.hw(a, SI, 0, 'w') and N.hw(a, SI, 4, 'w'):
-            N.one([a], '__osSiRawStartDma', 'SI DMA registers')
+            one([a], '__osSiRawStartDma', 'SI DMA registers')
         if ft.leaf and N.only_hw(a, (SI, 0x18)):
-            N.one([a], '__osSiDeviceBusy', 'reads SI_STATUS')
+            one([a], '__osSiDeviceBusy', 'reads SI_STATUS')
         if N.hw(a, VI) and sum(1 for k in ft.hw if k & 0xFFFF0000 == VI and 'w' in ft.hw[k]) >= 8:
-            N.one([a], '__osViSwapContext', 'writes most VI registers')
+            one([a], '__osViSwapContext', 'writes most VI registers')
         if ft.leaf and N.only_hw(a, (PI, 0x10)) and N.arg_w(a, 1, 0):
-            N.one([a], 'osPiRawReadIo', 'polls PI_STATUS, stores the word to *arg1')
+            one([a], 'osPiRawReadIo', 'polls PI_STATUS, stores the word to *arg1')
+    for name, (c, why) in cands.items():
+        N.one(sorted(c), name, why)
 
 
 def _structure(N):
@@ -261,14 +281,18 @@ def _structure(N):
     if ct and st:
         mgrs = [a for a, ft in f.items() if a not in N.name and ct in ft.calls and st in ft.calls]
         sw = N.a_('__osViSwapContext')
+        pim = []
         for a in mgrs:
             callees = set(f[a].calls)
             vi = any(sw and sw in f[c].calls for c in callees if c in f)
+            # (osCreateScheduler starts a thread too, but also another manager: a callee that starts one)
+            starts_mgr = any(f.get(c) and ct in f[c].calls for c in callees if c not in (ct, st))
             if vi:
                 N.one([a], 'osCreateViManager', 'starts the VI thread and calls the VI init (writes the VI registers)')
-            elif cq and list(f[a].calls).count(cq) >= 2 or any(f.get(c) and cq in f[c].calls for c in callees if c != cq):
-                N.one([a] if len(f[a].args_used) >= 3 else [], 'osCreatePiManager',
-                      'starts the PI device manager thread with its queues')
+            elif (cq and list(f[a].calls).count(cq) >= 2 or any(f.get(c) and cq in f[c].calls for c in callees
+                                                                if c != cq)) and not starts_mgr:
+                pim += [a] if len(f[a].args_used) >= 3 else []
+        N.one(pim, 'osCreatePiManager', 'starts the PI device manager thread with its queues')
         for a in [m for m in mgrs if m not in N.name]:
             pass
     # osSetEventMesg(event, mq, msg): disable, two stores into a table indexed by arg0, restore

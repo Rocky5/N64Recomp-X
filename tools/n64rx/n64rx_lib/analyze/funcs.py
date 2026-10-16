@@ -120,6 +120,67 @@ def _table(img, insns, i, fstart):
     return None
 
 
+def _table_linear(img, fstart, pc):
+    """A jump table whose base was set up away from the jr (GCC hoists the
+    lui/addiu out of a loop and adds the scaled index into another register):
+    the lw before the jr, the addu that formed its address, and the lui/addiu
+    of the base, each found as the last write in the code before it."""
+    def last_def(reg, before, limit):
+        v = before - 4
+        while v >= max(fstart, before - 4 * limit):
+            w = img.word(v)
+            if w is None:
+                return None
+            i = Ins(w, v)
+            if i.dest == reg:
+                return i
+            v -= 4
+        return None
+
+    def const(reg, before, depth=0):
+        d = last_def(reg, before, 256)
+        if d is None or depth > 4:
+            return None
+        if d.op == 15:
+            return d.imm << 16
+        if d.op in (8, 9, 13):
+            b = const(d.rs, d.pc, depth + 1)
+            return None if b is None else ((b | d.imm) if d.op == 13 else (b + d.simm)) & 0xFFFFFFFF
+        return None
+    jr = Ins(img.word(pc), pc)
+    lw = last_def(jr.rs, pc, 16)
+    if lw is None or lw.op != 35:
+        return None
+    d = last_def(lw.rs, lw.pc, 32)
+    if d is None or not (d.op == 0 and d.funct in (32, 33)):
+        return None
+    table = None
+    for x in (d.rs, d.rt):
+        b = const(x, d.pc)
+        if b is not None and 0x80000000 <= b < 0x80800000:
+            table = (b + lw.simm) & 0xFFFFFFFF
+            break
+    if table is None:
+        return None
+    count = None
+    v = pc - 4
+    while v >= max(fstart, pc - 4 * 48):
+        i = Ins(img.word(v), v)
+        if i.op == 11:                                                # sltiu: the bound
+            count = i.imm
+            break
+        v -= 4
+    if not count:
+        return None
+    targets = []
+    for n in range(count):
+        t = img.word(table + 4 * n)
+        if t is None or t & 3 or not (fstart <= t < fstart + MAX_FUNC):
+            return None
+        targets.append(t)
+    return table, targets
+
+
 def walk(img, start, starts):
     """One function from `start`: every instruction its branches reach.
     `starts`: known function starts (a j onto one is a tail call)."""
@@ -175,7 +236,7 @@ def walk(img, start, starts):
                 if ins.is_jr_ra:
                     break
                 if ins.is_jr:
-                    tab = _table(img, run, len(run) - 1, start)
+                    tab = _table(img, run, len(run) - 1, start) or _table_linear(img, start, pc)
                     if tab:
                         f.jtables.append((pc, tab[0], len(tab[1])))
                         todo.extend(tab[1])
@@ -241,24 +302,72 @@ def _dead_epilogue(img, f):
     return (first.op == 35 and first.rt == RA and first.rs == 29) or            (first.op == 9 and first.rs == 29 and first.rt == 29 and first.simm > 0)
 
 
+def _dead_return(img, f, taken):
+    """A bare `jr ra; nop` right after another one, that no call, jump, data
+    word or lui/addiu pair names: unoptimised IDO code closes every function
+    with one, after the return statement's own (Super Mario 64)."""
+    refs, unoptimised = taken
+    return (unoptimised and f.end - f.start == 8 and img.word(f.start) == 0x03E00008 and
+            img.word(f.start + 4) == 0 and img.word(f.start - 8) == 0x03E00008 and f.start not in refs)
+
+
+def _referenced(img, seg):
+    """(every word of the known segments, every j/jal target and every
+    lui/addiu (ori) pair's value; whether `seg` is unoptimised code). IDO
+    without optimisation closes an if or a return with `b .+8; nop`, which
+    the optimiser never leaves: in -O0 code there are about as many as
+    there are returns, in optimised code next to none."""
+    import struct
+    out = set()
+    unopt = False
+    for s in img.segments:
+        data = img.rom[s.rom:s.rom + s.size]
+        ws = struct.unpack(f'>{len(data) // 4}I', data[:len(data) // 4 * 4])
+        out.update(ws)
+        hi = {}
+        for w in ws:
+            op = w >> 26
+            if op in (2, 3):                                  # j / jal
+                out.add((s.vram & 0xF0000000) | (w & 0x03FFFFFF) << 2)
+            elif op == 15:
+                hi[(w >> 16) & 31] = (w & 0xFFFF) << 16
+            elif op in (9, 13) and (w >> 21) & 31 in hi:
+                lo = w & 0xFFFF
+                v = hi[(w >> 21) & 31] + (lo - 0x10000 if op == 9 and lo & 0x8000 else lo)
+                out.add(v & 0xFFFFFFFF)
+        if s is seg:
+            jr = sum(1 for w in ws if w == 0x03E00008)
+            b8 = sum(1 for i in range(len(ws) - 1) if ws[i] == 0x10000001 and ws[i + 1] == 0)
+            unopt = jr > 0 and b8 >= jr // 4
+    return out, unopt
+
+
 def _gaps(img, seg, funcs):
     """Code between known functions that nothing called: functions reached
     through pointers (threads, callbacks, tables). Leading zero words are
     padding; a gap counts as a function only when its walk is clean.
     Returns the new functions."""
     new, changed = [], True
+    taken = None
     while changed:
         changed = False
         order = sorted(funcs)
-        for a, b in zip(order, order[1:]):
-            pc = funcs[a].end
+        # (and the code before the first function: a loaded segment starts with code)
+        pairs = ([(None, order[0])] if order and seg.vram < order[0] else []) + list(zip(order, order[1:]))
+        for a, b in pairs:
+            pc = funcs[a].end if a is not None else seg.vram
             while pc < b and img.word(pc) == 0:
                 pc += 4
             if pc >= b:
                 continue
             f = walk(img, pc, set(funcs))
-            if not f.bad and f.end <= b and _dead_epilogue(img, f):
+            if not f.bad and a is not None and f.end <= b and _dead_epilogue(img, f):
                 funcs[a].end = f.end   # unreachable tail of the function before (after an endless loop)
+                changed = True
+                continue
+            if not f.bad and a is not None and pc == funcs[a].end and f.end - f.start == 8 and \
+                    _dead_return(img, f, taken := taken if taken is not None else _referenced(img, seg)):
+                funcs[a].end = f.end   # IDO -O0's closing jr ra after a return that already left
                 changed = True
                 continue
             if not f.bad and f.end <= b:

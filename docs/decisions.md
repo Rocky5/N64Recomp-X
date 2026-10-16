@@ -376,3 +376,19 @@ state stays in Fast3D's terms.
 **CI textures came with the F3DEX work.** Mario Kart 64's textures are
 mostly CI4/CI8 (Pilotwings 64 used none): G_LOADTLUT and a TLUT path in
 texconv.c, the palette in the texture cache key.
+
+**A matching decomp with no addresses is read by its link order** (the V
+track's `decomp_check.py`). Super Mario 64 and Mario Kart 64 need IDO and
+a MIPS toolchain to build; their `.ld` lists the objects in order and each
+file's functions are in source order (the host clang's preprocessor with
+the version's defines, generated headers stubbed). Lined up against the
+analysis between the addresses the key does know (`func_XXXXXXXX`) and the
+analysis's own libultra names (the longest run in the same order on both
+sides), the functions map one to one where the counts agree; a name only
+counts as right when its neighbours line up too. No build, any OS.
+
+**Whether code is unoptimised is read from the code** (`funcs.py`
+`_referenced`): IDO at -O0 closes ifs and returns with `b .+8; nop`, which
+the optimiser never leaves (Super Mario 64 ~0.8 per `jr ra`, the -O2 games
+under 0.02). Only there is a bare `jr ra; nop` after another one folded into
+the function before; elsewhere it is an empty function.

@@ -34,7 +34,8 @@ def names(a: Analysis, ids):
 
 
 def data_pointers(a: Analysis):
-    """function starts that appear as words outside every function body"""
+    """function starts that appear as words outside every function body, in the
+    segments and in the rest of the ROM"""
     funcs = a.all_funcs()
     starts = set(funcs)
     spans = sorted((f.start, f.end) for f in funcs.values())
@@ -54,6 +55,17 @@ def data_pointers(a: Analysis):
             if w in starts:
                 out.add(w)
             i += 4
+    # and the ROM outside every segment: data the game reads at run time
+    # (scripts, display-list callbacks, object tables) names functions too
+    import struct
+    rom = a.img.rom
+    covered = sorted((s.rom, s.rom + s.size) for s in a.img.segments)
+    pos = 0x1000
+    for r0, r1 in covered + [(len(rom) // 4 * 4, len(rom))]:
+        if r0 > pos:
+            out.update(w for w in struct.unpack(f'>{(r0 - pos) // 4}I', rom[pos:pos + (r0 - pos) // 4 * 4])
+                       if w in starts)
+        pos = max(pos, r1 + (-r1 & 3))
     return out
 
 

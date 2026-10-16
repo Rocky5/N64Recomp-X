@@ -19,12 +19,12 @@ machine and stays in their build folder.
 
 | step | file | what it does |
 |---|---|---|
-| boot segment | `funcs.py` `parse_entry` | IPL3 copies 1 MB from ROM 0x1000 to the header's entrypoint; the SDK's entry code clears the BSS (`lui/addiu t0`, `lui/ori t1`, a `sw zero` loop) and jumps to main (`jr t2` or `j`). The BSS start is where the loaded segment ends. |
-| functions | `funcs.py` `discover` | recursive descent from the entry and main over every `jal`; each function walked through its branches to its last reachable instruction; `j` onto a known start is a tail call; jump tables read from `lui`/`lw`/`jr` (the `lui` may sit in a delay slot) bounded by the `sltiu` before them; then the gaps between functions tried as functions (clean walks only), again from what those call, until nothing new. Dead epilogues after endless loops (`lw ra` / `addiu sp` first, no branch reaches them) fold into the function before. |
-| segments | `segments.py` | every call whose arguments, by constant propagation (`lui`/`addiu`/`ori`, `addu`/`subu`, `and`/`or`, shifts, the outgoing stack slots), hold a ROM offset, a KSEG0 address and a size is a candidate DMA of code. A candidate becomes a segment when the known code calls into it, the call targets look like function starts (a frame opens, or the words before close one), and every walk from them is clean. The size in its natural place (the argument after the two addresses) wins. |
+| boot segment | `funcs.py` `parse_entry`, `__init__.py` | IPL3 copies 1 MB from ROM 0x1000 to the header's entrypoint (the 6103 and 6106 boot chips 1 or 2 MB below it: the entry code's own BSS and main addresses say which); the SDK's entry code clears the BSS (`lui/addiu t0`, `lui/ori t1`, a `sw zero` loop) and jumps to main (`jr t2` or `j`). The BSS start is where the loaded segment ends. |
+| functions | `funcs.py` `discover` | recursive descent from the entry and main over every `jal`; each function walked through its branches to its last reachable instruction; `j` onto a known start is a tail call; jump tables read from `lui`/`lw`/`jr` (the `lui` may sit in a delay slot) bounded by the `sltiu` before them, or, when GCC hoisted the base out of a loop, from the last `lw`/`addu`/`lui`+`addiu` writes before the `jr` (every entry must land in the function); then the gaps between functions, and the code before a segment's first function, tried as functions (clean walks only), again from what those call, until nothing new. Dead epilogues after endless loops (`lw ra` / `addiu sp` first, no branch reaches them) fold into the function before; so does unoptimised IDO's closing `jr ra; nop` after the return statement's own (only in a segment whose `b .+8; nop` count says it is -O0 code, and never when a call, a data word or a `lui`/`addiu` pair names the address). |
+| segments | `segments.py` | every call whose arguments, by constant propagation (`lui`/`addiu`/`ori`, `addu`/`subu`, `and`/`or`, shifts, the stack slots, locals kept there by -O0 code read back), hold a ROM offset, a KSEG0 address and a size (or a ROM start and end: `dma_copy(start, end, dest)`, `dma_read(dest, start, end)`) is a candidate DMA of code; so is every (RAM, ROM start, ROM end) or (start, end, RAM) word triple anywhere in the ROM (a script's load command, an overlay table). A candidate becomes a segment when the known code calls into it, the call targets look like function starts (a frame opens, or the words before close one), and every walk from them is clean. A start and end next to each other win, then a size in its natural place (the argument after the two addresses). |
 | features | `features.py` | per function, a straight-line value tracker: calls, COP0 and FPU control registers, cache ops, TLB ops, hardware registers (VI, AI, PI, SI, SP, DP, MI by address), loads and stores at argument + offset, through pointers read from globals (and what was stored), 64-bit ops, `ddiv`/`dmult` kinds. Delay slots run before the call clobbers. |
-| libultra | `libultra.py` | names by behaviour, no fingerprints: COP0/cache anchors (`__osDisableInt`, `osGetCount`, `osWritebackDCache`...), hardware anchors (`osAiSetFrequency`, `osPiRawStartDma`, `__osSiRawStartDma`, `__osViSwapContext`...), then the call graph and libultra's struct offsets (OSMesgQueue, OSThread, OSIoMesg, OSTimer, the VI context behind `__osViNext`), IDO's 64-bit helpers by their one `ddiv`/`dmult`. Rules run to a fixed point; a name is given only when exactly one candidate fits. |
-| liveness | `emit.py` `reachable` | the game's code reached from the entry, main, function addresses in data and in code, with the edges out of the functions the runtime replaces cut. Dead code (libultra's internals only replaced functions reached) is not recompiled. |
+| libultra | `libultra.py` | names by behaviour, no fingerprints: COP0/cache anchors (`__osDisableInt`, `osGetCount`, `osWritebackDCache`...), hardware anchors (`osAiSetFrequency`, `osPiRawStartDma`, `__osSiRawStartDma`, `__osViSwapContext`...), then the call graph and libultra's struct offsets (OSMesgQueue, OSThread, OSIoMesg, OSTimer, the VI context behind `__osViNext`), IDO's 64-bit helpers by their one `ddiv`/`dmult`, the TLB writers by their arguments (`osMapTLB`, `osUnmapTLB`, `osUnmapTLBAll`, `osMapTLBRdb`). Rules run to a fixed point; a name is given only when exactly one candidate fits (the hardware rules try every function first). |
+| liveness | `emit.py` `reachable` | the game's code reached from the entry, main, function addresses in data (in the segments and anywhere else in the ROM: scripts, display-list callbacks) and in code, with the edges out of the functions the runtime replaces cut. Dead code (libultra's internals only replaced functions reached) is not recompiled. |
 | output | `emit.py`, `../romonly.py` | the symbol file, `recomp.toml` (ignored = dead + interpreted; a real pack's patches mapped by address), `interp.txt`, the report; without a pack the title is the header's, the title ID `0x4E52` + a hash of the game code, the save type from a facts table or 4 Kbit when the game probes the EEPROM. |
 
 ## What the runtime adds for ROM-only builds
@@ -106,13 +106,24 @@ the function table before the recompiled sections.
 
 ## How well it does (checked against decomps)
 
-| game | functions found / the decomp's | segments | replaced libultra named / wrong | runs (xemu) |
-|---|---|---|---|---|
-| Pilotwings 64 (US) | 1952 / 1956 (the 4: libultra's exception handler) | boot + app, exact | 54 of 54 / 0 | title, menus, flight, results, saves, sound: the same as the decomp-symbol build |
-| Mario Kart 64 (US) | 3203 (not yet compared) | boot + both race segments | 71 named | title screen drawn; races need F3DEX |
+`tools/xbox/decomp_check.py` runs the analyser on a ROM and compares it with
+a decomp's answer key; `tools/xbox/test_analyze.py` runs every pair present
+and fails on a wrong libultra name, on code the decomp's names keep live that
+the analysis leaves dead, or on a result below the pair's floor
+(`docs/testing.md`). The keys: Pilotwings 64's symbol file (addresses and
+sizes); Paper Mario's and Dr. Mario 64's splat configs and symbol files (addresses); Super
+Mario 64's and Mario Kart 64's link order (their `.ld` and each file's
+functions in source order, no build: lined up against the analysis between
+the addresses the key knows and the libultra names, one to one where the
+counts agree; "placed" below).
 
-The validation track (PLAN.md §6, "V") adds a game at a time from the
-decomps and keeps every result here.
+| game | functions found / the decomp's | segments | replaced libultra right / wrong | runs (xemu) |
+|---|---|---|---|---|
+| Pilotwings 64 (US) | 1952 / 1956 (the 4: libultra's exception handler) | boot + app, exact | 75 / 0; live set identical to the decomp names' | title, menus, flight, results, saves, sound: the same as the decomp-symbol build |
+| Mario Kart 64 (US) | 3157 / 3159 placed; main 2657 of 2676, racing 413 of 415, ending 133 of 133 | boot + both race segments | 66 / 0 | title screen drawn; races need F3DEX |
+| Super Mario 64 (US, -O0) | main 3516 of 3573, engine 283 of 284, goddard 693 of 699 (by count; few addresses to pin) | boot + engine (DMA) + goddard (a level script's load) | 66 / 0 | title logo drawn, sound; stops when goddard maps 0x04000000 with `osMapTLB` (the runtime has no TLB) |
+| Dr. Mario 64 (US) | boot 262 / 270 | boot; the main segment is gzip-compressed (not found) | 56 / 0; live set identical | not tried |
+| Paper Mario (US, GCC) | 2443 / 2680 in the segments found | main, engine1, engine2, evt, engine4, one partner and one map (overlays sharing a vram: one each) | 56 / 0 (87 missing: GCC-built libultra, Flash, the Pfs family) | not tried |
 
 ## Known gaps
 
@@ -123,13 +134,20 @@ decomps and keeps every result here.
   what is there), a learnt segment that overlaps another is not yet.
 - The net's interpreter is slow (each instruction decoded every time); a
   hot function it runs costs frame time until the rebuild.
-- Microcode families: Fast3D only (F3DEX/F3DEX2/S2DEX in M4); audio
-  microcodes other than `aspMain` play silent.
-
-  only found when the game runs: the learning loop (§3.14 step 5) is next.
-- Microcode families: Fast3D only (F3DEX/F3DEX2/S2DEX in M4). Audio:
-  `aspMain`, the nead family (Mario Kart 64, the Zelda microcode) and
-  `n_aspMain` are recognised at run time from the microcode's jump table
-  (`docs/architecture.md`); others (MusyX, MP3, DK64/Conker's variants) play
-  silent with an `[AUDIO]` line saying so.
-- Controller Pak, Flash, SRAM: not yet.
+- Loads described by plain words in the ROM are found statically (Super
+  Mario 64's goddard). Compressed code (Dr. Mario 64's gzip main segment)
+  is not.
+- Overlays that share a vram (Paper Mario's maps, battles, partners): the
+  first one found takes the range; the rest are not tried yet.
+- libultra built by GCC (Paper Mario) and the later 2.0I/2.0J layouts: many
+  rules are IDO-shaped; Paper Mario misses `osContInit`, `osSetEventMesg`,
+  `osEPiStartDma`, `osSpTaskLoad`, the Flash and Pfs families.
+- The TLB: Super Mario 64's goddard maps its dynlists at 0x04000000; the
+  runtime ignores `osMapTLB` (`ultra/more.c`) and the read faults.
+- Microcode families: graphics Fast3D, F3DEX, F3DEX2 (S2DEX's own commands
+  skipped; `docs/renderer.md`). Audio: `aspMain`, the nead family (Mario
+  Kart 64, the Zelda microcode) and `n_aspMain` are recognised at run time
+  from the microcode's jump table (`docs/architecture.md`); others (MusyX,
+  MP3, DK64/Conker's variants) play silent with an `[AUDIO]` line saying so.
+- Saves: EEPROM, the Controller Pak, SRAM and FlashRAM are built (SRAM and
+  Flash host-tested only).

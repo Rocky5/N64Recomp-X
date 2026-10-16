@@ -68,7 +68,9 @@ def _step(ins, regs, stack):
         v = regs[ins.rs] & ins.imm
     elif op == 0 and ins.funct in (0, 2) and ins.rt in regs and ins.w:   # sll / srl
         v = regs[ins.rt] << ins.sa if ins.funct == 0 else (regs[ins.rt] & 0xFFFFFFFF) >> ins.sa
-    elif op == 43 and ins.rs == SP:                    # sw reg, off(sp): an outgoing argument
+    elif op == 35 and ins.rs == SP and ins.simm in stack:   # lw reg, off(sp): a local kept on the stack (-O0)
+        v = stack[ins.simm]
+    elif op == 43 and ins.rs == SP:                    # sw reg, off(sp): an outgoing argument or a local
         if ins.rt in regs:
             stack[ins.simm] = regs[ins.rt]
         else:
@@ -86,7 +88,9 @@ ORDER = (4, 5, 6, 7, 0x10, 0x14, 0x18, 0x1C)
 
 def candidates(img, funcs, rom_size):
     """(rom, vram, size, call pc, natural) for every call that looks like a
-    DMA of code. `natural`: the size is the argument right after the ROM and
+    DMA of code. `natural` 2: a ROM start and end next to each other with
+    the RAM address before or after them ((dest, start, end), (start, end,
+    dest)); 1: the size is the argument right after the ROM and
     RAM addresses, where every DMA call puts it ((dst, src, size),
     osPiStartDma's (devAddr, dramAddr, size))."""
     out = set()
@@ -103,8 +107,32 @@ def candidates(img, funcs, rom_size):
                     for kn, n in args.items():
                         if kn in (kr, kv) or not 0x100 <= n <= 0x400000 or r + n > rom_size:
                             continue
-                        out.add((r, v, n, pc, kn == after))
+                        out.add((r, v, n, pc, 1 if kn == after else 0))
+                    # (ROM start, ROM end, RAM): the size is the difference (a
+                    # game's dma_copy(start, end, dest) shape)
+                    for ke, e in args.items():
+                        if ke in (kr, kv) or not 0x100 <= e - r <= 0x400000 or e > rom_size:
+                            continue
+                        shape = (pos[ke] == pos[kr] + 1 and pos[kv] in (pos[ke] + 1, pos[kr] - 1))   # (start, end, dest), (dest, start, end)
+                        out.add((r, v, e - r, pc, 2 if shape else 0))
     return sorted(out)
+
+
+def in_data(img, rom_size):
+    """(rom, vram, size, where, 2) for every (RAM, ROM start, ROM end) or
+    (ROM start, ROM end, RAM) word triple anywhere in the ROM: the loads a
+    game describes in data rather than in code (a script's load command, an
+    overlay table). The same test as for a call decides which are code."""
+    import struct
+    rom = img.rom
+    ws = struct.unpack(f'>{len(rom) // 4}I', rom[:len(rom) // 4 * 4])
+    out = set()
+    for i in range(len(ws) - 2):
+        a, b, c = ws[i], ws[i + 1], ws[i + 2]
+        for v, r, e in ((a, b, c), (c, a, b)):
+            if 0x80000400 <= v < 0x80800000 and not v & 3 and 0x1000 <= r < e <= rom_size and not r & 3 and                     0x100 <= e - r <= 0x400000 and not img.seg(v):
+                out.add((r, v, e - r, f'a load described in ROM data at {4 * i:#x}', 2))
+    return out
 
 
 def _starts_like_function(img, t):
@@ -134,7 +162,10 @@ def find(img, funcs_by_seg, rom_size):
         targets |= {t for t in f.calls | f.tails if not img.seg(t)}
     allf = {f.start: f for f in known}
     trials = []
-    for r, v, n, pc, natural in candidates(img, allf, rom_size):
+    found_in = list(candidates(img, allf, rom_size))
+    if targets:
+        found_in += sorted(in_data(img, rom_size), key=lambda c: c[:3])
+    for r, v, n, pc, natural in found_in:
         inside = sorted(t for t in targets if v <= t < v + n)
         if not inside:
             continue
@@ -147,7 +178,7 @@ def find(img, funcs_by_seg, rom_size):
             ok = bool(fs) and not any(f.bad for f in fs.values())
         img.segments.remove(seg)
         if ok:
-            trials.append((not natural, -score, -len(inside), n, seg, inside, pc))
+            trials.append((-natural, -score, -len(inside), n, seg, inside, pc))
     found = []
     for _a, _s, _l, _n, seg, inside, pc in sorted(trials, key=lambda t: t[:4]):
         if any(o.has(seg.vram) or seg.has(o.vram) for o, _i, _p in found):
