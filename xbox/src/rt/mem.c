@@ -85,6 +85,9 @@ int xrc_mem_init(uint32_t mb) {
                  (unsigned)(uintptr_t)(xrc_rdram + 0xA0000000u));
 #endif
     xrc_mmio_init();
+#ifdef XRC_WATCH
+    xhw_watch_write((uint32_t)(uintptr_t)(xrc_rdram + (uint32_t)(XRC_WATCH)));   /* diagnosis: xhw_crash.c */
+#endif
     return 1;
 }
 

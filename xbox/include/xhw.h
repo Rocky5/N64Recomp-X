@@ -93,6 +93,9 @@ int xhw_watch_pages(uint32_t va, uint32_t bytes, int arm);
  * runtime's register model keeps, xbox/src/rt/mmio.c): the page's address in
  * the kernel's physical window, or NULL (va in use, no memory). Never freed. */
 void* xhw_alias_page(uint32_t va);
+/* diagnosis: log every write to the word at host address `host` (DR0;
+ * xhw_crash.c), with the writer; the runtime's -DXRC_WATCH=<N64 address> */
+void xhw_watch_write(uint32_t host);
 /* 128 MB consoles run as 64 MB ones (xhw_ramlock.c): call first in main_body.
  * _log writes the [MEM] line once the log is open. */
 void xhw_ram_lock64(void);

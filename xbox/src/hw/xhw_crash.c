@@ -125,10 +125,40 @@ static void show_screen(void) {
     debugPrint("\nHold the power button to switch off.\n");
 }
 
+/* ---- a write watch for diagnosis (-DXRC_WATCH=<N64 address> in the runtime,
+ * mem.c): DR0 on the word's host address, writes only; every thread runs in
+ * ring 0 under this guard, so each write raises a single-step exception here,
+ * which logs the writer and the new value and carries on (the first 200). ---- */
+static volatile uint32_t s_watch;
+static volatile LONG s_watch_hits;
+
+void xhw_watch_write(uint32_t host) {
+    uint32_t dr7 = 0x1u | (0x1u << 16) | (0x3u << 18);   /* L0, RW0 = write, LEN0 = 4 bytes */
+    s_watch = host;
+    __asm__ volatile("movl %0, %%dr0" : : "r"(host));
+    __asm__ volatile("movl %0, %%dr7" : : "r"(dr7));
+    xhw_logf("[WATCH] writes to %08x", (unsigned)host);
+}
+
+static int on_watch(CONTEXT* cx) {
+    ULONG* sp = (ULONG*)cx->Esp;
+    ULONG up[4] = {0, 0, 0, 0};
+    int n = 0, i;
+    LONG k = InterlockedIncrement((LONG*)&s_watch_hits);
+    for (i = 0; i < 64 && n < 4; i++)
+        if (sp[i] >= xhw_image_base + 0x1000 && sp[i] < xhw_image_end) up[n++] = sp[i];
+    if (k <= 200)
+        xhw_logf("[WATCH] %08x = %08x by eip %08lx (up %08lx %08lx %08lx %08lx) thread %p", (unsigned)s_watch,
+                 (unsigned)*(volatile uint32_t*)s_watch, cx->Eip, up[0], up[1], up[2], up[3], (void*)KeGetCurrentThread());
+    __asm__ volatile("movl %0, %%dr6" : : "r"(0u));
+    return DISP_CONTINUE_EXECUTION;
+}
+
 __attribute__((cdecl)) static int on_exception(EXCEPTION_RECORD* er, void* frame, CONTEXT* cx, void* dc) {
     (void)frame;
     (void)dc;
     if (er->ExceptionFlags & EXCEPTION_UNWIND) return DISP_CONTINUE_SEARCH;
+    if (s_watch && (ULONG)er->ExceptionCode == 0x80000004u) return on_watch(cx);
     if (InterlockedExchange((LONG*)&s_in_crash, 1)) {
         if (KeGetCurrentIrql() < DISPATCH_LEVEL)
             for (;;) Sleep(1000);

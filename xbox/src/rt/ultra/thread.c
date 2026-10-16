@@ -26,6 +26,9 @@
 #define HOST_STACK (128 * 1024)
 /* -DXRC_THREAD_TRACE=1 (diagnosis): every create, start, stop and destroy
  * logged with the calling thread's id, the first 400 */
+#ifndef XRC_THREAD_SP16
+#define XRC_THREAD_SP16 1
+#endif
 #ifndef XRC_THREAD_TRACE
 #define XRC_THREAD_TRACE 0
 #endif
@@ -181,7 +184,13 @@ ULTRA(osCreateThread) {
     if (d->kt && XRC_THREAD_RESUME) d->fresh = 1;   /* the old one is stopped: starts over */
     d->entry = ARG(2);
     d->arg = ARG(3);
-    d->sp = ARG(4);
+    /* libultra starts the thread 16 bytes below the sp it is given
+     * (osCreateThread: context.sp = sp - 16): the four argument words a
+     * MIPS callee may store above its own frame. Without them a thread's
+     * entry wrote its argument into the word just past its stack (Pokemon
+     * Snap: the next object-thread stack's free-list link, corrupted with a
+     * GObj pointer). -DXRC_THREAD_SP16=0: the sp as given. */
+    d->sp = ARG(4) - (XRC_THREAD_SP16 ? 16u : 0u);
     wr32(t + TH_ID, ARG(1));
     wr32(t + TH_PRIORITY, ARG(5));
     TRACE("[OS] trace: create %08x id %d entry %08x pri %d (kt %d stopped %d wait %x) by %08x", (unsigned)t,
