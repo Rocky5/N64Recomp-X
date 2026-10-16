@@ -33,6 +33,13 @@ def analyze(rom, extra_segments=()):
     e = F.parse_entry(rom, entry)
     if not e:
         raise AnalysisError(f'the entry code at {entry:08X} is not the SDK\'s (no BSS clear and jump to main)')
+    # the 6103 and 6106 boot chips' IPL3 loads 1 or 2 MB below the header's
+    # entrypoint: the entry code's own addresses (the BSS, main) say where it runs
+    for off in (0, 0x100000, 0x200000):
+        e2 = F.parse_entry(rom, entry - off)
+        if e2 and entry - off < e2[0] <= entry - off + 0x100000 and entry - off <= e2[2] < e2[0]:
+            entry, e = entry - off, e2
+            break
     bss, bss_size, main = e
     img = F.Image(rom)
     boot = F.Segment('boot', 0x1000, entry, bss - entry)
@@ -51,8 +58,9 @@ def analyze(rom, extra_segments=()):
             break
         for seg, inside, pc in new:
             _add(a, seg, inside)
-            a.notes.append(f'{seg.name}: ROM {seg.rom:#x} at {seg.vram:08X}, {seg.size:#x} bytes (the DMA at '
-                           f'{pc:08X}; called at {", ".join(f"{t:08X}" for t in inside[:3])}), '
+            src = f'the DMA at {pc:08X}' if isinstance(pc, int) else pc
+            a.notes.append(f'{seg.name}: ROM {seg.rom:#x} at {seg.vram:08X}, {seg.size:#x} bytes ({src}; '
+                           f'called at {", ".join(f"{t:08X}" for t in inside[:3])}), '
                            f'{len(a.funcs[seg.name])} functions')
     return a
 

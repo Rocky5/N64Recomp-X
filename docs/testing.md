@@ -48,7 +48,28 @@ cat build-xbox/<id>/analysis.txt      # segments, functions, the libultra names 
 
 The check against a decomp is `tools/xbox/decomp_check.py` (the V track,
 PLAN.md §6; first file of V): functions, segments and libultra names
-against the decomp's lists, then the XBE in xemu. A crash card that says
+against the decomp's lists, then the XBE in xemu.
+
+```sh
+python tools/xbox/decomp_check.py <rom> games/pw64/pw64.us.syms.toml        # a symbol file
+python tools/xbox/decomp_check.py <rom> <decomps>/papermario/ver/us        # a splat version folder
+python tools/xbox/decomp_check.py <rom> <decomps>/sm64 -v                  # a matching decomp's link order
+N64RX_ROMS=<roms> N64RX_DECOMPS=<decomps> python tools/xbox/test_analyze.py [pw64 pm sm64 mk64 drmario64]
+```
+
+It reports functions missed / extra / mis-sized, the decomp's code
+segments found or not, the libultra names the runtime replaces right /
+wrong / missing, and the live set against the one the decomp's names give.
+A matching decomp with no addresses (sm64, mk64) is read through the host
+clang's preprocessor (generated headers stubbed under
+`build-host/decomp_check/`) and lined up by order; `-v` lists the runs where
+the counts differ, which is where the analysis split or missed functions.
+`test_analyze.py` runs every pair present (ROMs in `N64RX_ROMS`, default
+`build-host/roms`; decomps in `N64RX_DECOMPS`, default
+`build-host/decomps`) and fails on any wrong libultra name, on code the
+decomp's names keep live that the analysis leaves dead, or on a result
+below the pair's floor; with neither it skips (CI). Nothing it reads or
+writes is committed. A crash card that says
 "No function at this address" names a function the analysis missed; the
 card's second number is the host return address (`tools/xbox/sym.py --map
 <folder>/debug/n64recomp_x.map 0x...` names the recompiled caller).

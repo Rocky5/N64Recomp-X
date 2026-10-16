@@ -186,7 +186,40 @@ is 480i only: needs an HD AV pack), a save moved to or from Wings64-X
   Pak; the console run.
 - The learning loop for code loaded with computed addresses (PLAN.md 3.14
   step 5) is not built.
-- The analyser has no host test yet: `test_analyze.py` (synthetic MIPS
-  fixtures) and `decomp_check.py` are the V track's first files.
 - Decided, to build: the ROM inside the XBE (`$ROM`, PLAN.md §3.5); the
   output folder still holds the ROM next to `default.xbe`.
+
+### The V track's first files: decomp_check, test_analyze (2026-10-16, branch `agent/analyzer`)
+
+**Verified** (host; xemu is not hardware)
+
+- `tools/xbox/decomp_check.py` and `tools/xbox/test_analyze.py` on four
+  pairs, 0 wrong replaced-libultra names in each (`docs/analyzer.md`'s
+  table): Pilotwings 64 1952/1956, 75 right, live set identical; Mario
+  Kart 64 3157/3159 placed, 66 right; Super Mario 64 main 3516 of 3573,
+  engine 283 of 284, goddard 693 of 699, 66 right; Paper Mario 2443/2680
+  in the segments found, 56 right; Dr. Mario 64 boot 262/270, 56 right
+  (its main segment is compressed).
+- Analyser fixes they drove: the 6103/6106 entrypoint offset (Paper
+  Mario), `(start, end, dest)` and `(dest, start, end)` DMAs, -O0 locals
+  read back from the stack, loads described in ROM data (goddard), GCC
+  jump tables, the code before a segment's first function, -O0's closing
+  `jr ra` folded, function addresses anywhere in the ROM kept live, the
+  hardware rules naming only a sole candidate (`osAiSetFrequency` had
+  named Paper Mario's `__osInitialize_common`), the TLB writers,
+  `osCreatePiManager` no longer taken by `osCreateScheduler`.
+- Super Mario 64 (US) from its ROM alone, `--fast`, xemu slot 9: boots,
+  sound, the title logo drawn; 2 hand-written routines interpreted before
+  the TLB names (now none). `[MEM] boot free 56768 KB of 65536 KB`;
+  `[CLOCK] cpu 733 MHz (TSC against the ACPI timer)` (xemu).
+
+**Not verified / gaps**
+
+- Super Mario 64 past the logo: goddard calls `osMapTLB(0, .., 0x04000000,
+  ..)` and reads its dynlists through that mapping; the runtime has no TLB
+  (`ultra/more.c` ignores it, DIVERGES) and the read faults (access
+  violation at a host address, `[CRASH] read of address 07a31650`). Needs
+  KUSEG translation in the runtime's memory model.
+- Overlays sharing a vram (Paper Mario's maps and partners), GCC-built
+  libultra rules (Paper Mario: osContInit, osSetEventMesg, osEPiStartDma,
+  Flash, Pfs); compressed code (Dr. Mario 64's main segment).
