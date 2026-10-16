@@ -191,6 +191,11 @@ static void host_thunk(uint8_t* rdram, recomp_context* ctx) { xrc_safety_run(rdr
 
 static int holds_code(uint32_t vram) {
     uint32_t off = vram - 0x80000000u;
+    if ((int32_t)vram >= 0) {   /* KUSEG: code the game maps with its own TLB (Turok 2), by its physical page */
+        uint32_t p = xrc_tlb_to_phys(vram);
+        if (p == ~0u || p + 8 > xrc_rdram_size || (vram & 3)) return 0;
+        return (xrc_word(0x80000000u | p) | xrc_word(0x80000000u | (p + 4))) != 0;
+    }
     return vram >= 0x80000000u && off + 8 <= xrc_rdram_size && !(vram & 3) && (xrc_word(vram) | xrc_word(vram + 4));
 }
 

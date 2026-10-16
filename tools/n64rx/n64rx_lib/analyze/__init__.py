@@ -71,6 +71,9 @@ def analyze(rom, extra_segments=()):
     entry = int.from_bytes(rom[8:12], 'big')
     e = F.parse_entry(rom, entry)
     if not e:
+        t = F.tlb_entry(rom, entry)
+        if t:
+            return _analyze_tlb(rom, entry, t, extra_segments)
         raise AnalysisError(f'the entry code at {entry:08X} is not the SDK\'s (no BSS clear and jump to main)')
     # the 6103 and 6106 boot chips' IPL3 loads 1 or 2 MB below the header's
     # entrypoint: the entry code's own addresses (the BSS, main) say where it runs
@@ -102,6 +105,33 @@ def analyze(rom, extra_segments=()):
             a.notes.append(f'{seg.name}: ROM {seg.rom:#x} at {seg.vram:08X}, {seg.size:#x} bytes ({src}; '
                            f'called at {", ".join(f"{t:08X}" for t in inside[:3])}), '
                            f'{len(a.funcs[seg.name])} functions')
+    return a
+
+
+def _analyze_tlb(rom, entry, t, extra_segments):
+    """the TLB template (funcs.tlb_entry): the entry and its TLB writer run at
+    KSEG0 (a small segment of their own), the rest of what IPL3 copied runs
+    where the TLB maps it: physical 0x400 at base + 0x400 (the game's own
+    entry maps the pages; the runtime aliases them, rt/tlb.c)"""
+    main, base, helper = t
+    img = F.Image(rom)
+    kseg0 = F.Segment('entry', 0x1000, entry, max(helper - entry + 0x100, 0x100))
+    code = F.Segment('boot', 0x1000, base + 0x400, min(0x100000, len(rom) - 0x1000))
+    img.segments += [kseg0, code]
+    a = Analysis(entry, main, base + 0x400 + code.size, img)
+    a.funcs['entry'] = F.discover(img, kseg0, [entry, helper])
+    a.funcs['boot'] = F.discover(img, code, [main])
+    a.notes.append(f'TLB-mapped code: the entry at {entry:08X} maps {base:08X} onto physical 0 and calls {main:08X}; '
+                   f'ROM 0x1000 at {base + 0x400:08X}, {code.size:#x} bytes, {len(a.funcs["boot"])} functions')
+    for seg in extra_segments:
+        _add(a, seg, [seg.vram])
+    while True:
+        new = S.find(img, list(a.funcs.values()), len(rom))
+        if not new:
+            break
+        for seg, inside, pc in new:
+            _add(a, seg, inside, S.weak(seg, inside))
+            a.notes.append(f'{seg.name}: ROM {seg.rom:#x} at {seg.vram:08X}, {seg.size:#x} bytes')
     return a
 
 

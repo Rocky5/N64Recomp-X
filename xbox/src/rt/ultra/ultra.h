@@ -24,13 +24,27 @@
 #include "xhw.h"
 
 /* ---- RDRAM by N64 address (KSEG0, KSEG1 or physical) ---- */
-static inline uint8_t* xu_host(uint32_t v) { return xrc_rdram_host + ((v & 0x1FFFFFFFu) & (xrc_rdram_size - 1)); }
+/* an N64 address the runtime touches for the game: KSEG0/KSEG1 by their
+ * physical address; a KUSEG one (code and data a game maps with its own TLB:
+ * Turok 2's 0x00200000 +) through the TLB's entries (tlb.c), as libultra's
+ * osVirtualToPhysical would. -DXRC_TLB_HELPERS=0: masked, as before. */
+#ifndef XRC_TLB_HELPERS
+#define XRC_TLB_HELPERS 1
+#endif
+static inline uint32_t xu_phys(uint32_t v) {
+    if (XRC_TLB_HELPERS && (int32_t)v >= 0) {
+        uint32_t p = xrc_tlb_to_phys(v);
+        if (p != ~0u) return p;
+    }
+    return v & 0x1FFFFFFFu;
+}
+static inline uint8_t* xu_host(uint32_t v) { return xrc_rdram_host + (xu_phys(v) & (xrc_rdram_size - 1)); }
+static inline uint16_t rd16(uint32_t v) { return *(uint16_t*)(xrc_rdram_host + ((xu_phys(v) ^ 2) & (xrc_rdram_size - 1))); }
+static inline void wr16(uint32_t v, uint16_t x) { *(uint16_t*)(xrc_rdram_host + ((xu_phys(v) ^ 2) & (xrc_rdram_size - 1))) = x; }
+static inline uint8_t rd8(uint32_t v) { return xrc_rdram_host[(xu_phys(v) ^ 3) & (xrc_rdram_size - 1)]; }
+static inline void wr8(uint32_t v, uint8_t x) { xrc_rdram_host[(xu_phys(v) ^ 3) & (xrc_rdram_size - 1)] = x; }
 static inline uint32_t rd32(uint32_t v) { return *(uint32_t*)xu_host(v); }
 static inline void wr32(uint32_t v, uint32_t x) { *(uint32_t*)xu_host(v) = x; }
-static inline uint16_t rd16(uint32_t v) { return *(uint16_t*)(xrc_rdram_host + ((((v & 0x1FFFFFFFu) ^ 2)) & (xrc_rdram_size - 1))); }
-static inline void wr16(uint32_t v, uint16_t x) { *(uint16_t*)(xrc_rdram_host + ((((v & 0x1FFFFFFFu) ^ 2)) & (xrc_rdram_size - 1))) = x; }
-static inline uint8_t rd8(uint32_t v) { return xrc_rdram_host[((v & 0x1FFFFFFFu) ^ 3) & (xrc_rdram_size - 1)]; }
-static inline void wr8(uint32_t v, uint8_t x) { xrc_rdram_host[((v & 0x1FFFFFFFu) ^ 3) & (xrc_rdram_size - 1)] = x; }
 static inline uint64_t rd64(uint32_t v) { return ((uint64_t)rd32(v) << 32) | rd32(v + 4); }
 static inline void wr64(uint32_t v, uint64_t x) {
     wr32(v, (uint32_t)(x >> 32));

@@ -27,6 +27,7 @@
 static uint8_t s_ram[RAM_SIZE] __attribute__((aligned(16)));
 uint8_t* xrc_rdram_host = s_ram;
 uint8_t* xrc_rdram = s_ram;
+uint32_t xrc_tlb_to_phys(uint32_t vaddr) { (void)vaddr; return ~0u; }   /* no TLB on the host */
 uint32_t xrc_rdram_size = RAM_SIZE;
 
 static void put32(uint32_t a, uint32_t v) { *(uint32_t*)(s_ram + (a & (RAM_SIZE - 1))) = v; }

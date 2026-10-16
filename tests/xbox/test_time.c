@@ -28,6 +28,7 @@ static int s_fail, s_checks;
 static uint64_t s_us;
 uint64_t xhw_time_us(void) { return s_us; }
 uint8_t* xrc_rdram;
+uint32_t xrc_tlb_to_phys(uint32_t vaddr) { (void)vaddr; return ~0u; }   /* no TLB on the host */
 uint8_t* xrc_rdram_host;
 uint32_t xrc_rdram_size;
 void xu_lock(void) {}

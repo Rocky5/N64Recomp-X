@@ -87,6 +87,8 @@ static void alias(Ent* e, unsigned idx) {
     }
 }
 
+static int s_any_valid;
+
 void xrc_tlb_write(unsigned idx, uint32_t mask, uint32_t hi, uint32_t lo0, uint32_t lo1) {
     Ent* e = &s_ent[idx & (NENT - 1)];
     unalias(e);
@@ -95,6 +97,7 @@ void xrc_tlb_write(unsigned idx, uint32_t mask, uint32_t hi, uint32_t lo0, uint3
     e->lo[0] = lo0;
     e->lo[1] = lo1;
     alias(e, idx & (NENT - 1));
+    if ((lo0 | lo1) & LO_V) s_any_valid = 1;   /* xrc_tlb_to_phys looks only once anything was mapped */
 }
 
 void xrc_tlb_read(unsigned idx, uint32_t* mask, uint32_t* hi, uint32_t* lo0, uint32_t* lo1) {
@@ -115,6 +118,7 @@ uint32_t xrc_tlb_probe(uint32_t hi) {
 /* vaddr through the entries: its physical address, or ~0 when unmapped */
 uint32_t xrc_tlb_to_phys(uint32_t vaddr) {
     unsigned i;
+    if (!s_any_valid) return ~0u;   /* most games: the runtime's helpers pay nothing */
     for (i = 0; i < NENT; i++) {
         const Ent* e = &s_ent[i];
         uint32_t sz = page_bytes(e->mask), base = vpn2(e);

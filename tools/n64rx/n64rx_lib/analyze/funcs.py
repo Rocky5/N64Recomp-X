@@ -134,6 +134,39 @@ def parse_entry(rom, entry):
     return bss, size or 0, main
 
 
+def tlb_entry(rom, entry):
+    """An entry that maps its own code with the TLB and calls into it (Acclaim's
+    template: Turok 2 and 3, Rage Wars, Armorines): a call to a TLB writer with
+    the virtual address in a2 and the even page's physical address in a3, then
+    a jalr to a constant below 0x80000000, then a break. Returns (main, base,
+    helper) with base = the virtual address of physical 0 (the code IPL3 copied
+    to physical 0x400 runs at base + 0x400), or None."""
+    regs, helper, va, pa = {}, None, None, None
+    for i in range(64):
+        o = 0x1000 + 4 * i
+        ins = Ins(int.from_bytes(rom[o:o + 4], 'big'), entry + 4 * i)
+        if ins.op == 15:
+            regs[ins.rt] = ins.imm << 16
+        elif ins.op in (9, 8) and (ins.rs in regs or ins.rs == 0):
+            regs[ins.rt] = ((regs.get(ins.rs, 0)) + ins.simm) & 0xFFFFFFFF
+        elif ins.op == 13 and (ins.rs in regs or ins.rs == 0):
+            regs[ins.rt] = regs.get(ins.rs, 0) | ins.imm
+        elif ins.is_jal:
+            if 6 in regs and 7 in regs and regs[6] < 0x80000000:
+                helper, va, pa = ins.target, regs[6], regs[7]
+        elif ins.is_jalr:
+            t = regs.get(ins.rs)
+            if helper is None or t is None or t >= 0x80000000:
+                return None
+            base = (va - pa) & 0xFFFFFFFF
+            if not base + 0x400 <= t < base + 0x200400:
+                return None
+            return t, base, helper
+        elif ins.dest is not None:
+            regs.pop(ins.dest, None)
+    return None
+
+
 def _table(img, insns, i, fstart):
     """A jump table at the jr at insns[i]: walk back for lw rX, lo(rB) and
     lui rB, hi (with an addu of the index between), bounded by an earlier

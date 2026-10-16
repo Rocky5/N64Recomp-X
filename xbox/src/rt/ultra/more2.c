@@ -53,7 +53,9 @@ ULTRA(osUnmapTLBAll) {
     unsigned i;
     (void)rdram;
     (void)ctx;
-    for (i = 0; i < NTLB; i++) unmap(i);
+    /* libultra's NTLBENTRIES is 31: entry 31 is the debugger's (osMapTLBRdb) and is
+     * left alone, which games rely on (Turok 2 maps its own code there) */
+    for (i = 0; i < NTLB - 1; i++) unmap(i);
 }
 
 ULTRA(osSetTLBASID) {

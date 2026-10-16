@@ -119,7 +119,27 @@ def _ignore_dead(pack, ainfo, refused, prog):
     replaced libultra reaches them, handed to the runtime's interpreter
     when the game runs them"""
     by_name = {n: x for x, n in ainfo['names'].items()}
-    live = [n for n in refused if by_name.get(n) in ainfo['live']]
+    if 'recomp_entrypoint' in refused:   # the function the recompiler was given as its entrypoint
+        a = ainfo['analysis']
+        cfgp = pack.dir / 'recomp.toml'
+        text = cfgp.read_text(encoding='utf-8')
+        cur = int(re.search(r'^entrypoint = (0x[0-9A-Fa-f]+)', text, re.M).group(1), 16)
+        refused = [ainfo['names'][cur] if n == 'recomp_entrypoint' else n for n in refused]
+        if cur == a.entry:   # the entry itself (Turok 2's sets up the TLB): interpreted, started by its stub
+            with open(pack.dir / 'interp.txt', 'a', encoding='utf-8') as f:
+                f.write(f'xrc_entry_interp 0x{a.entry:08X}\n')
+            (pack.dir / 'entry_interp').write_text(f'0x{a.entry:08X}\n', encoding='utf-8')
+            prog.note('the entry code is interpreted (the recompiler refused it)')
+            live_entry = ainfo['names'][a.entry]
+        else:
+            live_entry = None
+        # the recompiler is given no entrypoint then (its own must sit at ROM 0x1000, where only the
+        # refused entry does); the runtime starts the game through the interpreter's stub
+        text = re.sub(r'^entrypoint = .*\n', '', text, flags=re.M)
+        cfgp.write_text(text, encoding='utf-8', newline='\n')
+    else:
+        live_entry = None
+    live = [n for n in refused if by_name.get(n) in ainfo['live'] and n != live_entry]
     if any(n not in by_name for n in refused):
         return False
     if live:
@@ -270,6 +290,7 @@ def write_game_c(pack, gpr_bits, gen):
 #include "recomp_overlays.inl"
 
 extern const uint32_t xrc_icon_64[4096];
+void xrc_entry_interp(uint8_t* rdram, recomp_context* ctx);   /* gen/xrc_interp.c, when the entry is interpreted */
 {rom_pins_c(pack)}
 const XrcGame xrc_game = {{
     .id = {c_str(pack.id)},
@@ -280,7 +301,7 @@ const XrcGame xrc_game = {{
     .boot_size = 0x{pack.boot_size:X}u,
     .gpr_bits = {gpr_bits},
     .test_rom = {1 if pack.test else 0},
-    .entry = recomp_entrypoint,
+    .entry = {'xrc_entry_interp' if (pack.dir / 'entry_interp').exists() else 'recomp_entrypoint'},
     .sections = section_table,
     .num_sections = ARRLEN(section_table),
     .icon = xrc_icon_64,

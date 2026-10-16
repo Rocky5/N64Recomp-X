@@ -46,6 +46,17 @@
 #include "xgfx.h"
 #include "xhw.h"
 
+/* Every RDRAM address here is physical (seg(), the colour images): the
+ * runtime's helpers take it as KSEG0, so it is never read through a game's
+ * TLB (ultra.h xu_phys: a KUSEG address below 0x80000000 is virtual, and
+ * Turok 2 maps its code over physical 0x200000 +). */
+#define XU_K0(a) (((uint32_t)(a)) | 0x80000000u)
+#define rd8(a) rd8(XU_K0(a))
+#define rd16(a) rd16(XU_K0(a))
+#define rd32(a) rd32(XU_K0(a))
+#define xu_host(a) xu_host(XU_K0(a))
+#define xu_from_rdram(d, a, n) xu_from_rdram((d), XU_K0(a), (n))
+
 /* ---- switches (docs/testing.md) ---- */
 #ifndef XGFX_FAR_CLIP
 #define XGFX_FAR_CLIP 1        /* Fast3D clips at the far plane (z <= w): the sea stops short of the horizon */

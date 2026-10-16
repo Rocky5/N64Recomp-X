@@ -36,6 +36,8 @@ int xhw_rom_read(uint32_t off, uint32_t n, xrom_sink sink, void* user) { (void)o
 uint32_t xhw_rom_size(void) { return 0; }
 const uint8_t* xhw_rom_resident(void) { return NULL; }
 void xrc_learn_dma(uint32_t rom, uint32_t ram, uint32_t size) { (void)rom; (void)ram; (void)size; }
+uint32_t xrc_tlb_to_phys(uint32_t vaddr) { (void)vaddr; return ~0u; }   /* ultra.h's helpers: no TLB here */
+void xrc_ovl_dma(uint32_t rom, uint32_t ram, uint32_t size) { (void)rom; (void)ram; (void)size; }
 
 /* ---- save.c's side ---- */
 static uint8_t s_pak[4][XU_PAK_SIZE], s_pak_up[4], s_pak_blank[4];

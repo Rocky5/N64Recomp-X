@@ -93,6 +93,10 @@ int xrc_mem_init(uint32_t mb) {
 
 void* xrc_host(uint32_t vram, uint32_t bytes) {
     uint32_t phys = vram & 0x1FFFFFFFu;
+    if ((int32_t)vram >= 0) {   /* KUSEG: through the game's TLB (Turok 2's code and data) */
+        uint32_t p = xrc_tlb_to_phys(vram);
+        if (p != ~0u) phys = p;
+    }
     if (!xrc_rdram_host || phys >= xrc_rdram_size || bytes > xrc_rdram_size - phys) return NULL;
     return xrc_rdram_host + phys;
 }

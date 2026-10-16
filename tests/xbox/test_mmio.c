@@ -107,7 +107,7 @@ int main(void) {
         ORI(t2, zero, 0xFF), SW(t2, t0, 0xC), JR_RA, 0);
     CHECK("PI_STATUS", REG(t1), 0);
     CHECK("PI dev", s_dma[0], 0x10001000u);
-    CHECK("PI dram", s_dma[1], 0x3000u);
+    CHECK("PI dram", s_dma[1], 0x80003000u);   /* physical, passed as KSEG0: never through a TLB */
     CHECK("PI len", s_dma[2], 0x100u);
     CHECK("PI event", (s_ev >> OS_EVENT_PI) & 1, 1);
 

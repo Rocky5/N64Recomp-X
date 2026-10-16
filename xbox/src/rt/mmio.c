@@ -139,7 +139,7 @@ static uint32_t vi_line(void) {
 static void sp_dma(uint32_t len, int to_rdram) {
     uint32_t mem = R(0x04040000u) & 0x1FF8u, dram = R(0x04040004u) & 0x00FFFFF8u;
     uint32_t n = (len & 0xFF8u) + 8, count = ((len >> 12) & 0xFFu) + 1, skip = (len >> 20) & 0xFF8u, i, k;
-    if (!to_rdram && mem == 0x0FC0u) s_task = dram;
+    if (!to_rdram && mem == 0x0FC0u) s_task = 0x80000000u | dram;   /* physical: as KSEG0 */
     for (i = 0; i < count; i++, dram += n + skip)
         for (k = 0; k < n; k += 4) {
             uint32_t* w = reg(0x04000000u + ((mem + k) & 0x1FFCu));
@@ -239,7 +239,7 @@ void xrc_mmio_write(uint32_t vaddr, uint32_t v) {
         return;
     }
     case 0x04600008u: case 0x0460000Cu: {               /* PI_RD_LEN (RDRAM -> cart), PI_WR_LEN */
-        uint32_t dram = R(0x04600000u) & 0x00FFFFFEu, dev = R(0x04600004u), n = (v & 0x00FFFFFFu) + 1;
+        uint32_t dram = 0x80000000u | (R(0x04600000u) & 0x00FFFFFEu), dev = R(0x04600004u), n = (v & 0x00FFFFFFu) + 1;   /* physical: as KSEG0, never through the TLB */
         R(a) = v;
         if (a == 0x04600008u) xu_pi_save_dma(dev, dram, n, 1);
         else if (!xu_pi_save_dma(dev, dram, n, 0)) xu_pi_dma(dev, dram, n);
