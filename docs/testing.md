@@ -225,6 +225,8 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DASP_HLE_NEAD=0` | 1 | the nead audio microcodes (Mario Kart 64, SM64 EU, Zelda) read as unknown: silent |
 | `-DASP_HLE_NAUDIO=0` | 1 | `n_aspMain` (Paper Mario, Smash Bros.) reads as unknown: silent |
 | `N64RX_YAZ0=0` (env, n64rx) | 1 | a ROM-only build of a Yaz0 game (the Zeldas) uses the ROM as it is instead of the inflated image |
+| `-DXRC_THREAD_TRACE=1` | 0 | diagnosis: the first 400 osCreateThread / osStartThread / osStopThread / osDestroyThread calls logged with the calling thread |
+| `-DXHW_THREAD_NOBOOST=1` | 0 | the runtime's threads at absolute levels run without the kernel's wait boost (experiment; not on a console) |
 | `-DXGFX_HOLD_EVICT=0` | 1 | the BACK menu never drops the game's texture cache when its held frame or card finds the texture pool full (Mario Kart 64 on red: the card was missing) |
 | `-DXGFX_UCODE_F3DEX=0` | 1 | F3DEX 0.9x/1.x microcodes (and F3DLX, F3DLP, L3DEX, .NoN/.Rej) read as Fast3D, the build before the registry (`docs/renderer.md`) |
 | `-DXGFX_UCODE_F3DEX2=0` | 1 | F3DEX2 microcodes (F3DZEX, F3DLX2, .NoN/.Rej) read as Fast3D |

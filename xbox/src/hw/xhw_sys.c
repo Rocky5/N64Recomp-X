@@ -414,14 +414,13 @@ struct xhw_thread {
 static DWORD s_self_tls = 0xFFFFFFFFu;
 
 /* The kernel lifts a thread woken by an event a level for a quantum (NT's
- * wait boost): a level-10 N64 thread woken by a message would then run level
- * with, or ahead of, a higher one, which libultra's strict priorities never
- * allow (Pokemon Snap's object manager, priority 50, overtook its object
- * threads, 51, and ran with omCurrentObject cleared under them). The
- * threads at absolute levels run without boosts. Kill switch:
- * -DXHW_THREAD_NOBOOST=0. */
+ * wait boost), so a woken N64 thread can briefly run level with, or ahead
+ * of, a higher one, which libultra's strict priorities never allow.
+ * -DXHW_THREAD_NOBOOST=1 runs the threads at absolute levels without
+ * boosts. Off by default: it did not change Pokemon Snap's stop (xemu) and
+ * has not run on a console. */
 #ifndef XHW_THREAD_NOBOOST
-#define XHW_THREAD_NOBOOST 1
+#define XHW_THREAD_NOBOOST 0
 #endif
 
 static void apply_level(PKTHREAD kt, int level) {

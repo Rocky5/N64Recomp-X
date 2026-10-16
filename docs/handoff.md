@@ -675,3 +675,22 @@ xemu, MK64's race touches its frames and the readback runs; an RDRAM dump
 screen on screen (no scripted shot reached it), any console run, 720p.
 Gap carried on: Pilotwings 64 stays hot and slows to ~14 fps in xemu with
 it on; render to texture in the same frame is not done.
+
+### Pokémon Snap on the console, and its stop (2026-10-16, orchestrator)
+
+`vsnap1` (commit `1361903`, ThinLTO, the ROM inside,
+`F:\Applications\N64Recomp-X-SNAP\`, title ID `4E520FB8`) crashes on red
+exactly where xemu does: frame ~100, a read of RDRAM `0x8000000E`, right
+after the main-menu overlay (ROM `a08e30`) is mapped; the intro, F3DEX2,
+aspMain at 32 kHz and FlashRAM seen on the way. Traced in xemu
+(`-DXRC_THREAD_TRACE=1`; a small map reader, since `tools/xbox/sym.py`
+misreads this map format): object thread `10000004` (`func_800E455C`) ->
+`func_800E4AF8` -> `omCreateProcess` -> `omGetStackOfSize`
+(`func_80007F24`) walks the object manager's free list of thread stacks and
+follows a corrupt link (`0x8000000E`). The manager (thread 4, N64 priority
+110) and the object threads (51) share kernel level 10; the
+create/start/stop/destroy order in the trace looked right, and turning the
+kernel's wait boost off (`-DXHW_THREAD_NOBOOST=1`) changed nothing. Next:
+find who writes that free list (a write watch on its head, or running the
+om functions in the interpreter), and compare the recompiled overlay's
+functions with the decomp's.
