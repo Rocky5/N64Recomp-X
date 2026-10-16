@@ -171,23 +171,24 @@ int main(int argc, char** argv) {
     /* the BACK menu's card */
     {
         static uint32_t img[XHW_PANEL_H][XHW_PANEL_W], img2[XHW_PANEL_H][XHW_PANEL_W];
-        static const char* const labels[10] = { "Video output", "Widescreen", "Texture filter", "FPS counter", "Volume",
-                                                "Controller", "  Stick dead zone", "Restart", "Exit to dashboard", "Return" };
-        static const char* const values[10] = { "720p -> 480i", "Auto, 16:9", "N64 (bilinear)", "Off", "100%",
-                                                "Port 4 (none)", "60%", "", "", "" };
+        static const char* const labels[11] = { "Video output", "Widescreen", "Texture filter", "FPS counter", "Volume",
+                                                "Controller", "  Stick dead zone", "  Controller Pak", "Restart",
+                                                "Exit to dashboard", "Return" };
+        static const char* const values[11] = { "720p -> 480i", "Auto, 16:9", "N64 (bilinear)", "Off", "100%",
+                                                "Port 4 (none)", "60%", "Auto, Rumble Pak", "", "", "" };
         xhw_panel pn;
         int r, ok, ox = (W - XHW_PANEL_W) / 2, oy = (H - XHW_PANEL_H) / 2;
         memset(&pn, 0, sizeof pn);
         pn.t_ms = 1300;
         pn.sel = 1;
-        pn.rows = 10;
+        pn.rows = 11;
         snprintf(pn.title, sizeof pn.title, "%s", "Pilotwings 64");
         snprintf(pn.sub_left, sizeof pn.sub_left, "%s", "SETTINGS");
         snprintf(pn.sub_right, sizeof pn.sub_right, "%s", "running 720p 16:9");
-        for (r = 0; r < 10; r++) {
+        for (r = 0; r < 11; r++) {
             snprintf(pn.label[r], sizeof pn.label[r], "%s", labels[r]);
             snprintf(pn.value[r], sizeof pn.value[r], "%s", values[r]);
-            pn.kind[r] = r >= 7 ? XHW_PANEL_ACTION : XHW_PANEL_SETTING;
+            pn.kind[r] = r >= 8 ? XHW_PANEL_ACTION : r == 7 ? XHW_PANEL_ITEM : XHW_PANEL_SETTING;
         }
         pn.star[0] = 1;
         snprintf(pn.info, sizeof pn.info, "%s", "At 480 lines 16:9 needs the dashboard's widescreen");
@@ -197,7 +198,7 @@ int main(int argc, char** argv) {
         CHECK((img[0][0] >> 24) == 0 && (img[XHW_PANEL_H - 1][XHW_PANEL_W - 1] >> 24) == 0, "the corners are not clear");
         CHECK((img[XHW_PANEL_H / 2][XHW_PANEL_W / 2] >> 24) == 255, "the body is not opaque");
         CHECK((img[11][11] >> 24) < 255, "the corner is not rounded");
-        for (ok = 1, r = 0; r < 10; r++)
+        for (ok = 1, r = 0; r < 11; r++)
             ok &= xhw_splash_text_width(labels[r], 1) + xhw_splash_text_width(values[r], 1) + 2 * 8 + 32 <= XHW_PANEL_W - 2 * 34;
         CHECK(ok, "a row is too wide for the card");
         CHECK(xhw_splash_text_width(pn.info, 1) <= XHW_PANEL_W - 2 * 34, "the info line is too wide");
@@ -233,6 +234,61 @@ int main(int argc, char** argv) {
                      ((b1 * a + b0 * (255 - a)) / 255);
             }
         save("splash_menu", s_full);
+        /* the Paks page: 11 rows (a full window of notes), the selected note
+         * has no < > (A acts on it), a confirm in the note line */
+        {
+            static const char* const pl[11] = { "Port", "In the port", "Pak", "  MARIO KART 64.A", "  GHOST DATA",
+                                                "  F-ZERO X", "  WAVE RACE 64", "  1080 SNOWBOARDING",
+                                                "v STARFOX64", "Format pak", "Back" };
+            static const char* const pv[11] = { "Port 1", "Auto, Controller Pak", "Pak A", "4 pages", "21 pages",
+                                                "1 page", "3 pages", "2 pages", "8 pages", "", "" };
+            int ry;
+            memset(&pn, 0, sizeof pn);
+            pn.t_ms = 1300;
+            pn.sel = 4;
+            pn.rows = 11;
+            snprintf(pn.title, sizeof pn.title, "%s", "Mario Kart 64");
+            snprintf(pn.sub_left, sizeof pn.sub_left, "%s", "CONTROLLER PAKS");
+            snprintf(pn.sub_right, sizeof pn.sub_right, "%s", "Pak A: 7 notes, 79 pages free");
+            for (r = 0; r < 11; r++) {
+                snprintf(pn.label[r], sizeof pn.label[r], "%s", pl[r]);
+                snprintf(pn.value[r], sizeof pn.value[r], "%s", pv[r]);
+                pn.kind[r] = r >= 9 ? XHW_PANEL_ACTION : r >= 3 ? XHW_PANEL_ITEM : XHW_PANEL_SETTING;
+            }
+            snprintf(pn.info, sizeof pn.info, "%s", "Note 2 of 7: NKTE01, 21 pages     A: delete");
+            snprintf(pn.note, sizeof pn.note, "%s", "Delete GHOST DATA?  A: delete   B: keep");
+            snprintf(pn.footer, sizeof pn.footer, "%s", "A select     Left / Right change     B back");
+            for (ok = 1, r = 0; r < 11; r++)
+                ok &= xhw_splash_text_width(pl[r], 1) + xhw_splash_text_width(pv[r], 1) + 2 * 8 + 32 <= XHW_PANEL_W - 2 * 34;
+            CHECK(ok, "a Paks row is too wide for the card");
+            CHECK(xhw_splash_text_width(pn.info, 1) <= XHW_PANEL_W - 2 * 34 &&
+                      xhw_splash_text_width(pn.note, 1) <= XHW_PANEL_W - 2 * 34, "the Paks info or note is too wide");
+            xhw_panel_render(&img[0][0], XHW_PANEL_W, &pn);
+            /* the selected ITEM row: nothing drawn left of its value where a SETTING's "<" sits */
+            ry = 0;
+            for (y = 0; y < XHW_PANEL_H; y++)
+                if ((img[y][XHW_PANEL_W - 10 - 34] >> 24) == 255) ry = 1;
+            CHECK(ry, "the card is drawn");
+            pn.sel = 1;   /* a setting selected instead: the card differs (the < > and the highlight) */
+            xhw_panel_render(&img2[0][0], XHW_PANEL_W, &pn);
+            CHECK(memcmp(img, img2, sizeof img) != 0, "the selection does not show");
+            pn.sel = 4;
+            for (r = 0; r < 8; r++) xhw_panel_render(&img[0][0], XHW_PANEL_W, &pn);   /* the highlight slides back */
+            for (y = 0; y < H; y++)
+                for (x = 0; x < W; x++) {
+                    int rr = (60 + y / 4) * 45 / 100, gg = (120 + y / 6) * 45 / 100, bb = (200 - y / 8) * 45 / 100;
+                    s_full[y * W + x] = 0xFF000000u | (uint32_t)(rr << 16 | gg << 8 | bb);
+                }
+            for (y = 0; y < XHW_PANEL_H; y++)
+                for (x = 0; x < XHW_PANEL_W; x++) {
+                    uint32_t c = img[y][x], a = c >> 24, *d = &s_full[(oy + y) * W + ox + x];
+                    uint32_t r0 = (*d >> 16) & 255, g0 = (*d >> 8) & 255, b0 = *d & 255;
+                    uint32_t r1 = (c >> 16) & 255, g1 = (c >> 8) & 255, b1 = c & 255;
+                    *d = 0xFF000000u | ((r1 * a + r0 * (255 - a)) / 255) << 16 |
+                         ((g1 * a + g0 * (255 - a)) / 255) << 8 | ((b1 * a + b0 * (255 - a)) / 255);
+                }
+            save("splash_paks", s_full);
+        }
     }
 
     printf("test_splash: %d checks, %d failed\n", s_checks, s_fail);

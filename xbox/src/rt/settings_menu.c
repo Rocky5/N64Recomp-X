@@ -26,7 +26,8 @@
  * DIVERGES: a pause the N64 did not have.
  *
  * Rows (M2's): Video output (*), Widescreen (Auto, On, Off), Texture filter, FPS counter,
- * Volume, Stick dead zone (per port, with the stick's live tilt), Restart,
+ * Volume, Stick dead zone (per port, with the stick's live tilt), Controller
+ * Pak (per port: A opens the Paks page, below), Restart,
  * Exit to dashboard, Return. settings.ini is written on Return (or B, or
  * BACK) when something changed. Kill switch -DXRC_MENU=0: BACK does
  * nothing, settings.ini still works. */
@@ -34,6 +35,7 @@
 
 #include "f3d_interp.h"
 #include "settings.h"
+#include "ultra/savedev.h"
 #include "ultra/ultra.h"
 #include "xgfx.h"
 
@@ -45,11 +47,21 @@ void xrc_gfx_lock(void);
 void xrc_gfx_unlock(void);
 int xrc_gfx_ready(void);
 
-enum { ROW_VIDEO, ROW_WIDE, ROW_FILTER, ROW_FPS, ROW_VOLUME, ROW_PORT, ROW_STICK, ROW_RESTART, ROW_EXIT, ROW_RETURN, N_ROWS };
+/* -DXRC_MENU_PAKS=0: no Controller Pak row and no Paks page (the paks stay
+ * as settings.ini says) */
+#ifndef XRC_MENU_PAKS
+#define XRC_MENU_PAKS 1
+#endif
+
+enum {
+    ROW_VIDEO, ROW_WIDE, ROW_FILTER, ROW_FPS, ROW_VOLUME, ROW_PORT, ROW_STICK, ROW_PAK, ROW_RESTART, ROW_EXIT,
+    ROW_RETURN, N_ROWS
+};
 static const char* const k_label[N_ROWS] = {
     "Video output", "Widescreen", "Texture filter", "FPS counter", "Volume", "Controller", "  Stick dead zone",
-    "Restart", "Exit to dashboard", "Return",
+    "  Controller Pak", "Restart", "Exit to dashboard", "Return",
 };
+#define HAS_PAKS (XRC_MENU_PAKS && XRC_SAVE_PAK)
 
 #define DIRS (XHW_BTN_UP | XHW_BTN_DOWN | XHW_BTN_LEFT | XHW_BTN_RIGHT)
 #define STICK_DIR 16000      /* the left stick as a d-pad: about half tilt */
@@ -75,6 +87,36 @@ static xhw_pad s_raw[4];
 static int s_raw_ok[4];
 /* the BACK tap, per port: down, and nothing else meanwhile */
 static uint8_t s_back_down[4], s_back_clean[4];
+
+/* ---- the Paks page ----
+ * Per port: what is in it (Auto, a Controller Pak, a Rumble Pak, nothing),
+ * which of the game's four paks (A..D, save.c: each in one port, so taking
+ * another port's pak swaps the two), the notes on that pak (a window of
+ * NOTES_SHOWN, scrolled to the selection) with A to delete one and X to
+ * copy it to another of the game's paks, Format pak, Back. A change is a
+ * hot-swap the game sees (save.c xu_pak_insert); a delete, a copy or a
+ * format asks first (A again; anything else keeps the note).
+ * The VI thread only asks: the menu's thread does the work, holding the
+ * save lock, and reads the note table again every frame. */
+enum { PK_PORT, PK_IN, PK_FILE, PK_NOTES };   /* then the notes (or "no notes"), Format pak, Back */
+enum { CONFIRM_NONE, CONFIRM_DELETE, CONFIRM_FORMAT, CONFIRM_COPY };
+#define OP_COPY 100   /* s_pak_op: OP_COPY + slot copies a note to Pak s_copy_to */
+#define NOTES_SHOWN 6
+#define MSG_MS 2500
+static int s_page;                  /* 0 the settings, 1 the Paks page */
+static int s_psel, s_pport, s_scroll, s_confirm;
+/* for the menu's thread: apply the settings; delete (1 + slot), copy (OP_COPY + slot), format (-1) */
+static volatile int s_pak_apply, s_pak_op;
+static xu_pak_note s_notes[16];
+static volatile int s_nnotes, s_free;
+static char s_msg[64];
+static uint64_t s_msg_us;
+
+static int pk_note_rows(void) { return s_nnotes ? s_nnotes : 1; }
+static int pk_format(void) { return PK_NOTES + pk_note_rows(); }
+static int pk_back(void) { return pk_format() + 1; }
+static int pk_items(void) { return pk_back() + 1; }
+static int pk_note_at(int item) { return item >= PK_NOTES && item < PK_NOTES + s_nnotes ? item - PK_NOTES : -1; }
 
 int xrc_menu_open(void) { return s_open; }
 
@@ -147,6 +189,22 @@ static int stick_pct(int16_t x, int16_t y) {
     return m >= 1.0f ? 100 : (int)(m * 100.0f);
 }
 
+/* what a port holds, as its rows say it */
+static void pak_in_text(int port, char* v, size_t cap, int with_pak) {
+    int k = g_xrc_settings.pak[port] & 3, l = 'A' + (g_xrc_settings.pak_file[port] & 3);
+    if (k == XRC_PAK_AUTO) {
+        int now = xu_pak_kind(port);   /* AUTO turns into a Rumble Pak if the game probed for one */
+        if (now == XU_PAK_RUMBLE) snprintf(v, cap, "Auto, Rumble Pak");
+        else if (with_pak) snprintf(v, cap, "Auto, Pak %c", l);
+        else snprintf(v, cap, "Auto, Controller Pak");
+    } else if (k == XRC_PAK_CONTROLLER) {
+        if (with_pak) snprintf(v, cap, "Pak %c", l);
+        else snprintf(v, cap, "Controller Pak");
+    } else {
+        snprintf(v, cap, "%s", k == XRC_PAK_RUMBLE ? "Rumble Pak" : "Nothing");
+    }
+}
+
 /* a row's value ("" for the actions) and whether it waits for a restart */
 static void row_value(int r, char* v, size_t cap, int* star) {
     const XrcSettings* g = &g_xrc_settings;
@@ -170,6 +228,7 @@ static void row_value(int r, char* v, size_t cap, int* star) {
     case ROW_VOLUME: snprintf(v, cap, "%d%%", g->volume); break;
     case ROW_PORT: snprintf(v, cap, "Port %d%s", s_port + 1, s_raw_ok[s_port] ? "" : " (none)"); break;
     case ROW_STICK: snprintf(v, cap, "%d%%", g->stick_deadzone[s_port]); break;
+    case ROW_PAK: pak_in_text(s_port, v, cap, 1); break;
     }
 }
 
@@ -196,10 +255,137 @@ static void info_text(char* out, size_t cap) {
             snprintf(out, cap, "Left stick now %d%% (%s)", m, m > g->stick_deadzone[s_port] ? "moves" : "ignored");
         }
         break;
+    case ROW_PAK: snprintf(out, cap, "A: what is in port %d, and the notes on its pak", s_port + 1); break;
     case ROW_RESTART: snprintf(out, cap, "Saves settings.ini and restarts the game"); break;
     case ROW_EXIT: snprintf(out, cap, "L + R + BACK + BLACK does it from anywhere"); break;
     default: snprintf(out, cap, "Saves settings.ini (B and BACK do too)"); break;
     }
+}
+
+/* ---- the Paks page: the menu's thread ---- */
+static int s_confirm_slot, s_copy_to;
+static char s_confirm_name[24];
+
+static void pak_msg(const char* m) {
+    snprintf(s_msg, sizeof s_msg, "%s", m);
+    s_msg_us = xhw_time_us();
+    xhw_logf("[MENU] %s", m);
+}
+
+/* the asked changes: the settings applied as a hot-swap, a delete, a
+ * format, a copy */
+static void pak_do(void) {
+    int op = s_pak_op, port = s_pport, ok = 0, r = 0, to = s_copy_to;
+    char m[64];
+    if (s_pak_apply) s_pak_apply = 0, xu_pak_apply_settings(1);
+    if (!op) return;
+    s_pak_op = 0;
+    xu_save_lock();
+    {
+        uint8_t* img = xu_pak_image(port);
+        if (op >= OP_COPY) {   /* onto the port that holds that pak (every pak is in one) */
+            int q;
+            for (q = 0; q < 3 && xu_pak_letter(q) != to; q++) {}
+            r = xu_pak_note_copy(img, op - OP_COPY, xu_pak_image(q));
+            if (!r) xu_pak_dirty(q), xu_pak_pull(q);
+        } else {
+            if (op > 0) ok = xu_pak_note_delete(img, op - 1) == 0;
+            else xu_pak_format_id(img, (uint32_t)xhw_time_us() * 2654435761u), ok = 1;   /* a pak with a new ID */
+            if (ok) xu_pak_dirty(port), xu_pak_pull(port);   /* written by the save writer; the game re-reads it */
+        }
+    }
+    xu_save_unlock();
+    if (op >= OP_COPY) {
+        if (!r) snprintf(m, sizeof m, "Copied %s to Pak %c", s_confirm_name, 'A' + to);
+        else if (r == -2) snprintf(m, sizeof m, "Pak %c has that note already", 'A' + to);
+        else if (r == -3) snprintf(m, sizeof m, "No room on Pak %c", 'A' + to);
+        else snprintf(m, sizeof m, "%s can't be copied (broken)", s_confirm_name);
+    } else if (op > 0) {
+        snprintf(m, sizeof m, ok ? "Deleted %s" : "%s was already gone", s_confirm_name);
+    } else {
+        snprintf(m, sizeof m, "Pak %c formatted: no notes", 'A' + (g_xrc_settings.pak_file[port] & 3));
+    }
+    pak_msg(m);
+}
+
+/* the note table of the port's pak, every frame */
+static void pak_refresh(void) {
+    int n, f;
+    xu_save_lock();
+    n = xu_pak_notes(xu_pak_image(s_pport), s_notes, &f);
+    xu_save_unlock();
+    s_nnotes = n;
+    s_free = f;
+}
+
+static void paks_info(char* out, size_t cap) {
+    const XrcSettings* g = &g_xrc_settings;
+    int port = s_pport, note = pk_note_at(s_psel), l = 'A' + (g->pak_file[port] & 3);
+    if (s_psel == PK_PORT) snprintf(out, cap, "Left / Right: another controller's paks");
+    else if (s_psel == PK_IN)
+        snprintf(out, cap, "%s", (g->pak[port] & 3) == XRC_PAK_AUTO ? "Auto: a Rumble Pak if the game asks for one first"
+                                                                    : "As if the pak were pulled out and put in");
+    else if (s_psel == PK_FILE) {
+        static const char* ext[4] = {".mpk", "-2.mpk", "-3.mpk", "-4.mpk"};
+        snprintf(out, cap, "%s%s; another port's pak swaps with it", xrc_game.id ? xrc_game.id : "game",
+                 ext[g->pak_file[port] & 3]);
+    } else if (note >= 0) {
+        const xu_pak_note* n = &s_notes[note];
+        snprintf(out, cap, "Note %d of %d: %s, %d pages   A: delete  X: copy", note + 1, s_nnotes, n->code, n->pages);
+    } else if (s_psel == pk_format()) snprintf(out, cap, "Erases every note on Pak %c", l);
+    else if (s_psel == pk_back()) snprintf(out, cap, "B does it too");
+    else snprintf(out, cap, "Nothing on Pak %c", l);
+}
+
+static void fill_paks(xhw_panel* p) {
+    const XrcSettings* g = &g_xrc_settings;
+    int port = s_pport, n = s_nnotes, shown = n < NOTES_SHOWN ? n : NOTES_SHOWN, r, i, note;
+    int l = 'A' + (g->pak_file[port] & 3), k = g->pak[port] & 3;
+    if (s_psel >= pk_items()) s_psel = pk_items() - 1;
+    note = pk_note_at(s_psel);
+    if (note >= 0 && note < s_scroll) s_scroll = note;
+    if (note >= s_scroll + NOTES_SHOWN) s_scroll = note - NOTES_SHOWN + 1;
+    if (s_scroll > n - shown) s_scroll = n - shown;
+    if (s_scroll < 0) s_scroll = 0;
+    snprintf(p->sub_left, sizeof p->sub_left, "CONTROLLER PAKS");
+    snprintf(p->sub_right, sizeof p->sub_right, "Pak %c: %d note%s, %d pages free", l, n, n == 1 ? "" : "s", s_free);
+    snprintf(p->label[0], sizeof p->label[0], "Port");
+    snprintf(p->value[0], sizeof p->value[0], "Port %d%s", port + 1, s_raw_ok[port] ? "" : " (none)");
+    snprintf(p->label[1], sizeof p->label[1], "In the port");
+    pak_in_text(port, p->value[1], sizeof p->value[1], 0);
+    snprintf(p->label[2], sizeof p->label[2], "Pak");
+    snprintf(p->value[2], sizeof p->value[2], "Pak %c", l);
+    r = PK_NOTES;
+    for (i = 0; i < shown; i++, r++) {
+        const xu_pak_note* nt = &s_notes[s_scroll + i];
+        /* the window's ends say there is more */
+        int more = (i == 0 && s_scroll > 0) || (i == shown - 1 && s_scroll + shown < n);
+        snprintf(p->label[r], sizeof p->label[r], "%s%s", more ? (i == 0 ? "^ " : "v ") : "  ",
+                 nt->name[0] ? nt->name : "(no name)");
+        if (nt->pages < 0) snprintf(p->value[r], sizeof p->value[r], "broken");
+        else snprintf(p->value[r], sizeof p->value[r], "%d page%s", nt->pages, nt->pages == 1 ? "" : "s");
+        p->kind[r] = XHW_PANEL_ITEM;
+    }
+    if (!n) snprintf(p->label[r], sizeof p->label[r], "  No notes on this pak"), p->kind[r++] = XHW_PANEL_ITEM;
+    snprintf(p->label[r], sizeof p->label[r], "Format pak");
+    p->kind[r++] = XHW_PANEL_ACTION;
+    snprintf(p->label[r], sizeof p->label[r], "Back");
+    p->kind[r++] = XHW_PANEL_ACTION;
+    p->rows = r;
+    if (s_psel < PK_NOTES) p->sel = s_psel;
+    else if (note >= 0) p->sel = PK_NOTES + note - s_scroll;
+    else if (s_psel == pk_format()) p->sel = r - 2;
+    else if (s_psel == pk_back()) p->sel = r - 1;
+    else p->sel = PK_NOTES;
+    paks_info(p->info, sizeof p->info);
+    if (s_confirm == CONFIRM_DELETE) snprintf(p->note, sizeof p->note, "Delete %s?  A: delete   B: keep", s_confirm_name);
+    else if (s_confirm == CONFIRM_COPY)
+        snprintf(p->note, sizeof p->note, "Copy %s to < Pak %c >?  A: copy", s_confirm_name, 'A' + s_copy_to);
+    else if (s_confirm == CONFIRM_FORMAT) snprintf(p->note, sizeof p->note, "Erase all of Pak %c?  A: erase   B: keep", l);
+    else if (s_msg[0] && xhw_time_us() - s_msg_us < MSG_MS * 1000ull) snprintf(p->note, sizeof p->note, "%s", s_msg);
+    else if (k == XRC_PAK_NONE || k == XRC_PAK_RUMBLE || xu_pak_kind(port) == XU_PAK_RUMBLE)
+        snprintf(p->note, sizeof p->note, "Pak %c is not in port %d now", l, port + 1);
+    snprintf(p->footer, sizeof p->footer, "A select     Left / Right change     B back");
 }
 
 /* the card's frame: fade 0..256, slide in pixels */
@@ -215,16 +401,25 @@ static void draw(int fade, int slide) {
     snprintf(s_panel.sub_right, sizeof s_panel.sub_right, "running %s %s",
              vm->height >= 720 ? "720p" : vm->progressive ? "480p" : "480i",
              vm->height >= 720 || (vm->widescreen && s_dash_wide) ? "16:9" : "4:3");
-    for (r = 0; r < N_ROWS; r++) {
-        int star;
-        snprintf(s_panel.label[r], sizeof s_panel.label[r], "%s", k_label[r]);
-        row_value(r, s_panel.value[r], sizeof s_panel.value[r], &star);
-        s_panel.star[r] = star;
-        s_panel.kind[r] = r >= ROW_RESTART ? XHW_PANEL_ACTION : XHW_PANEL_SETTING;
+    if (s_page) {
+        fill_paks(&s_panel);
+    } else {
+        int n = 0;
+        for (r = 0; r < N_ROWS; r++) {
+            int star;
+            if (r == ROW_PAK && !HAS_PAKS) continue;
+            if (r == s_sel) s_panel.sel = n;
+            snprintf(s_panel.label[n], sizeof s_panel.label[n], "%s", k_label[r]);
+            row_value(r, s_panel.value[n], sizeof s_panel.value[n], &star);
+            s_panel.star[n] = star;
+            s_panel.kind[n] = r >= ROW_RESTART ? XHW_PANEL_ACTION : r == ROW_PAK ? XHW_PANEL_ITEM : XHW_PANEL_SETTING;
+            n++;
+        }
+        s_panel.rows = n;
+        info_text(s_panel.info, sizeof s_panel.info);
+        if (restart_needed()) snprintf(s_panel.note, sizeof s_panel.note, "* used after a restart");
+        snprintf(s_panel.footer, sizeof s_panel.footer, "A / Left / Right change     B return");
     }
-    info_text(s_panel.info, sizeof s_panel.info);
-    if (restart_needed()) snprintf(s_panel.note, sizeof s_panel.note, "* used after a restart");
-    snprintf(s_panel.footer, sizeof s_panel.footer, "A / Left / Right change     B return");
     xhw_panel_render(s_img, 512, &s_panel);
     f3d_present_held(s_img, 512, 512, XHW_PANEL_W, XHW_PANEL_H, fade, slide);
 }
@@ -251,6 +446,8 @@ static void open_menu(void) {
     if (!s_inited) s_inited = 1, s_boot = g_xrc_settings;
     s_sel = 0;
     s_port = 0;
+    s_page = 0;
+    s_confirm = 0;
     s_prev = ~0u;     /* the press that opened it counts as held */
     s_close = s_leave = s_apply = 0;
     s_at_open = g_xrc_settings;
@@ -361,15 +558,93 @@ static void menu_thread(void* arg) {
         while (!s_close && !s_leave) {
             uint64_t t0 = xhw_time_us();
             if (s_apply) s_apply = 0, apply_now();
+            if (HAS_PAKS) {
+                pak_do();
+                if (s_page) pak_refresh();
+            }
             draw_now();
             if (XHW_TEST_BUILD && ++frames <= 3)
                 xhw_logf("[MENU] frame %u: %u ms", frames, (unsigned)((xhw_time_us() - t0) / 1000u));
         }
         if (s_apply) s_apply = 0, apply_now();
+        if (HAS_PAKS) pak_do();
         if (s_leave) leave(s_leave == 2);
         close_menu();
         s_close = 0;
         xrc_gfx_unlock();
+    }
+}
+
+/* ---- the Paks page: the VI thread's presses ---- */
+static void pak_change(int dir) {
+    XrcSettings* g = &g_xrc_settings;
+    int port = s_pport, q;
+    char v[40];
+    if (s_psel == PK_PORT) {
+        s_pport = step(s_pport, dir, 1, 0, 3, 1);
+        s_scroll = 0;
+        xhw_logf("[MENU] Paks page, port %d", s_pport + 1);
+        return;
+    }
+    if (s_psel == PK_IN) {
+        g->pak[port] = step(g->pak[port] & 3, dir, 1, 0, 3, 1);
+        pak_in_text(port, v, sizeof v, 0);
+    } else {   /* PK_FILE: the port that holds the new pak takes this one's */
+        int l = (g->pak_file[port] + dir) & 3;
+        for (q = 0; q < XRC_PORTS && g->pak_file[q] != l; q++) {}
+        if (q < XRC_PORTS) g->pak_file[q] = g->pak_file[port];
+        g->pak_file[port] = l;
+        snprintf(v, sizeof v, "Pak %c", 'A' + l);
+    }
+    s_pak_apply = 1;
+    xhw_logf("[MENU] port %d %s: %s", port + 1, s_psel == PK_IN ? "holds" : "pak", v);
+}
+
+static void paks_input(uint32_t press) {
+    int items = pk_items(), note;
+    if (s_psel >= items) s_psel = items - 1;
+    note = pk_note_at(s_psel);
+    if (s_confirm) {   /* A does it; Left / Right pick a copy's pak; anything else keeps the note */
+        int own = g_xrc_settings.pak_file[s_pport] & 3;
+        uint32_t lr = XHW_BTN_LEFT | XHW_BTN_RIGHT;
+        if (s_confirm == CONFIRM_COPY && (press & lr) && !(press & ~lr)) {
+            int d = press & XHW_BTN_LEFT ? 3 : 1;
+            s_copy_to = (s_copy_to + d) & 3;
+            if (s_copy_to == own) s_copy_to = (s_copy_to + d) & 3;
+            return;
+        }
+        if (press & XHW_BTN_A)
+            s_pak_op = s_confirm == CONFIRM_FORMAT ? -1
+                       : s_confirm == CONFIRM_COPY ? OP_COPY + s_confirm_slot
+                                                   : 1 + s_confirm_slot;
+        if (press) s_confirm = 0;
+        return;
+    }
+    if (press & XHW_BTN_B) {
+        s_page = 0, s_sel = ROW_PAK;
+    } else if (press & XHW_BTN_UP) {
+        s_psel = (s_psel + items - 1) % items;
+    } else if (press & XHW_BTN_DOWN) {
+        s_psel = (s_psel + 1) % items;
+    } else if (press & (XHW_BTN_LEFT | XHW_BTN_RIGHT)) {
+        if (s_psel <= PK_FILE) pak_change(press & XHW_BTN_LEFT ? -1 : +1);
+    } else if ((press & XHW_BTN_X) && note >= 0) {
+        s_confirm_slot = s_notes[note].slot;
+        snprintf(s_confirm_name, sizeof s_confirm_name, "%s", s_notes[note].name[0] ? s_notes[note].name : "the note");
+        s_copy_to = ((g_xrc_settings.pak_file[s_pport] & 3) + 1) & 3;
+        s_confirm = CONFIRM_COPY;
+    } else if (press & XHW_BTN_A) {
+        if (s_psel <= PK_FILE) {
+            pak_change(+1);
+        } else if (note >= 0) {
+            s_confirm_slot = s_notes[note].slot;
+            snprintf(s_confirm_name, sizeof s_confirm_name, "%s", s_notes[note].name[0] ? s_notes[note].name : "the note");
+            s_confirm = CONFIRM_DELETE;
+        } else if (s_psel == pk_format()) {
+            s_confirm = CONFIRM_FORMAT;
+        } else if (s_psel == pk_back()) {
+            s_page = 0, s_sel = ROW_PAK;
+        }
     }
 }
 
@@ -408,19 +683,32 @@ void xrc_menu_vi(unsigned retrace) {
     }
     s_prev = cur;
     if (XHW_TEST_BUILD && press) xhw_logf("[MENU] press %04x at retrace %u", (unsigned)press, retrace);
+    if (s_page && !s_want) {   /* the Paks page (B goes back to the settings) */
+        paks_input(press);
+        return;
+    }
     if (s_want || (press & XHW_BTN_B)) {   /* a BACK tap or B: close */
         s_want = 0;
         s_close = 1;
         return;
     }
-    if (press & XHW_BTN_UP) s_sel = (s_sel + N_ROWS - 1) % N_ROWS;
-    else if (press & XHW_BTN_DOWN) s_sel = (s_sel + 1) % N_ROWS;
+    if (press & XHW_BTN_UP) {
+        s_sel = (s_sel + N_ROWS - 1) % N_ROWS;
+        if (s_sel == ROW_PAK && !HAS_PAKS) s_sel--;
+    } else if (press & XHW_BTN_DOWN) {
+        s_sel = (s_sel + 1) % N_ROWS;
+        if (s_sel == ROW_PAK && !HAS_PAKS) s_sel++;
+    }
     else if (press & XHW_BTN_LEFT) change(-1, 0);
     else if (press & XHW_BTN_RIGHT) change(+1, 0);
     else if (press & XHW_BTN_A) {
         if (s_sel == ROW_RETURN) s_close = 1;
         else if (s_sel == ROW_RESTART) s_leave = 2;
         else if (s_sel == ROW_EXIT) s_leave = 1;
-        else change(+1, 1);
+        else if (s_sel == ROW_PAK) {
+            s_pport = s_port, s_psel = PK_PORT, s_scroll = 0, s_confirm = 0, s_msg[0] = 0;
+            s_page = 1;
+            xhw_logf("[MENU] Paks page, port %d", s_pport + 1);
+        } else change(+1, 1);
     }
 }

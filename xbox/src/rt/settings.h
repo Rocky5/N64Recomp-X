@@ -8,6 +8,9 @@
 
 enum { XRC_WS_OFF = 0, XRC_WS_ON = 1, XRC_WS_AUTO = 2, XRC_WS_STRETCH = 3 };
 #define XRC_PORTS 4
+/* what a controller holds (the BACK menu's Paks page); AUTO: a Controller
+ * Pak that becomes a Rumble Pak if the game probes for one first */
+enum { XRC_PAK_AUTO = 0, XRC_PAK_CONTROLLER = 1, XRC_PAK_RUMBLE = 2, XRC_PAK_NONE = 3 };
 
 typedef struct XrcSettings {
     int output;                 /* XHW_OUT_*: auto, 480i, 480p, 720p */
@@ -20,6 +23,8 @@ typedef struct XrcSettings {
     int save_slot;              /* 1..4 */
     int screenshots;            /* BACK + WHITE screenshots (test builds) */
     int stick_deadzone[XRC_PORTS];   /* percent, 0..60 in fives */
+    int pak[XRC_PORTS];         /* XRC_PAK_*: what is in the port */
+    int pak_file[XRC_PORTS];    /* which pak, 0..3 (A..D): each once */
     char video_confirmed[16];   /* the HD mode this console has shown and A kept */
 } XrcSettings;
 
@@ -34,6 +39,7 @@ int xrc_settings_parse(XrcSettings* s, char* text);
 size_t xrc_settings_format(const XrcSettings* s, char* out, size_t cap);
 const char* xrc_settings_output_name(int output);
 const char* xrc_settings_widescreen_name(int ws);
+const char* xrc_settings_pak_name(int pak);   /* auto, controller, rumble, none */
 
 /* the console side */
 void xrc_settings_load(void);

@@ -50,8 +50,25 @@ int main(void) {
     s.stick_deadzone[1] = 15;
     s.stick_deadzone[2] = 60;
     s.stick_deadzone[3] = 45;
+    s.pak[0] = XRC_PAK_RUMBLE;
+    s.pak[1] = XRC_PAK_CONTROLLER;
+    s.pak[3] = XRC_PAK_NONE;
+    s.pak_file[0] = 2, s.pak_file[1] = 0, s.pak_file[2] = 3, s.pak_file[3] = 1;
     snprintf(s.video_confirmed, sizeof s.video_confirmed, "720p");
     round_trip(&s, "every key changed");
+
+    /* the paks: names, a letter in lower case, and a set where one pak is in two ports */
+    snprintf(text, sizeof text, "[port1]\r\npak = none\r\npak_file = b\r\n[port2]\r\npak = wobbly\r\npak_file = A\r\n");
+    xrc_settings_defaults(&t);
+    xrc_settings_parse(&t, text);
+    CHECK(t.pak[0] == XRC_PAK_NONE && t.pak[1] == XRC_PAK_AUTO, "pak kinds %d %d", t.pak[0], t.pak[1]);
+    CHECK(t.pak_file[0] == 1 && t.pak_file[1] == 0 && t.pak_file[2] == 2, "pak_file b/A: %d %d", t.pak_file[0],
+          t.pak_file[1]);
+    snprintf(text, sizeof text, "[port1]\r\npak_file = C\r\n[port4]\r\npak_file = Q\r\n");
+    xrc_settings_defaults(&t);
+    xrc_settings_parse(&t, text);
+    CHECK(t.pak_file[0] == 0 && t.pak_file[2] == 2 && t.pak_file[3] == 3, "pak C in two ports kept: %d %d %d",
+          t.pak_file[0], t.pak_file[2], t.pak_file[3]);
 
     /* clamping, 1080i, unknown keys, comments, sections */
     snprintf(text, sizeof text,

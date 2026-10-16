@@ -120,6 +120,23 @@ card (`xhw_panel_render`: the loading screen's aurora, sparks, light sweep
 and green bar) composited on the GPU; the VI thread reads the pads. Close:
 `settings.ini` saved when something changed.
 
+The "Controller Pak" row (per port) opens the **Paks page** on the same
+card (`docs/look/paks-page-host.png`): Port, In the port (Auto, Controller
+Pak, Rumble Pak, Nothing), Pak (A-D), the pak's notes in a window of six
+(`XHW_PANEL_ITEM` rows: A acts on them, no `< >`), Format pak, Back. The VI
+thread only asks; the menu's thread does the work under the save lock and
+reads the note table again every frame (`savedev.c` `xu_pak_notes`). Paks
+A-D are the files `<id>.mpk`, `<id>-2.mpk`, `-3`, `-4` (the names saves had
+before the page, one per port); each pak is always in exactly one port, so
+taking another port's pak swaps the two (`save.c` `xu_pak_insert`). A change
+is a hot-swap: the port's next status has CONT_CARD_PULL (0x02) once
+(`xu_pak_pull`, `xu_pak_status`), and the runtime's osPfs* compare the
+OSPfs's ID with the pak's as libultra's `__osCheckId` does, so a game sees
+`PFS_ERR_NEW_PACK` and initialises the pak again. A delete
+(`xu_pak_note_delete`: osPfsDeleteFile's work), a copy to another of the
+game's paks (`xu_pak_note_copy`: X on a note, Left / Right pick the pak) and
+a format (a new ID) mark the pak dirty, so the save writer and the exit combos' flush write them.
+
 ## The exit combos
 
 `xhw_combo.c`: raw pad state, any port, both triggers past 200 + BACK +

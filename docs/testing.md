@@ -145,7 +145,10 @@ Timed events follow the ACPI clock. A `SHOT` due before the game's first
 frame stalls the boot: put shots late. Saves: `pak_menu` (Mario Kart 64:
 START at the title; expect `[SI] port 1: the game's own code reaches its
 pak`, `[SAVE] ...mpk`), `pak_boot` (START held at boot: the game's own
-Controller Pak screen, its pages free).
+Controller Pak screen, its pages free), `pak_page` (the BACK menu's Paks
+page: `[MENU] Paks page, port 1`, `[SAVE] port 1: Pak B, port 2: Pak A`
+and back, `[MENU] Pak A formatted: no notes`, `[SAVE] ...mpk written`;
+then `pak_boot` shows the game's own pak screen agreeing).
 
 ## Switches
 
@@ -166,6 +169,7 @@ Controller Pak screen, its pages free).
 | `-DXRC_AUDIO=0` | 1 | audio tasks counted and dropped: silent |
 | `-DXRC_AUDIO_DUMP=<s>` | 0 | test builds: 3 s of the output from second `<s>` as `[AUDDUMP]` lines (`tools/xbox/auddump_to_wav.py serial.log out.wav`: the WAV and its numbers, RMS, L/R correlation, the energy below 4 kHz; the WAV stays outside the tree) |
 | `-DXRC_MENU=0` | 1 | no BACK menu (settings.ini still works) |
+| `-DXRC_MENU_PAKS=0` | 1 | no Controller Pak row and no Paks page in the BACK menu (`[portN] pak`, `pak_file` in settings.ini still apply) |
 | `-DXRC_ROM_RESIDENT_MB=<n>` | 16 | ROMs up to n MB are read whole into RAM; bigger ones go through the page cache (`xhw_romcache.c`). `0`: the page cache for every ROM (a test of it on Pilotwings 64); `64`: every ROM resident (no cache; a 32 MB+ ROM then does not fit) |
 | `-DXRC_ROM_CACHE_MB=<n>` | 16 | the page cache's cap (chunks held, pins included) |
 | `-DXRC_ROM_CACHE_720P_MB=<n>` | 12 | the same when the boot predicts 720p |

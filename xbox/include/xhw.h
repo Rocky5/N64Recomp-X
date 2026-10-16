@@ -115,7 +115,7 @@ void xhw_notice(const char* line1, const char* line2);
 #define XHW_PANEL_ROWS 12
 #define XHW_PANEL_W 512          /* the image, in 480-line pixels */
 #define XHW_PANEL_H 416
-enum { XHW_PANEL_SETTING = 0, XHW_PANEL_ACTION = 1 };
+enum { XHW_PANEL_SETTING = 0, XHW_PANEL_ACTION = 1, XHW_PANEL_ITEM = 2 };   /* ITEM: A acts on it, no < > */
 typedef struct xhw_panel {
     uint32_t t_ms;               /* since the menu opened: the animations */
     int32_t sel;                 /* the selected row */

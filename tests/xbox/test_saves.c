@@ -80,7 +80,7 @@ static int32_t call(void (*f)(uint8_t*, recomp_context*), const uint32_t* a, int
                           (int)(sizeof((const uint32_t[]){__VA_ARGS__}) / sizeof(uint32_t)))
 ULTRA(osPfsInitPak); ULTRA(osPfsInit); ULTRA(osPfsChecker); ULTRA(osPfsFreeBlocks); ULTRA(osPfsAllocateFile);
 ULTRA(osPfsDeleteFile); ULTRA(osPfsFileState); ULTRA(osPfsFindFile); ULTRA(osPfsReadWriteFile);
-ULTRA(osPfsNumFiles); ULTRA(osPfsIsPlug); ULTRA(__osContRamRead); ULTRA(__osContDataCrc);
+ULTRA(osPfsNumFiles); ULTRA(osPfsIsPlug); ULTRA(__osContRamRead); ULTRA(__osContDataCrc); ULTRA(__osPfsGetStatus);
 
 /* ---- a second formulation of the CRCs (MSB first, no augmentation) ---- */
 static uint8_t ref_data_crc(const uint8_t* d) {
@@ -380,6 +380,82 @@ static void test_sram(void) {
     CHECK(xu_cart_kind() == XU_CART_FLASH && s_cart_opens == opens + 1, "SRAM, then a Flash command: Flash");
 }
 
+/* the BACK menu's Paks page: the note table read from the image, a note
+ * deleted as osPfsDeleteFile does, a pak formatted with a new ID, and the
+ * game told of a swap (the status's pull bit, libultra's ID check) */
+static void test_notes(void) {
+    const uint32_t mq = 0x80201000u;
+    xu_pak_note n[16];
+    uint8_t* img;
+    int count, free_pages;
+    memset(s_pak_up, 0, sizeof s_pak_up);
+    memset(s_pak_blank, 0, sizeof s_pak_blank);
+    xu_pak_set_kind(3, XU_PAK_MEMORY);
+    img = xu_pak_image(3);
+    count = xu_pak_notes(img, n, &free_pages);
+    CHECK(count == 0 && free_pages == 123, "an empty pak: %d notes, %d free", count, free_pages);
+    CHECK(CALL(osPfsInitPak, mq, PFS, 3) == 0, "init port 4");
+    put_name("\x26\x1A\x2B\x22\x28\x0F\x24\x1A\x2B\x2D\x0F\x16\x14\0\0\0", "\x1A\0\0\0");   /* "MARIO KART 64", "A" */
+    CHECK(CALL(osPfsAllocateFile, PFS, 0x3031, 0x4E4B5445, NAME, EXT, 1000, OUT) == 0, "note 1: 4 pages");
+    put_name("\x33\x3B\x11\x0F\x0F\0\0\0\0\0\0\0\0\0\0\0", "\0\0\0\0");   /* "Z-1  " */
+    CHECK(CALL(osPfsAllocateFile, PFS, 0x3031, 0x435A4C45, NAME, EXT, 3000, OUT) == 0, "note 2: 12 pages");
+    count = xu_pak_notes(img, n, &free_pages);
+    CHECK(count == 2 && free_pages == 107, "%d notes, %d free", count, free_pages);
+    CHECK(n[0].slot == 0 && n[0].pages == 4 && !strcmp(n[0].name, "MARIO KART 64.A") && !strcmp(n[0].code, "NKTE01") &&
+              n[0].company == 0x3031 && n[0].game == 0x4E4B5445,
+          "note 1: slot %d, %d pages, '%s', '%s'", n[0].slot, n[0].pages, n[0].name, n[0].code);
+    CHECK(n[1].slot == 1 && n[1].pages == 12 && !strcmp(n[1].name, "Z-1") && !strcmp(n[1].code, "CZLE01"),
+          "note 2: %d pages, '%s' (trailing spaces cut, no extension)", n[1].pages, n[1].name);
+    CHECK(xu_pak_char(0x40) == '?' && xu_pak_char(0x3D) == '/' && xu_pak_char(0x80) == '?' && xu_pak_char(0) == 0,
+          "the character set's symbols");
+    {   /* copied onto another pak: the same note, its pages' bytes, the checker happy there too */
+        static uint8_t other[XU_PAK_SIZE];
+        xu_pak_note m[16];
+        int fp, ok = 1, i, j;
+        uint8_t pa[128], pb[128];
+        xu_pak_format_id(other, 0x4E525822u);
+        for (i = 5 * 256; i < 9 * 256; i++) img[i] = (uint8_t)(i * 13);   /* note 1's pages: 5..8 */
+        CHECK(xu_pak_note_copy(img, 0, other) == 0, "copy note 1");
+        CHECK(xu_pak_note_copy(img, 0, other) == -2, "again: it is there already");
+        CHECK(xu_pak_note_copy(img, 7, other) == -1, "an unused entry: -1");
+        CHECK(xu_pak_notes(other, m, &fp) == 1 && fp == 119 && m[0].pages == 4 && !strcmp(m[0].name, "MARIO KART 64.A"),
+              "the copy: %d free, '%s'", fp, m[0].name);
+        for (j = 0, i = be16(img + 24 * 32 + 6); i != 1 && j < 128; i = be16(img + 256 + 2 * i)) pa[j++] = (uint8_t)i;
+        for (j = 0, i = be16(other + 24 * 32 + 6); i != 1 && j < 128; i = be16(other + 256 + 2 * i)) pb[j++] = (uint8_t)i;
+        for (i = 0; i < 4; i++) ok &= !memcmp(img + 256 * pa[i], other + 256 * pb[i], 256);
+        CHECK(ok, "the pages' bytes in order");
+        CHECK(other[257] == xu_pak_inode_sum(other + 256, 5) && !memcmp(other + 256, other + 512, 256),
+              "the copy's inode sum and mirror");
+        CHECK(xu_pak_note_copy(img, 1, other) == 0 && xu_pak_note_copy(img, 1, img) == -2, "note 2 too; onto itself: -2");
+        xu_pak_note_delete(other, 0);   /* every page taken: no room */
+        for (i = 5; i < 128; i++) other[256 + 2 * i] = 0, other[257 + 2 * i] = 1;
+        CHECK(xu_pak_note_copy(img, 0, other) == -3, "a full pak: -3");
+    }
+    CHECK(xu_pak_note_delete(img, 0) == 0, "delete note 1");
+    CHECK(xu_pak_note_delete(img, 0) == -1 && xu_pak_note_delete(img, 16) == -1, "an unused or bad entry: -1");
+    count = xu_pak_notes(img, n, &free_pages);
+    CHECK(count == 1 && free_pages == 111 && n[0].slot == 1, "after the delete: %d notes, %d free", count, free_pages);
+    CHECK(img[257] == xu_pak_inode_sum(img + 256, 5) && !memcmp(img + 256, img + 512, 256), "the inode sum and mirror");
+    CHECK(CALL(osPfsChecker, PFS) == 0 && rd32(PFS) == 1, "libultra's checker finds nothing to fix");
+    CHECK(CALL(osPfsFreeBlocks, PFS, OUT) == 0 && rd32(OUT) == 111 * 256, "osPfsFreeBlocks agrees: %u", rd32(OUT));
+    /* a swap: the status says so once, then the pak is just in */
+    xu_pak_pull(3);
+    CHECK(xu_pak_status(3) == 0x03 && xu_pak_status(3) == 0x01, "the pull bit, once");
+    xu_pak_pull(3);
+    CHECK(CALL(__osPfsGetStatus, mq, 3) == 2 && CALL(__osPfsGetStatus, mq, 3) == 0, "PFS_ERR_NEW_PACK, once");
+    xu_pak_set_kind(3, XU_PAK_NONE);
+    xu_pak_pull(3);
+    CHECK(xu_pak_status(3) == 0 && CALL(__osPfsGetStatus, mq, 3) == 1, "pulled and empty: PFS_ERR_NOPACK");
+    xu_pak_set_kind(3, XU_PAK_MEMORY);
+    CHECK(xu_pak_status(3) == 0x03, "inserted again: the pull bit waited");
+    /* formatted from the menu: a new ID, so the game's OSPfs is stale */
+    xu_pak_format_id(img, 0x4E525823u);
+    CHECK(xu_pak_id_ok(img + 32) && xu_pak_notes(img, n, &free_pages) == 0 && free_pages == 123, "formatted empty");
+    CHECK(CALL(osPfsNumFiles, PFS, OUT, OUT + 4) == 2, "a new pak under an old OSPfs: PFS_ERR_NEW_PACK");
+    CHECK(CALL(osPfsInitPak, mq, PFS, 3) == 0 && CALL(osPfsNumFiles, PFS, OUT, OUT + 4) == 0 && rd32(OUT + 4) == 0,
+          "initialised again: no files");
+}
+
 int main(void) {
     setvbuf(stdout, NULL, _IONBF, 0);
     xrc_rdram_size = 8u << 20;
@@ -390,6 +466,7 @@ int main(void) {
     test_pif();
     test_rumble();
     test_pfs();
+    test_notes();
     test_flash();
     test_sram();
     printf("test_saves: %d checks, %d failed\n", s_checks, s_fail);

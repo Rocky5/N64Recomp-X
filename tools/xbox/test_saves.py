@@ -7,6 +7,8 @@ pak CRCs against a second formulation, the blank pak's format as libultra
 checks it, pak read/write round trips through the PIF commands, the Rumble
 Pak's probe and the AUTO rule, the osPfs* file system (allocate, write, read,
 state, find, delete, the checker on a broken entry, a blank pak repaired),
+the BACK menu's Paks page (the note table, delete, copy, format with a new
+ID, the status's pull bit and libultra's ID check after a swap),
 the Flash's ID, erase, program and read, and SRAM by PI DMA."""
 import sys
 

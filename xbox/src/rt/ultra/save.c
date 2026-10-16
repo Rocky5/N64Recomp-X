@@ -4,8 +4,9 @@
  * pack's id, in the byte order the cartridge or pak holds it (as
  * mupen64plus and ares write it), so saves move both ways:
  *   <id>.eep            EEPROM, 512 or 2048 bytes (si.c)
- *   <id>.mpk            the Controller Pak in port 1, 32 KB; <id>-2.mpk ..
- *                       <id>-4.mpk for ports 2 to 4
+ *   <id>.mpk            Controller Pak A, 32 KB (port 1's unless the BACK
+ *                       menu moved it); <id>-2.mpk .. <id>-4.mpk Paks B to D
+ *                       (ports 2 to 4's)
  *   <id>.sra / <id>.fla SRAM (32 KB) or FlashRAM (128 KB) (savedev.c)
  * An image is read on its first use; one with no file yet starts blank
  * (EEPROM, SRAM and Flash all ones, a pak formatted empty) and gets a file
@@ -118,14 +119,56 @@ uint8_t* xu_eep_image(uint32_t* size) {
 
 void xu_eep_dirty(void) { dirty(&s_eep); }
 
-/* ---- the paks (savedev.c) ---- */
+/* ---- the paks (savedev.c) ----
+ * Four paks per game, A to D, and each is always in one port (A in port 1
+ * until the BACK menu's Paks page moves it; taking a pak another port holds
+ * swaps the two), so s_pak[port] is the image of pak s_letter[port]. */
+static int s_letter[4] = {0, 1, 2, 3}, s_kind_set[4] = {XU_PAK_AUTO, XU_PAK_AUTO, XU_PAK_AUTO, XU_PAK_AUTO};
+
 uint8_t* xu_pak_image(int port) {
     Img* m = &s_pak[port & 3];
     if (!m->loaded) {
         static const char* ext[4] = {".mpk", "-2.mpk", "-3.mpk", "-4.mpk"};
-        if (!load(m, ext[port & 3], XU_PAK_SIZE, 0)) xu_pak_format(m->data);
+        int l = s_letter[port & 3];
+        if (!load(m, ext[l], XU_PAK_SIZE, 0)) xu_pak_format_id(m->data, 0x4E525821u + (uint32_t)l);   /* "NRX!" + l */
     }
     return m->data;
+}
+
+int xu_pak_letter(int port) { return s_letter[port & 3]; }
+
+void xu_pak_insert(int port, int kind, int letter, int hot) {
+    int q;
+    port &= 3, letter &= 3;
+    xu_save_lock();
+    if (s_letter[port] != letter) {
+        for (q = 0; q < 4 && s_letter[q] != letter; q++) {}
+        q &= 3;
+        write_one(&s_pak[port]);
+        write_one(&s_pak[q]);
+        s_letter[q] = s_letter[port];
+        s_letter[port] = letter;
+        s_pak[port].loaded = s_pak[q].loaded = 0;   /* each port reads its new pak on the next access */
+        if (hot) xu_pak_pull(port), xu_pak_pull(q);
+        xhw_logf("[SAVE] port %d: Pak %c, port %d: Pak %c", port + 1, 'A' + letter, q + 1, 'A' + s_letter[q]);
+    }
+    if (s_kind_set[port] != kind) {
+        s_kind_set[port] = kind;
+        xu_pak_set_kind(port, kind);
+        if (hot) xu_pak_pull(port);
+        xhw_logf("[SAVE] port %d holds %s", port + 1,
+                 kind == XU_PAK_AUTO     ? "Auto"
+                 : kind == XU_PAK_MEMORY ? "a Controller Pak"
+                 : kind == XU_PAK_RUMBLE ? "a Rumble Pak"
+                                         : "nothing");
+    }
+    xu_save_unlock();
+}
+
+void xu_pak_apply_settings(int hot) {
+    static const int kinds[4] = {XU_PAK_AUTO, XU_PAK_MEMORY, XU_PAK_RUMBLE, XU_PAK_NONE};
+    int i;
+    for (i = 0; i < 4; i++) xu_pak_insert(i, kinds[g_xrc_settings.pak[i] & 3], g_xrc_settings.pak_file[i], hot);
 }
 
 void xu_pak_dirty(int port) { dirty(&s_pak[port & 3]); }
