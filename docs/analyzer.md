@@ -141,7 +141,6 @@ counts agree; "placed" below).
 | Mario Kart 64 (US) | 3157 / 3159 placed; main 2657 of 2676, racing 413 of 415, ending 133 of 133 | boot + both race segments | 66 / 0 | title, menus, races (F3DEX), sound (nead), the Controller Pak; **on the console (red)**: races at 29.9 fps, the BACK menu and its Paks page |
 | Super Mario 64 (US, -O0) | main 3516 of 3573, engine 283 of 284, goddard 693 of 699 (by count; few addresses to pin) | boot + engine (DMA) + goddard (a level script's load) | 66 / 0 | title head, the interactive head screen, castle grounds (Lakitu intro) after three `--learn` rounds and the TLB; the head's shading is off |
 | Dr. Mario 64 (US) | boot 262 / 270 | boot; the main segment is gzip-compressed (not found) | 56 / 0; live set identical | links; boots, the net runs 4 functions, then interpreted code reads PI_STATUS through KSEG1 (`a4600010`) and faults; its gzip main segment is not found |
-| Pokémon Snap (US) | not compared yet (decomp at `build-host/decomps/pokemonsnap`) | boot + level overlays sharing a vram | — | does not build: overlays at one vram get the same `func_<vram>` names and N64Recomp's refusal loop never ends (agent `snap`) |
 | Paper Mario (US, GCC) | 2443 / 2680 in the segments found | main, engine1, engine2, evt, engine4, one partner and one map (overlays sharing a vram: one each) | 56 / 0 (87 missing: GCC-built libultra, Flash, the Pfs family) | not tried |
 
 ### The whole library (`tools/xbox/sweep.py`, 2026-10-16)
@@ -222,3 +221,37 @@ Pilotwings 64, Mario Kart 64 (frames presented, not judged playable).
   MP3, DK64/Conker's variants) play silent with an `[AUDIO]` line saying so.
 - Saves: EEPROM, the Controller Pak, SRAM and FlashRAM are built (SRAM and
   Flash host-tested only).
+
+## Overlays that share vram (Pokemon Snap)
+
+A game may load several segments at one address from different ROM ranges
+(Snap: every level's code at 0x802Bxxxx-0x802Exxxx, the scenes at
+0x800E18A0, 0x801DC8C0 ...). The analyser keeps them apart:
+
+- `segments.py`: a load whose vram lies in a known segment counts when its
+  ROM range is new (never over the boot segment); a call is "into the
+  unknown" when no known segment has a function at its target. A load
+  descriptor that names its text, `(start, end, RAM, text start, text end,
+  ...)` (HAL's overlay tables), is a segment even when no known code calls
+  it: its text starts with a function and the gaps run to the text's end.
+  Call targets inside such a range may be another overlay's: the ones that
+  do not look like starts are dropped (score 0.75 for load tables), and a
+  root a function's own branches run past is not a start (`discover`'s
+  `weak` roots). Kill switch `N64RX_OVERLAYS=0`.
+- `Image.focus`: while a segment is walked its own bytes are read where
+  overlays overlap.
+- Keys and names: a function in a segment that overlaps another is keyed
+  `vram | ROM offset << 32` (`Analysis.key`, `by_vram`, `seg_of`) and named
+  `func_<vram>_<ROM offset>`, so N64Recomp sees each overlay as its own
+  section with unique names; the pipeline's refusal handling works per name
+  and so per (section, function). N64Recomp itself already resolves a `jal`
+  to an address several sections hold as a lookup through `get_function`
+  (no change to it). Liveness follows a call into the caller's own overlay
+  when it has a function there, else into every overlay at that address;
+  data pointers are looked for outside each segment's own bodies.
+- The runtime switches the function table on the PI DMA that loads an
+  overlay (`docs/architecture.md`).
+
+| ROM | functions vs key | segments | libultra right / wrong | runs |
+|---|---|---|---|---|
+| Pokemon Snap (US) | 702 / 835 (the key names few; 133 missed are mostly data symbols typed as functions) | all 14 code segments the key names, 32 in all (every level and scene) | 82 / 0 (osCartRomInit, osEPiStartDma 2.0L, __osEPiRaw{Read,Write}Io, osEPi{Read,Write}Io, osStopThread rules added) | xemu: intro scene runs (F3DEX2, aspMain, FlashRAM), switches to the main menu overlay, then faults in omCreateProcess (NULL GObj) |

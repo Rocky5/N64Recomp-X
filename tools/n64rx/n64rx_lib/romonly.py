@@ -45,7 +45,9 @@ def make(rom, bdir, base=None, learnt=None):
     learn.withhold(a, learn.withheld(learnt))   # the learning loop (learn.py): its test switch,
     if learnt:                                  # then what the console learnt
         learn.apply(a, learnt, len(rom.data))
-    ids, _N = libultra.identify(a.img, a.all_funcs())
+    # libultra is linked into the boot segment and its like, never into an
+    # overlay: the overlays' functions (keys past 32 bits) are not named
+    ids, _N = libultra.identify(a.img, {k: f for k, f in a.all_funcs().items() if k < 1 << 32})
     lists = emit.recomp_lists(ROOT)
     replaced = lists['reimplemented_funcs'] | lists['ignored_funcs']
     nm = emit.names(a, ids)
@@ -106,7 +108,7 @@ def _from_base(base, a, nm):
 
     def owner(v):
         for x, f in funcs.items():
-            if x <= v < f.end:
+            if f.start <= v < f.end:
                 return x
         return None
     ignored = set()

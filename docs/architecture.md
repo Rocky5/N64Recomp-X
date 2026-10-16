@@ -163,3 +163,24 @@ BLACK (dashboard) or WHITE (restart). Fed by the game's reads, the BACK
 menu's reads, the VI thread when the game stops reading, the loading
 screen, the error cards and the watchdog's tick, all under the pad lock.
 A dirty save is flushed first; the next boot names the exit.
+
+## Overlays in the function table (ovl.c)
+
+Sections that share vram are found at init (`s_ovl`); each keeps the table
+indices it got there. `pi.c` reports every DMA to `xrc_ovl_dma`; a DMA from
+inside an overlay's ROM range to its own RAM position maps that overlay:
+its RAM range is cleared in the page arrays, the interpreted routines there
+entered (they run what is in RAM), then its functions. A function of the
+overlay that was there before then misses and goes to the safety net.
+`[OVL]` lines log the switches. Kill switch `-DXRC_OVERLAYS=0`.
+
+The RCP's registers through KSEG1 (`mem.c`): one shadow page per register
+block is mapped at `rdram + 0xA4xxxxxx` with `xhw_alias_map`, past the
+window's allocation, so a game's own register read (Snap's SP_IMEM/DMEM
+check, a PI_STATUS poll) reads the boot state or zero instead of faulting.
+
+HAL's object manager (Snap) runs object threads with osStopThread(NULL) /
+osStartThread each frame and recreates them on the same OSThread: thread.c
+waits a stopped thread on its event, restarts a recreated one at its new
+entry (`__builtin_setjmp` in `thread_body`), and has osStartThread of a
+higher N64 priority on the same kernel level wait until it stops or blocks.

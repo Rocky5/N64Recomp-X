@@ -180,6 +180,16 @@ def _hardware(N):
             one([a] if sz <= 0x10 else [], '__osSpGetStatus', 'reads SP_STATUS only')
         if N.hw(a, SP, 0, 'w') and N.hw(a, SP, 4, 'w') and N.hw(a, SP, 8, 'w'):
             one([a], '__osSpRawStartDma', 'writes SP_MEM_ADDR, SP_DRAM_ADDR, SP_RD/WR_LEN')
+        if not ft.args_used and ft.returns_value and not N.hw(a, PI, 0, 'w') and \
+                all(N.hw(a, PI, o) for o in (0x14, 0x18, 0x1C, 0x20)) and 0xB0000000 in ft.consts:
+            # the cartridge's handle: domain 1's timing registers, the ROM's KSEG1 base, no DMA
+            one([a], 'osCartRomInit', 'PI domain 1 timing registers and the cartridge base, returns the handle')
+        if ft.leaf and ft.args_used == {0, 1, 2} and N.hw(a, PI, 0x10, 'r') and not N.hw(a, PI, 0, 'w') and \
+                N.arg_r(a, 0, 12) and all(N.hw(a, PI, o, 'w') for o in (0x14, 0x18, 0x1C, 0x20)):
+            # (handle, devAddr, data or *data): the handle's domain timings, PI_STATUS polled, one word
+            # through the handle's KSEG1 base (+12)
+            one([a], '__osEPiRawReadIo' if any(k[0] == 2 and 'w' in v for k, v in ft.arg.items())
+                else '__osEPiRawWriteIo', 'sets the handle\'s PI domain timings, polls PI_STATUS, one word')
         if N.hw(a, PI, 0, 'w') and N.hw(a, PI, 4, 'w') and (N.hw(a, PI, 8, 'w') or N.hw(a, PI, 0xC, 'w')):
             # the first argument is a direction in osPiRawStartDma, a handle in osEPiRawStartDma
             if any(k[0] == 0 for k in ft.arg):
@@ -255,7 +265,7 @@ def _structure(N):
     if di and eay:
         cands = [a for a, ft in f.items() if a not in N.name and di in ft.calls and eay in ft.calls and
                  ft.args_used == {0} and N.arg_r(a, 0, 16) and N.arg_w(a, 0, 16) and a != st and
-                 not N.arg_r(a, 0, 8)]
+                 (st or not N.arg_r(a, 0, 8))]   # ultralib's dequeues from t->queue (+8) too
         N.one(cands, 'osStopThread', 'reads the thread state (+16), stops it, yields when it is the caller')
     # osSetThreadPri: dequeue + enqueue + yield, two args, writes priority via a pointer
     if eay:
@@ -373,6 +383,10 @@ def _io(N):
             if all(N.arg_w(a, io, o) for o in (4, 8, 12, 16)):
                 N.one([a], 'osEPiStartDma' if io == 1 else 'osPiStartDma',
                       'fills the OSIoMesg at arg%d and sends or jams it to the PI manager' % io)
+            elif ft.args_used >= {0, 1, 2} and N.arg_w(a, 1, 20) and N.arg_w(a, 1, 0) and \
+                    not any(N.arg_w(a, 1, o) for o in (8, 12, 16)):
+                # the caller filled the message: only its type and handle (+20) are set here (2.0L's)
+                N.one([a], 'osEPiStartDma', 'sets the type and handle of the OSIoMesg at arg1, sends or jams it')
     # the SI and PI access queues: get = recv on a global queue, rel = send to it
     for kind in ('Si', 'Pi'):
         pass
@@ -430,7 +444,8 @@ def _io(N):
                 N.one([a], 'osEepromProbe', 'asks the EEPROM its status between the SI access calls')
         for a in [x for x in si_users if x not in N.name]:
             ft = f[a]
-            if sid in ft.calls and ft.args_used >= {0, 1, 2}:
+            # (mq, address, buffer): __osContRamRead/Write take a channel too (arg 3 used)
+            if sid in ft.calls and ft.args_used >= {0, 1, 2} and 3 not in ft.args_used:
                 if any(k[0] == 2 and 'w' in v for k, v in ft.arg.items()):
                     N.one([a], 'osEepromRead', 'an EEPROM block read into *arg2')
                 else:
@@ -461,6 +476,13 @@ def _io(N):
         cands = [a for a, ft in f.items() if a not in N.name and rri in ft.calls and len(ft.calls) == 3 and
                  ft.args_used >= {0, 1}]
         N.one(cands, 'osPiReadIo', 'osPiRawReadIo between the PI access calls')
+    # osEPiReadIo / osEPiWriteIo: access, the handle's raw read or write, release
+    for raw, name in (('__osEPiRawReadIo', 'osEPiReadIo'), ('__osEPiRawWriteIo', 'osEPiWriteIo')):
+        r = N.a_(raw)
+        if r:
+            cands = [a for a, ft in f.items() if a not in N.name and r in ft.calls and len(ft.calls) == 3 and
+                     ft.args_used == {0, 1, 2}]
+            N.one(cands, name, f'{raw} between the PI access calls')
 
 
 def _packs_request(N, packs):

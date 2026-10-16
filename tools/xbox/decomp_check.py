@@ -127,6 +127,23 @@ def key_splat(ver):
         i = bisect.bisect_right(starts, r) - 1
         if i >= 0 and ranges[i][0] <= r < ranges[i][1] and ranges[i][2] + r - ranges[i][0] == v and v % 4 == 0:
             ranges[i][3].funcs.append([name, v, None])
+    # a C file of the SDK's (ultralib/libultra) with no symbol at its start:
+    # its first function is there (the symbol files leave many out)
+    have = {f[1] for k in segs for f in k.funcs}
+    for r0, r1, vram, k in ranges:
+        rowsk = next((s for s in rows if isinstance(s, dict) and s.get('start') == r0), {}).get('subsegments') or []
+        for x in rowsk:
+            if not (isinstance(x, list) and len(x) > 2 and x[1] == 'c' and isinstance(x[0], int)
+                    and 'ultra' in str(x[2])):
+                continue
+            v = vram + x[0] - r0
+            src = (root / 'src' / f'{x[2]}.c').resolve()
+            if v in have or not src.is_file():
+                continue
+            m = re.search(r'^(?!static)[A-Za-z_][\w \t*]*?\b(\w+)\s*\([^;{]*\)\s*\{', src.read_text(errors='replace'), re.M)
+            if m:
+                k.funcs.append([m.group(1), v, None])
+                have.add(v)
     for k in segs:
         k.funcs.sort(key=lambda f: f[1])
         seen = set()
@@ -328,7 +345,7 @@ def line_up(segs, a, ids):
     Where they do not, the run is reported (the analysis split or missed
     functions there). An analysis name is only confirmed when the functions
     next to it line up."""
-    funcs = a.all_funcs()
+    funcs = {k & 0xFFFFFFFF: f for k, f in a.all_funcs().items()}   # overlays' keys as their vram
     addrs = sorted(funcs)
     aname = {x: n for x, (n, _w) in ids.items()}
     notes = []
@@ -438,7 +455,7 @@ def _lis(items):
 def compare(rom_path, key_path, version='us'):
     rom = romlib.read(pathlib.Path(rom_path))
     a = analyze(rom.data)
-    ids, _N = libultra.identify(a.img, a.all_funcs())
+    ids, _N = libultra.identify(a.img, {k: f for k, f in a.all_funcs().items() if k < 1 << 32})
     lists = emit.recomp_lists(ROOT)
     replaced = lists['reimplemented_funcs'] | lists['ignored_funcs']
     nm = emit.names(a, ids)
@@ -450,7 +467,7 @@ def compare(rom_path, key_path, version='us'):
     segs = [k for k in segs if k.vram is None or k.vram < 0xA0000000]
     if kind == 'order':
         out['notes'] += line_up(segs, a, ids)
-    funcs = a.all_funcs()
+    funcs = {k & 0xFFFFFFFF: f for k, f in a.all_funcs().items()}   # overlays' keys as their vram
     # what the key says, by address (only what it pins down)
     kat = {}
     kseg_of = {}
@@ -477,6 +494,8 @@ def compare(rom_path, key_path, version='us'):
             seg_rows.append((k.name, 'missed', len(k.funcs)))
             continue
         hit = [s for s in a.img.segments if s.vram <= k.vram < s.vram + s.size]
+        if k.rom is not None:   # overlays at one vram: the one loaded from the key's ROM first
+            hit.sort(key=lambda s: s.rom + k.vram - s.vram != k.rom)
         if not hit:
             seg_rows.append((k.name, 'missed', len(k.funcs)))
         elif k.rom is not None and hit[0].rom + k.vram - hit[0].vram != k.rom:
@@ -530,7 +549,7 @@ def compare(rom_path, key_path, version='us'):
             missing.append((v, n, 'unnamed' if v in funcs else 'no function there'))
     # live set: the analysis's names against the key's
     knm = dict(nm)
-    for x in funcs:
+    for x in nm:
         if x in kat and kat[x] in replaced:
             knm[x] = kat[x]
     klive = emit.reachable(a, knm, replaced)
@@ -544,8 +563,8 @@ def compare(rom_path, key_path, version='us'):
         'libultra_right': len(right), 'libultra_wrong': [f'{x:08X} {n}: key {kn} ({w})' for x, n, kn, w in wrong],
         'libultra_missing': [f'{v:08X} {n} ({how})' for v, n, how in missing],
         'live': len(live), 'key_live': len(klive),
-        'live_extra': [f'{x:08X} {nm[x]}' for x in sorted(live - klive)],
-        'dead_but_live': [f'{x:08X} {knm[x]}' for x in sorted(klive - live)],
+        'live_extra': [f'{x & 0xFFFFFFFF:08X} {nm[x]}' for x in sorted(live - klive)],
+        'dead_but_live': [f'{x & 0xFFFFFFFF:08X} {knm[x]}' for x in sorted(klive - live)],
     })
     return out
 

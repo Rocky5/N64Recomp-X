@@ -30,6 +30,8 @@ PAIRS = [
      {'placed': 139, 'libultra_right': 66}),
     ('mk64', ['Mario Kart 64 (U) [!].v64', 'Mario Kart 64 (USA).z64'], 'mk64',
      {'placed': 3164, 'libultra_right': 66}),
+    ('snap', ['Pokemon Snap (U) [!].v64', 'Pokemon Snap (USA).z64'], 'pokemonsnap',
+     {'found': 670, 'libultra_right': 75}),
     ('drmario64', ['Dr. Mario 64 (U) [!].v64', 'Dr. Mario 64 (USA).z64'], 'drmario64/config/us',
      {'found': 262, 'libultra_right': 56}),
 ]

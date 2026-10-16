@@ -108,6 +108,10 @@ analyse, recompile, compile, link, xbe; `--run` adds what the boot reached
 a crash, a card or 30 s of beats. xemu is not hardware: a run says where
 a game stops in xemu, nothing about timing.
 
+Pokemon Snap's scenario (`tools/xbox/scenarios/snap_title`): the intro, the
+title, START and A through the menus, shots along the way (build with
+`N64RX_CFLAGS=-DXHW_AUTOPAD=1`).
+
 ## The learning loop (`docs/analyzer.md`)
 
 ```sh
@@ -207,6 +211,10 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_NO_MISSING_STUBS=1` | 0 | no weak bodies for the calls nothing provides (`gen/xrc_missing.c`, `more3.c`): such a game fails to link and the link names them |
 | `-DXRC_MISSING_FATAL=1` | 0 | the first call to such a function is the fatal card (default: `[ULTRA] missing <name>` once, returns 0) |
 | `-DXRC_SAFETY_NET=0` | 1 | a call to an address with no function is the fatal card again (no interpreting, no `[LEARN]`, no `learn.txt`) |
+| `-DXRC_OVERLAYS=0` | 1 | sections that share vram are not switched on the PI DMA that loads them (ovl.c): the section entered last keeps the address |
+| `-DXRC_HW_SHADOW=0` | 1 | no shadow pages for the RCP registers through KSEG1 (mem.c): a game's own access there faults with the crash card again |
+| `-DXRC_THREAD_RESUME=0` | 1 | osStopThread(self) parks for good, osCreateThread over a stopped thread does not restart it, osStartThread never waits for a higher priority on the same kernel level (thread.c) |
+| `N64RX_OVERLAYS=0` (env, n64rx) | unset | the analyser's old segment rule: no segment whose vram overlaps a known one, no load descriptors without a caller (segments.py) |
 | `N64RX_WITHHOLD=<vram>,...` (env, n64rx) | unset | test: those functions left out of the analysis, so the safety net runs them (the learning loop's demo) |
 | `-DXRC_SAVE_PAK=0` | 1 | no pak in any port: the PIF's status says none, pak commands get no answer, osPfs* return `PFS_ERR_NOPACK` (the old behaviour) |
 | `-DXRC_SAVE_CART=0` | 1 | no SRAM or FlashRAM: domain 2 reads zeros and drops writes, osFlash* fail |

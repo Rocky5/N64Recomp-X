@@ -79,13 +79,18 @@ def apply(a, learnt, rom_len):
     notes = []
     todo = {}
     for x in sorted(learnt.funcs):
-        seg = next((s for s in a.img.segments if s.has(x)), None)
+        d = next((d for d in reversed(learnt.dmas) if d[1] <= x < d[1] + d[2]), None)
+        # where overlays share the address, the one the newest DMA put there
+        seg = next((s for s in a.img.segments if s.has(x) and d and s.rom - s.vram == d[0] - d[1]), None) or \
+            next((s for s in a.img.segments if s.has(x) and not d), None)
         if seg is None:
-            d = next((d for d in reversed(learnt.dmas) if d[1] <= x < d[1] + d[2]), None)
             if d is None or d[0] + d[2] > rom_len:
                 notes.append(f'learnt {x:08X}: no segment and no DMA covers it (skipped)')
                 continue
-            seg = F.Segment(f'learn_{d[1]:08X}', d[0], d[1], d[2])
+            name = f'learn_{d[1]:08X}'
+            if any(s.name == name for s in a.img.segments):
+                name += f'_{d[0]:X}'
+            seg = F.Segment(name, d[0], d[1], d[2])
             a.img.segments.append(seg)
             a.funcs[seg.name] = {}
             notes.append(f'{seg.name}: ROM {d[0]:#x} at {d[1]:08X}, {d[2]:#x} bytes (learnt: a DMA the console saw)')
@@ -119,7 +124,8 @@ def withhold(a, xs):
 def extend_live(a, live, starts, nm, replaced):
     """the learnt functions are live (the console ran them), with what they call"""
     funcs = a.all_funcs()
-    todo = [x for x in starts if x in funcs]
+    bv = a.by_vram(funcs)
+    todo = [k for x in starts for k in bv.get(x, ())]   # an overlay address: each overlay's function
     before = len(live)
     while todo:
         x = todo.pop()
@@ -128,7 +134,7 @@ def extend_live(a, live, starts, nm, replaced):
         live.add(x)
         if nm.get(x) in replaced:
             continue
-        todo += [t for t in funcs[x].calls | funcs[x].tails if t in funcs and t not in live]
+        todo += [t for v in funcs[x].calls | funcs[x].tails for t in bv.get(v, ()) if t not in live]
     a.notes.append(f'learnt on the console: {len(starts)} functions, {len(live) - before} of them (with what they '
                    f'call) live only through it')
     return live

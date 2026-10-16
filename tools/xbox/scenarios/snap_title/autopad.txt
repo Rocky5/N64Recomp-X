@@ -1,0 +1,19 @@
+# Pokemon Snap from its ROM alone (overlays sharing vram, docs/analyzer.md):
+# the intro and title, START, A through the menus toward the first course
+# (Beach), shots along the way (frame events)
+300 SHOT
+600 SHOT
+900 SHOT
+1200 SHOT
+1300 START for 6
+1500 SHOT
+1600 A for 6
+1800 SHOT
+1900 A for 6
+2100 SHOT
+2200 A for 6
+2400 SHOT
+2500 A for 6
+2800 SHOT
+3200 SHOT
+3600 SHOT

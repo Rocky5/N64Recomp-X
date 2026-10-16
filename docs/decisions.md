@@ -523,3 +523,14 @@ noted every touch outside its files. Docs conflicts were merged as the
 union of both sides; code conflicts by hand, then the host tests and a
 no-game build before each merge commit, and Mario Kart 64 / Pilotwings 64
 builds after the larger ones.
+
+## Overlays keyed by ROM offset, switched on the DMA (2026-10-16)
+
+Functions of segments that share vram are named `func_<vram>_<ROM offset>`
+and keyed `vram | ROM offset << 32` in the analyser, rather than giving
+N64Recomp relocatable sections: the game's overlays are linked at fixed
+addresses, and N64Recomp already turns an ambiguous `jal` into a lookup.
+The runtime maps the overlay the last PI DMA loaded (the source ROM range
+decides, not the bytes), which is cheap (one pass over the section's
+range) and needs no hashing of RAM. KSEG1 register reads get shadow pages
+rather than per-site patches, so a ROM-only build needs no pack for them.

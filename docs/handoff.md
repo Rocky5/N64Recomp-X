@@ -14,7 +14,7 @@ The newest state first; the entries below are the record, oldest first.
 | Mario Kart 64 | the ROM alone | title, menus, races (F3DEX), sound (nead), Controller Pak, 720p 16:9 | `vmk2`/`vmk4`: races at 29.9 fps (display lists 2-3 ms), sound, the ROM inside the XBE, the BACK menu and its Paks page, EEPROM and pak files; the map screen's framebuffer effect is wrong |
 | Super Mario 64 | the ROM alone + three `--learn` rounds | head screen, Lakitu intro, castle grounds (TLB aliasing); head shading off | not tried |
 | Dr. Mario 64 | the ROM alone | links, boots, faults on PI_STATUS through KSEG1 | - |
-| Pokémon Snap | the ROM alone | does not build: overlays at one vram (agent `snap`) | - |
+| Pokémon Snap | the ROM alone | builds (overlays sharing a vram mapped by the last DMA); runs its intro (F3DEX2, FlashRAM), loads the main-menu overlay, then reads NULL+0xe under `omCreateProcess` | - |
 | the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | 143 build an XBE, 17 present frames in 45 s | - |
 
 Built and merged in the round (each with host tests and a kill switch; the
@@ -23,8 +23,8 @@ page cache (ROMs over 16 MB), the safety net and the learning loop
 (`--learn`), the graphics microcode registry with F3DEX/F3DEX2, the audio
 microcode registry with nead and `n_aspMain`, every save type (Controller
 Pak, SRAM, FlashRAM), the BACK menu's Paks page, the TLB, the V track's
-`decomp_check.py`/`test_analyze.py`, the library sweep. Agents still running
-when this was written: `snap` (overlays sharing a vram), `fbfx`
+`decomp_check.py`/`test_analyze.py`, the library sweep. Merged since: `snap` (overlays sharing a vram, below). Agents still running
+when this was written: `fbfx`
 (framebuffer effects), `mmio` (the RCP registers and RDRAM through KSEG1).
 
 **Open, in the order they block the most games** (counts from the sweep):
@@ -653,3 +653,14 @@ ThinLTO release builds from the ROM alone, the ROM inside `default.xbe`, in
   unconfirmed. MK64 rewrites `nkte.mpk` at every boot (probably the game
   repairing the pak ID it reads); the menu's card texture is rebuilt every
   frame it shows (the `[NV2A]` texture counter inflates).
+### Pokémon Snap from its ROM alone, overlays sharing a vram (agent `snap`, 2026-10-16)
+
+Verified: `test_analyze.py` (6 pairs with Snap: 0 wrong libultra names, floors held); `test_n64rx.py`, `test_interp.py` pass;
+Snap builds (`--fast`), 32 segments, 3793 functions recompiled; in xemu
+(slot 14, emulator only) its intro scene runs (F3DEX2 identified, aspMain
+audio, FlashRAM 1 Mbit save found), the overlay switch to the main menu
+works (`[OVL] 800e18a0: ROM a08e30 mapped`), then it faults reading NULL+0xe
+in func_80007F24 under omCreateProcess (main menu's func_800E4AF8: its
+omAddGObj seems to return NULL). MK64 ROM-only and PW64 (its pack) build and draw in xemu, no fault, no stall.
+Not verified: SM64 boot after these changes, real hardware, the
+title screen and Beach. `[MEM]`/`[CLOCK]`: xemu 64 MB, 733 MHz (not hardware).
