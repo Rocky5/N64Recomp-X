@@ -121,3 +121,37 @@ Windows 11 + MSYS2 (clang 21.1.8), nxdk `58427c0`, N64Recomp `ffb39cd`; xemu
 word; PI device addresses are cartridge offsets; synchronous tasks' done
 events go to the front of their queue; `_uvScDlistRecover`'s SP_STATUS
 store is a pack instruction patch.
+
+## M2 (in progress): Pilotwings 64 complete on the recompiled path (2026-10-16, branch `dev`)
+
+### The first console run (red, build `vnrx1`, commit `6ad6148`)
+
+ThinLTO test build (`-DXHW_TEST_BUILD=1`), XBE SHA-1 `f523245693c2`, in
+`F:\Applications\N64Recomp-X-PW64\`, title ID `4E520001` (apart from
+Wings64-X's folder and `57580001`, untouched). Red: 480i composite
+dashboard (AV pack 1, no HD flags), one Duke on port 1.
+
+**Verified (console)**
+
+- The maintainer flew it: "works flawlessly ... even better than the native
+  port". Sound on the AC97 (`[AUDIO] AC97 polled, 22047 Hz in -> 48 kHz`;
+  the resampler table found at data+0c0; 0 bad addresses, 0 unknown
+  commands; 6 AI underruns in 135 s, 0 dropped).
+- `[MEM] boot: 65536 KB of RAM, nothing to hold (64 MB console)`, `[CLOCK]
+  cpu 733 MHz (TSC against the ACPI timer, 3375000 Hz)`; 26 MB free after
+  pbkit; `[RECOMP] code: 783 KB of MIPS -> about 1783 KB of x86 (x2.2)`.
+- `[PERF]` 53-59 fps presented, 16.9-18.8 ms a frame, display lists
+  2.4-6.7 ms, audio 0.7-1.1 ms a frame (646-1079 us a task), the rest idle;
+  7306 frames presented in 7658 retraces.
+- The loading screen at 11 ms a frame.
+- EEPROM: the first boot found none (`blank EEPROM`), the game wrote
+  `pw64.eep` three times; the next boot read it (`2048 bytes`) and the
+  maintainer's progress was there. The image (466 bytes not 0xFF) is kept
+  outside the tree (`C:\xemu\hw\saves\nrx1-pw64.eep`).
+- The BACK menu over the game (Texture filter changed at once, saved on
+  close, `settings.ini` read back); L + R + BACK + BLACK quit to the
+  dashboard both times, named by the next boot and `lastexit.txt`.
+
+**Not verified yet**: 720p and widescreen on the console (red's dashboard
+is 480i only: needs an HD AV pack), a save moved to or from Wings64-X
+(same byte order by construction), the 30-minute soak.
