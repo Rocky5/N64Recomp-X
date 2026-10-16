@@ -51,6 +51,7 @@ Zelda64Recomp: `us.rev1.toml`, `patches.toml`, `patches/Makefile`.
 | Maintainer requirement (2026-10-16) | **up to 720p, and widescreen, for every game** (§5.4) | this session |
 | Maintainer requirement (2026-10-16) | **a BACK-button menu over the running game that controls the port's settings, game-agnostic** (§5.2) | this session |
 | Maintainer requirement (2026-10-16) | **a loading screen worth looking at, in the line of the siblings' "TechProGabe Presents..." splash, with safe 480i fallbacks** (§5.5) | this session |
+| Maintainer requirement (2026-10-16) | **`L + R + BACK + BLACK` returns to the dashboard in every game** (and `L + R + BACK + WHITE` restarts), in every state, with no per-game work (§3.9) | this session |
 | The sibling splash | `xhw_splash.c` (166 lines, Melee-X's, from OpenCrossing's `xbox_splash.c`): CPU-drawn into the `XVideoSetMode(640, 480, 32)` framebuffer before pbkit, so it shows on any TV; unscii-16 at 3x; navy gradient `rgb(14, 22, 52)` → `rgb(6, 10, 28)`; fade-in 17 steps / ~500 ms; a 400x8 bar in `rgb(120, 200, 110)`; "Hold BACK for 480i (safe video)"; 2 s hold, any button skips; `xhw_splash_progress`, `xhw_splash_release` before the mode change; no `XVideoWaitForVBlank` (`pb_init` fails with -4 after it); `-DXHW_NO_SPLASH`, `-DXHW_SPLASH_MS`, `-DXHW_SPLASH_DUMP` | Wings64-X `xbox/src/hw/xhw_splash.c` |
 
 ---
@@ -138,6 +139,7 @@ The headline facts that shape everything else:
 | the tool must be easy on three OSes | Docker image first (identical everywhere, Apple Silicon included through a multi-arch image), native toolchains second, a `doctor` command, per-OS single-file binaries of the CLI, a tri-OS CI matrix (§5.1, §6 M0, M7) |
 | 720p, widescreen and a BACK menu are goals for every game, not per-game features | the video rules, the 16:9 mapping and the settings menu live in the platform layer and the interpreter; the only per-game piece is the culling fix that stops edge pop-in with hor+ (§5.2, §5.4); 1080i is not offered |
 | the loading screen is part of the product | built on `xhw_splash.c`, CPU-drawn in the dashboard's mode so it shows on any TV: the family's wordmark and palette, an animated background, the game card, real stage progress, a video line that says which mode is coming and how to hold BACK for 480i, a bridge frame across the mode switch, and four ways back to a picture (§5.5) |
+| the exit combos belong to the platform, not the game | `L + R + BACK + BLACK` (dashboard) and `L + R + BACK + WHITE` (restart) are read from the raw pad state before any N64 mapping, at the game's reads, from the VI thread when the game stops reading and from the watchdog as the last resort, so they work in every game and every state and no pack can lose them (§3.9) |
 
 ---
 
@@ -527,11 +529,45 @@ four, like the N64; Smash and Mario Kart need all four). Wings64-X's default
 layout by position (left stick → stick with the radial dead-zone row; A → A,
 X → B, Y/B/White/Black and the right stick → C buttons, triggers → Z and R,
 L unbound), remappable per port in `settings.ini` and in the panel's Buttons
-page; rumble through the Rumble Pak emulation; `L + R + BACK + BLACK` quits,
-`L + R + BACK + WHITE` restarts, in every state (the VI thread checks when
-the game stops reading). BACK opens the port's settings menu (§5.2). A pack can ship
+page; rumble through the Rumble Pak emulation; the exit combos below. BACK opens the port's settings menu (§5.2). A pack can ship
 its own default layout (`[input] layout = ...`) for games whose buttons mean
 something else.
+
+**The exit combos, in every game** (maintainer 2026-10-16): **`L + R + BACK +
+BLACK` returns to the dashboard and `L + R + BACK + WHITE` restarts the XBE,
+on any port, in every state, in every pack, with no per-game work.**
+Wings64-X's mechanics, made a rule:
+
+- **Detected on the raw Xbox state, before any N64 mapping**: a remapped
+  layout cannot hide the combo and the Buttons page cannot assign it away.
+  Both triggers past 200 of 255 plus BACK and BLACK (or WHITE) fire at once
+  (no hold time, as Melee-X), once per press; the game sees neutral input on
+  that read.
+- **Three detection points cover every state**: (1) every controller read
+  the game makes (`osContStartReadData`/`osContGetReadData`); (2) the VI
+  thread, when the game has not read for 30 retraces (a stalled game, a
+  cutscene that does not poll, the BACK menu, the loading screen's hold);
+  (3) the watchdog's one-second tick as the last resort when the VI thread
+  itself is stuck (`-DXRC_COMBO_WATCHDOG=1`, default on). The three share one
+  try-acquire flag so SDL is never entered from two threads at once
+  (Wings64-X's `WX_PAD_COMBO_WATCH`). The loading screen and the error cards
+  honour the same combo.
+- **What happens**: `[PAD] port N: L + R + BACK + BLACK` is logged,
+  `lastexit.txt` is written ("quit to the dashboard: L + R + BACK + BLACK on
+  port N", or "restart: ..."), the action runs 200 ms later once the
+  controllers are free (`act()`): the audio is stopped, `xhw_pad_shutdown`
+  releases the controllers, then `xhw_quit_to_dashboard` (`XLaunchXBE(NULL)`)
+  or `xhw_reboot_self`. A dirty save image is flushed first (the save
+  writer's flush is awaited, bounded to one second), so a quit never loses a
+  save the game thought it had written.
+- **Nothing in a pack can turn it off**: there is no `game.toml` key for it;
+  `-DXRC_COMBOS=0` exists for diagnosis builds only. The BACK menu's "Exit to
+  dashboard" and "Restart" rows do the same thing by menu; the combo is the
+  way that needs no picture.
+- Host test `test_pad_combo.py` feeds synthetic pad states through the
+  detector: fires once per press, never on a partial combo or with a trigger
+  under 200, identically with a remapped layout, and on the VI path when
+  reads stop.
 
 ### 3.10 Memory budget (64 MB, enforced)
 
@@ -743,6 +779,7 @@ stay out of the tree (Wings64-X's rule).
 | `test_cc.py`, `test_texconv.py`, `test_asp_hle.py` | Wings64-X's, with the word-swapped memory model |
 | `test_vu.py` | the scalar/MMX vector unit vs Ares's scalar reference per instruction (M4/M8) |
 | `test_settings.py` | `settings.ini` round trip per game |
+| `test_pad_combo.py` | the exit-combo detector (§3.9): once per press, never partial, remap-proof, the VI path when reads stop |
 | `test_n64rx.py` | the CLI on a synthetic ROM and a fake pack: detection, messages, cache keys, output folder layout, `doctor` on a machine without Docker |
 | `rom_leak_check.py` | the tree |
 
@@ -833,7 +870,7 @@ something else. Rows:
 | Save slot | 1-4 (the image file swapped at boot) | `*` | `[save] slot` |
 | Screenshots (BACK+WHITE) | On, Off; test builds | at once | `[system] screenshots` |
 | Restart | relaunches the XBE (`xhw_reboot_self`); also the "Save and restart" of a changed `*` row | | |
-| Exit to dashboard | writes `lastexit.txt`, quits (`xhw_quit_to_dashboard`) | | |
+| Exit to dashboard | writes `lastexit.txt`, quits (`xhw_quit_to_dashboard`); `L + R + BACK + BLACK` does the same from anywhere, menu or no menu (§3.9) | | |
 | Return | saves `settings.ini` when something changed (B too) | | |
 
 Stored per game in `E:\UDATA\<title id>\settings.ini` (Melee-X `settings.c`:
@@ -972,6 +1009,8 @@ The error cards (no ROM, wrong size, bad header, not a supported game, bad
 dump with both hashes shown, E: not writable) are drawn in the same dress by
 `xhw_error_card` with "Press any button or wait to return to the dashboard"
 (30 s), and `lastexit.txt` names the reason for the next boot's log.
+`L + R + BACK + BLACK` works on the loading screen and the cards as it does
+in the game (§3.9).
 
 Kill switches: `-DXHW_NO_SPLASH` (straight to the mode switch), `-DXHW_SPLASH_MS=<n>`,
 `-DXHW_SPLASH_STILL=1`, `-DXHW_SPLASH_BRIDGE=0`, `-DXHW_SPLASH_DUMP`. Host
@@ -1014,7 +1053,10 @@ through `console.py`/`n64rx deploy`, logs pulled before every relaunch.
   engine and the native one; xemu boots the loading screen and the card
   (`[FBDUMP]` shots with `-DXHW_SPLASH_STILL=1`, kept as the look's
   baseline), BACK and BACK + START during it take effect (`[SETTINGS]`
-  lines); `test_splash.py` passes; CI is green; the image is on GHCR.
+  lines), `L + R + BACK + BLACK` on the card returns to the dashboard and
+  the next boot logs `previous exit: quit to the dashboard: L + R + BACK +
+  BLACK`; `test_splash.py` and `test_pad_combo.py` pass; CI is green; the
+  image is on GHCR.
 
 ### M1: the runtime core on Pilotwings 64: first frame
 - **Goal**: the PW64 pack (`pw64.us.syms.toml` from the decomp ELF via
@@ -1051,7 +1093,10 @@ through `console.py`/`n64rx deploy`, logs pulled before every relaunch.
   the Pilotwings 64 card with real stage progress and the bridge carries it
   across the 720p switch with no black frame; BACK opens and closes the
   menu in flight with the game frozen underneath and silent, and a row
-  changed in it is in `settings.ini` after Return; 720p shots show more world
+  changed in it is in `settings.ini` after Return; `L + R + BACK + BLACK`
+  from flight, from the BACK menu and during the loading screen quits to
+  the dashboard and `L + R + BACK + WHITE` restarts, each logged and named
+  by the next boot's `[BOOT] previous exit`; 720p shots show more world
   at the sides with the HUD box undistorted, Off shows the centred 4:3 box;
   console: the maintainer flies a mission with sound at 720p; a 30-minute
   soak logs no underrun, crash or hang.
@@ -1212,7 +1257,9 @@ Linux with one command (§5.1); up to 720p and widescreen for every game, 1080i
 not offered (§5.4); the BACK menu is the port's settings UI in every game,
 game-agnostic, and a game-style menu a pack adds later is an addition, not a
 replacement (§5.2); the loading screen is built on the siblings' splash with
-the four ways back to a picture (§5.5).
+the four ways back to a picture (§5.5); `L + R + BACK + BLACK` returns to the
+dashboard and `L + R + BACK + WHITE` restarts in every game and every state,
+and no pack can disable them (§3.9).
 
 ---
 
@@ -1273,7 +1320,11 @@ Paste this to start the build, and again after every context reset.
 > for every pack (§5.4) and the port's settings are the game-agnostic BACK
 > menu drawn by the platform over the frozen game (§5.2): both live in the
 > platform layer and the interpreter, never in per-game code, with only the
-> culling fix per game; 1080i is not offered. Port code is MIT.
+> culling fix per game; 1080i is not offered. `L + R + BACK + BLACK`
+> (dashboard) and `L + R + BACK + WHITE` (restart) work on any port in every
+> state in every pack, read from the raw pad state before any mapping at the
+> game's reads, from the VI thread and from the watchdog; no pack may
+> disable them (§3.9). Port code is MIT.
 >
 > xemu is for crashes and pictures only; timing, audio, memory headroom,
 > HDD latency and GPU ordering are judged on a real Xbox, and you say when a

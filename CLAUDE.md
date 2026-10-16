@@ -59,6 +59,11 @@ evidence. Read both before writing code.
   §5.2): drawn by the platform over the frozen game, game-agnostic, never
   dependent on a per-game patch; a game-style menu a pack adds later is an
   addition, not a replacement.
+- **`L + R + BACK + BLACK` returns to the dashboard and `L + R + BACK +
+  WHITE` restarts, in every game, in every state** (`docs/PLAN.md` §3.9):
+  detected on the raw pad state before any N64 mapping, at the game's reads,
+  from the VI thread and from the watchdog; a dirty save is flushed first;
+  no pack can disable it.
 - **xemu is not hardware.** Timing, audio, memory pressure, HDD latency and
   GPU ordering are judged on a real Xbox; say when a result is emulator-only.
 - **Branches:** work on `dev`; `main` is for releases. Subagents do not run
