@@ -15,7 +15,7 @@ import time
 from . import ROOT, VERSION, N64rxError, engines, packs, romonly, rom as romlib, saves
 from . import learn as learnmod
 
-GEN_VERSION = 5   # bump when what n64rx writes into gen/ changes (the cache key)
+GEN_VERSION = 6   # bump when what n64rx writes into gen/ changes (the cache key)
 VIDEO = {'auto': 0, '480': 2, '720': 3}
 EEPROM = {'eep4k': 512, 'eep16k': 2048}
 FATX_BAD = '<>:"/\\|?*'
@@ -200,6 +200,28 @@ def write_recomp_config(pack, rom_file, gen, cfg_dir):
 ZERO_DEST = re.compile(r'^(\s*)0 = (.+);$', re.M)
 
 
+ADDEND = re.compile(r'^(\s*)gpr (jr_addend_[0-9A-Fa-f]+) = 0;$')
+
+
+def _dedupe_addends(text):
+    """the pinned generator writes a jump table's addend declaration with the
+    instruction that sets it; when that instruction is a jal's delay slot it
+    is written twice ("redefinition of jr_addend_..."): within a function the
+    later ones become assignments"""
+    out, seen, k = [], set(), 0
+    for line in text.split('\n'):
+        if line.startswith('RECOMP_FUNC '):
+            seen = set()
+        m = ADDEND.match(line)
+        if m:
+            if m.group(2) in seen:
+                line = f'{m.group(1)}{m.group(2)} = 0;'
+                k += 1
+            seen.add(m.group(2))
+        out.append(line)
+    return '\n'.join(out), k
+
+
 def fix_zero_dest(gen):
     """a load into $zero (lw $zero, 0($a0): a read for its side effect or a
     probe) comes out of the recompiler as "0 = MEM_W(...);", which C
@@ -208,9 +230,10 @@ def fix_zero_dest(gen):
     for c in gen.glob('funcs_*.c'):
         text = c.read_text(encoding='utf-8', errors='replace')
         new, k = ZERO_DEST.subn(r'\1(void)(\2);', text)
-        if k:
+        new, k2 = _dedupe_addends(new)   # and a jump table's addend declared twice
+        if k or k2:
             c.write_text(new, encoding='utf-8', newline='\n')
-            n += k
+            n += k + k2
     return n
 
 

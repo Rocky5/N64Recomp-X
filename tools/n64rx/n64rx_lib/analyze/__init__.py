@@ -69,11 +69,11 @@ def analyze(rom, extra_segments=()):
     """rom: the whole ROM in z64 order. extra_segments: Segments learnt from
     earlier runs (the learning loop)."""
     entry = int.from_bytes(rom[8:12], 'big')
+    t = F.tlb_entry(rom, entry)   # first: its BSS clear and call to the TLB writer look like main otherwise
+    if t:
+        return _analyze_tlb(rom, entry, t, extra_segments)
     e = F.parse_entry(rom, entry)
     if not e:
-        t = F.tlb_entry(rom, entry)
-        if t:
-            return _analyze_tlb(rom, entry, t, extra_segments)
         raise AnalysisError(f'the entry code at {entry:08X} is not the SDK\'s (no BSS clear and jump to main)')
     # the 6103 and 6106 boot chips' IPL3 loads 1 or 2 MB below the header's
     # entrypoint: the entry code's own addresses (the BSS, main) say where it runs

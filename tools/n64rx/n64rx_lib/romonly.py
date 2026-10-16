@@ -49,6 +49,7 @@ def make(rom, bdir, base=None, learnt=None):
     # libultra is linked into the boot segment and its like, never into an
     # overlay: the overlays' functions (keys past 32 bits) are not named
     ids, _N = libultra.identify(a.img, {k: f for k, f in a.all_funcs().items() if k < 1 << 32})
+    ids.pop(a.entry, None)   # the entry code is the game's own, whatever it looks like (South Park's clears the TLB)
     lists = emit.recomp_lists(ROOT)
     replaced = lists['reimplemented_funcs'] | lists['ignored_funcs']
     nm = emit.names(a, ids)
