@@ -30,4 +30,21 @@ void ref_interleave(int16_t* out, const int16_t* l, const int16_t* r, int n);
 /* Order-2 lowpass (A_POLEF): table = h1[8], h2[8]; y[0], y[1] = y[-2], y[-1], updated. */
 void ref_polef(const int16_t table[16], int16_t gain, const int16_t* x, int n, int16_t y[2], int16_t* out);
 
+/* nead: 2-bit VADPCM (5-byte frames, scale capped at 14), otherwise as ref_adpcm. */
+void ref_adpcm2(const int16_t book[128], const uint8_t* frames, int nframes, int16_t hist[16], int16_t* out);
+
+/* nead ENVMIXER over n samples (a multiple of 8): levels env[3] (dry left,
+ * dry right, wet; unsigned Q16) step by step[3] after every 8 samples; neg[4]
+ * inverts dry left, dry right, wet left, wet right; out[4] = the four sends
+ * (dry L, dry R, wet L, wet R), accumulated. */
+void ref_envmix_nead(const int16_t* in, int n, uint16_t env[3], const uint16_t step[3], const int neg[4],
+                     int16_t* const out[4]);
+
+/* n_aspMain's linear ENVMIXER over n samples: value/step/target per channel (Q16.16). */
+typedef struct {
+    int64_t value[2], step[2], target[2];
+    int16_t dry, wet;
+} RefLin;
+void ref_envmix_lin(const int16_t* in, int n, RefLin* e, int16_t* const out[4]);
+
 #endif

@@ -1,4 +1,4 @@
-/* asp_hle.h - the RSP audio microcode (aspMain, classic libultra ABI) in C.
+/* asp_hle.h - the RSP audio microcodes (aspMain, the nead family, n_aspMain) in C.
  *
  * PLAN.md D6 / M6. Design, byte order of every buffer and the DIVERGES list
  * are in asp_hle.c's top comment. Plain C, no nxdk or kernel calls: the same
@@ -37,12 +37,42 @@ int asp_hle_set_resample_lut(const int16_t lut[256]);
 int asp_hle_set_resample_lut_be(const uint8_t be[512]);
 int asp_hle_resample_lut_valid(const int16_t lut[256]);
 
-/* Back to power-on: DMEM cleared, the linear resampler table, counters zeroed. */
+/* The microcode registry (PLAN.md 3.8). Every audio microcode's data
+ * segment holds its command jump table (one 16-bit IMEM address per opcode)
+ * right before the ADPCM nibble masks f000 0f00 00f0 000f; where the table
+ * sits, how long it is and which opcodes point at the SPNOOP handler say
+ * which ABI the command lists use (asp_hle.c, "Registry"). No microcode's
+ * bytes or hash are stored: the rules are about the table's shape. */
+enum {
+    ASP_ABI_UNKNOWN = 0,   /* not recognised: asp_hle_run does nothing (the caller plays silence) */
+    ASP_ABI_AUDIO,         /* aspMain, the classic libultra ABI (ABI1): the default */
+    ASP_ABI_NEAD,          /* the Nintendo EAD family (SM64 EU, Mario Kart 64, Star Fox 64, Zelda) */
+    ASP_ABI_NAUDIO         /* n_aspMain, libultra's n_audio (Paper Mario, Smash Bros.) */
+};
+#define ASP_NEAD_MK 1u          /* the first nead: no wet ramp, ENVMIXER without the wet negation and swap */
+#define ASP_NEAD_OLD_INTERL 2u  /* A_INTERLEAVE takes SETBUFF's out and count; opcode 14 is POLEF */
+#define ASP_NEAD_SHORT 4u       /* the 24-entry table: 7 FILTER, 9 DUPLICATE, 14 HILOGAIN */
+typedef struct {
+    uint32_t abi;          /* ASP_ABI_* */
+    uint32_t flags;        /* ASP_NEAD_* */
+    uint32_t present;      /* bit n: opcode n has its own handler (not SPNOOP's) */
+    uint32_t entries;      /* jump table length; 0 = not found */
+} asp_ucode_t;
+
+/* Identifies a microcode from the first `n` bytes of its data segment (N64
+ * byte order; 0x60 suffice) and returns u->abi. With -DASP_HLE_NEAD=0 or
+ * -DASP_HLE_NAUDIO=0 that family reads as unknown (the kill switches). */
+uint32_t asp_hle_identify(const uint8_t* data_be, uint32_t n, asp_ucode_t* u);
+/* The ABI asp_hle_run decodes from now on (reset: aspMain, all opcodes). */
+void asp_hle_set_ucode(const asp_ucode_t* u);
+const char* asp_hle_abi_name(uint32_t abi);
+
+/* Back to power-on: DMEM cleared, the linear resampler table, counters zeroed, aspMain. */
 void asp_hle_reset(void);
 
 typedef struct {
     uint32_t tasks;       /* asp_hle_run calls */
-    uint32_t cmds[17];    /* commands by opcode; [16] = unknown opcodes (ignored) */
+    uint32_t cmds[33];    /* commands by opcode; [32] = unknown or unimplemented opcodes (ignored) */
     uint32_t bad_addr;    /* transfers skipped: the callback returned NULL */
     uint32_t rom_lut;     /* 1: the ROM's resampler table is installed */
 } asp_hle_stats_t;

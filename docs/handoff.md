@@ -182,11 +182,61 @@ is 480i only: needs an HD AV pack), a save moved to or from Wings64-X
 **Not verified / gaps**
 
 - Mario Kart 64 past its title: races use F3DEX (the interpreter is Fast3D
-  only: M4); its audio microcode is not identified (silent); no Controller
-  Pak; the console run.
+  only: M4); no Controller Pak; the console run. (Its sound: see the audio
+  registry below.)
 - The learning loop for code loaded with computed addresses (PLAN.md 3.14
   step 5) is not built.
 - The analyser has no host test yet: `test_analyze.py` (synthetic MIPS
   fixtures) and `decomp_check.py` are the V track's first files.
 - Decided, to build: the ROM inside the XBE (`$ROM`, PLAN.md §3.5); the
   output folder still holds the ROM next to `default.xbe`.
+
+### The audio microcode registry (2026-10-16, branch `agent/audio`)
+
+**Why Mario Kart 64 was silent:** its synthesizer (SM64 EU's, "nead")
+speaks another audio ABI (`A_ENVMIXER` 19, `A_LOADBUFF` 20, ...); every
+command fell into asp_hle's unknown slot (xemu: 36604 unknown commands in
+10 s, peak 0). Also the first AI buffer came before the first task, so the
+microcode was never logged and its resampler table never searched.
+
+**Verified**
+
+- Host: `test_asp_hle.py`, 14 builds (MMX, scalar, -O0, the pertap
+  variant, word-swapped, 32-bit pentium3 gcc) pass 42845 checks: the
+  registry on synthetic tables; every nead command (DMA with its own
+  offsets, the Q16 envelope with and without the first nead's limits,
+  MIXER / ADDMIXER, both INTERLEAVEs, DMEMMOVE2, DOWNSAMPLE_HALF, FILTER,
+  DUPLICATE, HILOGAIN, RESAMPLE_ZOH, 2-bit and 4-bit ADPCM, RESAMPLE) and
+  `n_aspMain`'s (the fixed buffers, the linear envelope over three calls
+  through its RAM state, ADPCM, RESAMPLE into N_MAIN2) against
+  `asp_ref.c`; `hash2` / `rhash2` the same in every build and layout.
+  aspMain's workload hash is unchanged (`8cb5eefe`).
+- The registry's rules against the maintainer's ROMs (a host scan, not in
+  the tree): Pilotwings 64, SM64 US, Pokemon Snap: aspMain; Mario Kart 64:
+  nead, 32 entries, no ADDMIXER (the first nead); Ocarina of Time (its
+  `code` file, Yaz0-decompressed by the scan): nead, 24 entries; Paper
+  Mario, Smash Bros.: `n_aspMain`.
+- xemu (not hardware), Mario Kart 64 from its ROM alone: `nead (32-entry
+  table at data+10, opcodes 007ffda7, flags 3)`, the resampler table found
+  at data+100, 0 unknown commands, peak 28316; 3 s from second 20 (title
+  and attract): RMS 4360, L/R correlation 0.71, 98 % of the energy below
+  4 kHz (white noise ~30 %). Pilotwings 64 (pack): still aspMain, RMS
+  2979, 98 %.
+
+**Not verified / gaps**
+
+- SM64 US (aspMain), Paper Mario and Smash Bros. (`n_aspMain`) could not
+  be run: SM64's ROM-only build stops after N64Recomp (`gen/funcs.h`
+  missing), Paper Mario's and Smash Bros.'s analysis refuses the boot
+  segment. `n_aspMain` is host-tested only.
+- Not implemented (counted as unknown, skipped): S8DEC and UNK_25 (SM64
+  Shindou), `n_aspMain`'s opcode-14 filters (Donkey Kong 64, Conker),
+  MusyX and the MP3 microcode. nead's FILTER (the Zelda microcode's note
+  filter) is host-tested only; it leaves the game's table alone where an
+  emulator writes the averaged taps back to it.
+- The nead and `n_aspMain` envelopes are scalar C (no MMX path yet); the
+  cost on the P3 is unmeasured ([PERF] audio on the console; xemu's 300 to
+  1200 us per task is not a number). The exact rounding of the nead
+  envelope and the MIXER follows emulator behaviour and the aspMain
+  oracle, not a disassembly of the nead microcode.
+- The console run.

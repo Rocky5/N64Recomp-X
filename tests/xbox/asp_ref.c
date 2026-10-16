@@ -155,3 +155,80 @@ void ref_polef(const int16_t table[16], int16_t gain, const int16_t* x, int n, i
         y[1] = yy[7];
     }
 }
+
+void ref_adpcm2(const int16_t book[128], const uint8_t* frames, int nframes, int16_t hist[16], int16_t* out)
+{
+    int64_t y2 = hist[14], y1 = hist[15];
+    int f, v, k, m;
+    for (f = 0; f < nframes; f++) {
+        const uint8_t* fr = frames + 5 * f;
+        int scale = fr[0] / 16, pred = fr[0] % 16;
+        if (scale > 14) scale = 14;
+        if (pred > 7) pred = 7;
+        for (v = 0; v < 2; v++) {
+            int64_t e[8], y[8];
+            const int16_t* row0 = book + 16 * pred;
+            const int16_t* row1 = book + 16 * pred + 8;
+            for (k = 0; k < 8; k++) {
+                int byte = fr[1 + 2 * v + k / 4];
+                int code = (byte / (1 << (6 - 2 * (k % 4)))) % 4;   /* 2 bits, high first */
+                if (code >= 2) code -= 4;
+                e[k] = (int64_t)code * ((int64_t)1 << scale);
+            }
+            for (k = 0; k < 8; k++) {
+                int64_t acc = row0[k] * y2 + row1[k] * y1 + 2048 * e[k];
+                for (m = 0; m < k; m++) acc += row1[k - 1 - m] * e[m];
+                y[k] = clamp16(fdiv(acc, 2048));
+                out[16 * f + 8 * v + k] = (int16_t)y[k];
+            }
+            y2 = y[6];
+            y1 = y[7];
+        }
+    }
+    if (nframes)
+        for (k = 0; k < 16; k++) hist[k] = out[16 * (nframes - 1) + k];
+}
+
+/* 16-bit two's complement wrap, then bit inversion when asked (~x = -x - 1) */
+static int64_t wrap16(int64_t v) { return (int64_t)(int16_t)(uint16_t)(v & 0xFFFF); }
+
+void ref_envmix_nead(const int16_t* in, int n, uint16_t env[3], const uint16_t step[3], const int neg[4],
+                     int16_t* const out[4])
+{
+    int i, c;
+    for (i = 0; i < n; i++) {
+        int64_t d[2], w[2], v[4];
+        d[0] = fdiv((int64_t)in[i] * env[0], 65536);
+        d[1] = fdiv((int64_t)in[i] * env[1], 65536);
+        if (neg[0]) d[0] = -d[0] - 1;
+        if (neg[1]) d[1] = -d[1] - 1;
+        d[0] = wrap16(d[0]), d[1] = wrap16(d[1]);
+        w[0] = fdiv(d[0] * env[2], 65536);
+        w[1] = fdiv(d[1] * env[2], 65536);
+        if (neg[2]) w[0] = -w[0] - 1;
+        if (neg[3]) w[1] = -w[1] - 1;
+        v[0] = d[0], v[1] = d[1], v[2] = wrap16(w[0]), v[3] = wrap16(w[1]);
+        for (c = 0; c < 4; c++) out[c][i] = clamp16(out[c][i] + v[c]);
+        if (i % 8 == 7)
+            for (c = 0; c < 3; c++) env[c] = (uint16_t)((env[c] + step[c]) & 0xFFFF);
+    }
+}
+
+void ref_envmix_lin(const int16_t* in, int n, RefLin* e, int16_t* const out[4])
+{
+    int i, c;
+    for (i = 0; i < n; i++) {
+        int64_t vol[2], g[4];
+        for (c = 0; c < 2; c++) {
+            e->value[c] += e->step[c];
+            if ((e->step[c] <= 0 && e->value[c] <= e->target[c]) || (e->step[c] > 0 && e->value[c] >= e->target[c]))
+                e->value[c] = e->target[c], e->step[c] = 0;
+            vol[c] = wrap16(fdiv(e->value[c], 65536));
+        }
+        g[0] = clamp16(vmulf(vol[0], e->dry));
+        g[1] = clamp16(vmulf(vol[1], e->dry));
+        g[2] = clamp16(vmulf(vol[0], e->wet));
+        g[3] = clamp16(vmulf(vol[1], e->wet));
+        for (c = 0; c < 4; c++) out[c][i] = clamp16(out[c][i] + vmulf(in[i], g[c]));
+    }
+}

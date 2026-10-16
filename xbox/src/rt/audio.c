@@ -18,10 +18,15 @@
  * no table found the linear fallback plays (asp_hle.c DIVERGES) and the
  * boot log says so.
  *
- * The microcode is not identified yet: every audio task is taken for the
- * stock aspMain ABI and its text's hash is logged, for the registry M4 adds
- * (PLAN.md 3.8). Kill switch -DXRC_AUDIO=0: the lists are counted and
- * dropped, silent. Test builds with -DXRC_AUDIO_DUMP=<s> log 3 s of the
+ * The first task names the microcode (PLAN.md 3.8's registry): its data
+ * segment's command jump table, read in N64 order, goes to
+ * asp_hle_identify, which tells aspMain (ABI1), the nead family (Mario
+ * Kart 64, SM64 EU, Zelda) and n_aspMain (Paper Mario) apart by the
+ * table's shape; asp_hle runs that ABI from then on. A microcode it does not
+ * know is logged and plays silence: its tasks are dropped and the AI
+ * buffers reach the AC97 as zeros (the virtual DAC still paces the game).
+ * Kill switch -DXRC_AUDIO=0: the lists are counted and dropped, silent;
+ * -DASP_HLE_NEAD=0 / -DASP_HLE_NAUDIO=0 silence one family. Test builds with -DXRC_AUDIO_DUMP=<s> log 3 s of the
  * output from second <s> as [AUDDUMP] lines (tools/xbox/auddump_to_wav.py;
  * the WAV is the game's sound: never in the tree). */
 #include "../hw/asp_hle.h"
@@ -39,7 +44,7 @@
 uint32_t xu_ai_underruns(void);
 
 static uint32_t s_rate = 22050;
-static int s_up, s_on;
+static int s_up, s_on, s_id, s_silent;
 static unsigned s_tasks, s_buffers, s_tasks_iv, s_peak;
 static uint64_t s_frames_in, s_frames_dropped, s_task_us, s_stats_t0;
 
@@ -69,25 +74,39 @@ static int find_lut(uint32_t task, uint32_t* where) {
     return 0;
 }
 
-static void audio_up(uint32_t task) {
-    uint32_t lut_off = 0;
-    int lut_ok = 0;
+static void audio_up(void) {
     if (s_up) return;
     s_up = 1;
-    if (task) {
-        lut_ok = find_lut(task, &lut_off);
-        xhw_logf("[AUDIO] microcode %08x (%u bytes, text hash %08x), data %08x (%u bytes): taken as aspMain",
-                 (unsigned)rd32(task + TK_UCODE), (unsigned)rd32(task + TK_UCODE_SIZE),
-                 (unsigned)fnv_words(rd32(task + TK_UCODE), rd32(task + TK_UCODE_SIZE) ? rd32(task + TK_UCODE_SIZE) : 0x1000u),
-                 (unsigned)rd32(task + TK_UCODE_DATA), (unsigned)rd32(task + TK_UCODE_DATA_SIZE));
-    }
     s_on = xhw_audio_init(s_rate);
-    if (lut_ok)
-        xhw_logf("[AUDIO] RSP audio HLE: resampler table at data+%03x; output %s at %u Hz", (unsigned)lut_off,
-                 s_on ? "on" : "OFF (silent)", (unsigned)s_rate);
-    else
-        xhw_logf("[AUDIO] RSP audio HLE: no resampler table in the microcode data (linear fallback); output %s at %u Hz",
-                 s_on ? "on" : "OFF (silent)", (unsigned)s_rate);
+    xhw_logf("[AUDIO] output %s at %u Hz", s_on ? "on" : "OFF (silent)", (unsigned)s_rate);
+}
+
+/* the first task: which ABI its microcode speaks, and its resampler table */
+static void identify(uint32_t task) {
+    uint32_t data = rd32(task + TK_UCODE_DATA), size = rd32(task + TK_UCODE_DATA_SIZE), lut_off = 0, i, n;
+    uint8_t head[0x80];
+    asp_ucode_t uc;
+    int lut_ok;
+    s_id = 1;
+    n = size < sizeof head ? size : (uint32_t)sizeof head;
+    if (!xrc_host(data, n)) n = 0;
+    for (i = 0; i < n; i++) head[i] = rd8(data + i);
+    asp_hle_identify(head, n, &uc);
+    xhw_logf("[AUDIO] microcode %08x (%u bytes, text hash %08x), data %08x (%u bytes): %s (%u-entry table at data+%02x, "
+             "opcodes %08x, flags %x)",
+             (unsigned)rd32(task + TK_UCODE), (unsigned)rd32(task + TK_UCODE_SIZE),
+             (unsigned)fnv_words(rd32(task + TK_UCODE), rd32(task + TK_UCODE_SIZE) ? rd32(task + TK_UCODE_SIZE) : 0x1000u),
+             (unsigned)data, (unsigned)size, asp_hle_abi_name(uc.abi), (unsigned)uc.entries,
+             (unsigned)(uc.abi == ASP_ABI_NAUDIO ? 0 : 0x10), (unsigned)uc.present, (unsigned)uc.flags);
+    if (uc.abi == ASP_ABI_UNKNOWN) {
+        s_silent = 1;
+        xhw_logf("[AUDIO] unknown audio microcode: its tasks are skipped, the output is silence");
+        return;
+    }
+    asp_hle_set_ucode(&uc);
+    lut_ok = find_lut(task, &lut_off);
+    if (lut_ok) xhw_logf("[AUDIO] RSP audio HLE: resampler table at data+%03x", (unsigned)lut_off);
+    else xhw_logf("[AUDIO] RSP audio HLE: no resampler table in the microcode data (linear fallback)");
 }
 
 void xrc_audio_task(uint32_t task) {
@@ -96,7 +115,9 @@ void xrc_audio_task(uint32_t task) {
     uint64_t t0, us;
     s_tasks++;
     if (!XRC_AUDIO) return;
-    audio_up(task);
+    audio_up();
+    if (!s_id) identify(task);
+    if (s_silent) return;
     cmds = (const uint32_t*)xrc_host(list, bytes);
     if (!cmds) {
         if (s_tasks <= 3) xhw_logf("[AUDIO] task %u: list %08x (%u bytes) outside RDRAM", s_tasks, (unsigned)list, (unsigned)bytes);
@@ -117,7 +138,7 @@ void xrc_audio_task(uint32_t task) {
                  "(latency cap), peak %u, %u AI underruns, %u bad addresses, %u unknown commands",
                  s_tasks, (unsigned)(s_task_us / (s_tasks_iv ? s_tasks_iv : 1)), s_buffers, (unsigned)s_frames_in,
                  (unsigned)s_frames_dropped, (unsigned)(xhw_audio_skipped() / 2u), s_peak, (unsigned)xu_ai_underruns(),
-                 (unsigned)st->bad_addr, (unsigned)st->cmds[16]);
+                 (unsigned)st->bad_addr, (unsigned)st->cmds[32]);
         s_task_us = 0;
         s_tasks_iv = 0;
         s_peak = 0;
@@ -169,7 +190,7 @@ void xrc_audio_buffer(uint32_t buf, uint32_t bytes) {
     int32_t vol = g_xrc_settings.volume;
     s_buffers++;
     if (!XRC_AUDIO || !frames) return;
-    if (!s_up) audio_up(0);
+    if (!s_up) audio_up();
     if (!s_on) return;
     w = (const uint32_t*)xrc_host(buf, bytes);
     if (!w) return;
@@ -181,7 +202,7 @@ void xrc_audio_buffer(uint32_t buf, uint32_t bytes) {
     while (done < frames) {
         uint32_t n = frames - done > 512 ? 512 : frames - done, i;
         for (i = 0; i < n; i++) {
-            uint32_t x = w[done + i];
+            uint32_t x = s_silent ? 0 : w[done + i];
             int32_t l = (int16_t)(x >> 16), r = (int16_t)x;
             unsigned al = (unsigned)(l < 0 ? -l : l);
             if (al > s_peak) s_peak = al;

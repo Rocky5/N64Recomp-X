@@ -1,4 +1,5 @@
-/* asp_hle.c - the RSP audio microcode (aspMain, the classic libultra audio ABI) in C.
+/* asp_hle.c - the RSP audio microcodes in C: aspMain (the classic libultra audio ABI) here,
+ * the nead family and n_aspMain in asp_abis.inc (#included at the end), and the registry.
  *
  * PLAN.md D6 / M6. The decomp's own synthesizer (src/libultra/audio: alSyn,
  * 22050 Hz, 32 PVoices, 368-sample frames cut into <= 160-sample chunks,
@@ -533,21 +534,46 @@ static void adpcm_frame(const uint8_t* fr, int16_t* h, int16_t* out)
     }
 }
 
+/* 2-bit frames (nead's flag 4): 5 bytes -> 16 samples, each code
+ * sign-extended and scaled by 2^scale (cap 14); prediction as above. */
+static void adpcm_frame2(const uint8_t* fr, int16_t* h, int16_t* out)
+{
+    int sh = fr[0] >> 4, pred = fr[0] & 15, g, k, m;
+    const int16_t *c0, *c1;
+    if (pred > 7) pred = 7;   /* DIVERGES: predictors 8..15 clamped, as above */
+    c0 = T.table + pred * 16, c1 = c0 + 8;
+    if (sh > 14) sh = 14;
+    for (g = 0; g < 2; g++) {
+        int16_t r[8], *o = out + 8 * g;
+        for (m = 0; m < 8; m++) {
+            int code = (fr[1 + 2 * g + (m >> 2)] >> (6 - 2 * (m & 3))) & 3;
+            r[m] = (int16_t)(((code ^ 2) - 2) * (1 << sh));
+        }
+        for (k = 0; k < 8; k++) {
+            int64_t acc = (int64_t)c0[k] * h[0] + (int64_t)c1[k] * h[1] + r[k] * 2048;
+            for (m = 0; m < k; m++) acc += (int64_t)c1[k - 1 - m] * r[m];
+            o[k] = sat16_64(acc >> 11);
+        }
+        h[0] = o[6], h[1] = o[7];
+    }
+}
+
 /* Writes the previous frame's 16 samples at out (alAdpcmPull skips them by
  * lastsam), then ceil(count / 32) frames from in (any byte offset: _decodeChunk
  * decodes from in + dramAlign). History: zeros (A_INIT), the A_SETLOOP state
- * (A_LOOP) or the state at w1, which receives the last frame. */
-static void cmd_adpcm(uint32_t flags, uint32_t w1)
+ * (A_LOOP) or the state at `state` (resolved), which receives the last frame.
+ * two_bit: 5-byte frames (nead). */
+static void cmd_adpcm(uint32_t flags, uint32_t in, uint32_t out, uint32_t count, uint32_t state, int two_bit)
 {
     int16_t last[16], h[2];
-    uint32_t state = resolve(w1), lane = T.out >> 1, in = T.in, nf = (T.count + 31) >> 5, f, k;
+    uint32_t lane = out >> 1, nf = (count + 31) >> 5, f, k;
     if (flags & A_INIT) memset(last, 0, sizeof last);
     else if (flags & A_LOOP) rd_load(T.loop, last, sizeof last);
     else rd_load(state, last, sizeof last);
     for (k = 0; k < 16; k++) DS(lane + k) = last[k];
 #if ASP_MMX
     /* straight on DMEM when the input bytes and the output lanes neither wrap nor overlap */
-    if (nf && T.table_small && (in & DMEM_MASK) + 9 * nf <= DMEM_SIZE && lanes_flat(lane, 16 + 16 * nf) &&
+    if (nf && !two_bit && T.table_small && (in & DMEM_MASK) + 9 * nf <= DMEM_SIZE && lanes_flat(lane, 16 + 16 * nf) &&
         ((in & DMEM_MASK) + 9 * nf <= (lane & LANE_MASK) * 2 || (lane & LANE_MASK) * 2 + 32 + 32 * nf <= (in & DMEM_MASK))) {
 #if ASP_HLE_WORDSWAP
         static uint8_t frames[DMEM_SIZE];   /* the frames in N64 byte order */
@@ -576,10 +602,12 @@ static void cmd_adpcm(uint32_t flags, uint32_t w1)
     h[0] = last[14], h[1] = last[15];
     for (f = 0; f < nf; f++) {
         uint8_t fr[9];
-        for (k = 0; k < 9; k++) fr[k] = DBN(in + k);
-        adpcm_frame(fr, h, last);
+        uint32_t fb = two_bit ? 5 : 9;
+        for (k = 0; k < fb; k++) fr[k] = DBN(in + k);
+        if (two_bit) adpcm_frame2(fr, h, last);
+        else adpcm_frame(fr, h, last);
         for (k = 0; k < 16; k++) DS(lane + k) = last[k];
-        lane += 16, in += 9;
+        lane += 16, in += fb;
     }
     rd_store(state, last, sizeof last);
 }
@@ -657,11 +685,11 @@ static inline int16_t dot4(uint32_t pos, const int16_t* t)
  * previous call's tail (state) or zeros (A_INIT) are written there. Outputs:
  * count bytes rounded up to 8 samples. State: the 4 samples at the final
  * position and the fraction. */
-static void cmd_resample(uint32_t flags, uint32_t pitch, uint32_t w1)
+static void cmd_resample(uint32_t flags, uint32_t pitch, uint32_t in, uint32_t out, uint32_t count, uint32_t state)
 {
     int16_t st[5];
-    uint32_t state = resolve(w1), base = ((T.in - 8) & 0xFFFFu) >> 1, step = pitch << 1;
-    uint32_t n = align_up(T.count, 16) >> 1, o = T.out >> 1, pos = base, frac, i;
+    uint32_t base = ((in - 8) & 0xFFFFu) >> 1, step = pitch << 1;
+    uint32_t n = align_up(count, 16) >> 1, o = out >> 1, pos = base, frac, i;
     if (flags & A_INIT) memset(st, 0, sizeof st);
     else rd_load(state, st, sizeof st);
     for (i = 0; i < 4; i++) DS(base + i) = st[i];
@@ -824,9 +852,11 @@ static void cmd_envmixer(uint32_t flags, uint32_t w1)
 
 /* ---- A_MIXER, A_INTERLEAVE, A_POLEF -------------------------------------- */
 
-static void cmd_mixer(int16_t gain, uint32_t w1)
+/* count: bytes, a multiple of 16 */
+static void cmd_mixer(int16_t gain, uint32_t src, uint32_t dst, uint32_t count)
 {
-    uint32_t src = (w1 >> 16) >> 1, dst = (w1 & 0xFFFF) >> 1, n = align_up(T.count, 32) >> 1, i;
+    uint32_t n = count >> 1, i;
+    src >>= 1, dst >>= 1;
 #if ASP_MMX
     if (n && lanes_flat(src, n) && lanes_flat(dst, n) && same_or_apart(src, dst, n)) {
         int16_t gp[8] __attribute__((aligned(8)));
@@ -844,10 +874,10 @@ static void cmd_mixer(int16_t gain, uint32_t w1)
 /* DIVERGES: all input is read before the output is written (the RSP works in
  * chunks; the two differ only for overlapping ranges, which libultra avoids);
  * more than 1024 pairs (4 KB of output) is cut to 1024. */
-static void cmd_interleave(uint32_t w1)
+static void cmd_interleave(uint32_t out, uint32_t left, uint32_t right, uint32_t count)
 {
     static int16_t lr[2048];
-    uint32_t l = (w1 >> 16) >> 1, r = (w1 & 0xFFFF) >> 1, o = T.out >> 1, n = T.count >> 1, i;
+    uint32_t l = left >> 1, r = right >> 1, o = out >> 1, n = count >> 1, i;
     if (n > 1024) n = 1024;
     for (i = 0; i < n; i++) lr[2 * i] = DS(l + i), lr[2 * i + 1] = DS(r + i);
     for (i = 0; i < 2 * n; i++) DS(o + i) = lr[i];
@@ -857,11 +887,11 @@ static void cmd_interleave(uint32_t w1)
  * h1[8] weights y[-2], h2[8] weights y[-1] (_init_lpfilter: fc^(i+1)); per
  * group of 8, y[k] = (g x[k] + h1[k] y[-2] + h2[k] y[-1]
  * + sum_{j<k} ((h2[k-1-j] g) >> 14) x[j]) >> 14. State: the last two outputs. */
-static void cmd_polef(uint32_t flags, int16_t gain, uint32_t w1)
+static void cmd_polef(uint32_t flags, int16_t gain, uint32_t inb, uint32_t outb, uint32_t count, uint32_t state)
 {
     int16_t st[4] = {0, 0, 0, 0}, h2g[8], y2, y1;
     const int16_t *h1 = T.table, *h2 = T.table + 8;
-    uint32_t state = resolve(w1), n = align_up(T.count, 16) >> 4, in = T.in >> 1, o = T.out >> 1, gi;
+    uint32_t n = align_up(count, 16) >> 4, in = inb >> 1, o = outb >> 1, gi;
     int k, j;
     if (!(flags & A_INIT)) rd_load(state, st, sizeof st);
     y2 = st[2], y1 = st[3];
@@ -887,12 +917,12 @@ static void cmd_polef(uint32_t flags, int16_t gain, uint32_t w1)
 static void exec(uint32_t w0, uint32_t w1)
 {
     uint32_t op = w0 >> 24, flags = (w0 >> 16) & 0xFF;
-    s_stats.cmds[op < 16 ? op : 16]++;
+    s_stats.cmds[op < 16 ? op : 32]++;
     switch (op) {
     case A_SPNOOP:
         break;
     case A_ADPCM:
-        cmd_adpcm(flags, w1);
+        cmd_adpcm(flags, T.in, T.out, T.count, resolve(w1), 0);
         break;
     case A_CLEARBUFF:
         dmem_zero(w0 & 0xFFFF, cap_dmem(align_up(w1 & 0xFFFF, 16)));
@@ -910,7 +940,7 @@ static void exec(uint32_t w0, uint32_t w1)
         break;
     }
     case A_RESAMPLE:
-        cmd_resample(flags, w0 & 0xFFFF, w1);
+        cmd_resample(flags, w0 & 0xFFFF, T.in, T.out, T.count, resolve(w1));
         break;
     case A_SAVEBUFF: {
         uint32_t n = cap_dmem(align_up(T.count, 8));
@@ -950,13 +980,13 @@ static void exec(uint32_t w0, uint32_t w1)
         cmd_loadadpcm(w0, w1);
         break;
     case A_MIXER:
-        cmd_mixer((int16_t)w0, w1);
+        cmd_mixer((int16_t)w0, w1 >> 16, w1 & 0xFFFF, align_up(T.count, 32));
         break;
     case A_INTERLEAVE:
-        cmd_interleave(w1);
+        cmd_interleave(T.out, w1 >> 16, w1 & 0xFFFF, T.count);
         break;
     case A_POLEF:
-        cmd_polef(flags, (int16_t)w0, w1);
+        cmd_polef(flags, (int16_t)w0, T.in, T.out, T.count, resolve(w1));
         break;
     case A_SETLOOP:
         T.loop = resolve(w1);
@@ -966,14 +996,29 @@ static void exec(uint32_t w0, uint32_t w1)
     }
 }
 
+#include "asp_abis.inc"
+
 void asp_hle_run(const uint32_t* cmds, uint32_t n_cmds, asp_addr_fn addr, void* user)
 {
     uint32_t i;
     if (!s_inited) asp_hle_reset();
     memset(&T, 0, sizeof T);
+    memset(&N, 0, sizeof N);
     s_addr = addr, s_user = user;
     s_stats.tasks++;
-    for (i = 0; i < n_cmds; i++) exec(cmds[2 * i], cmds[2 * i + 1]);
+    switch (s_uc.abi) {
+    case ASP_ABI_AUDIO:
+        for (i = 0; i < n_cmds; i++) exec(cmds[2 * i], cmds[2 * i + 1]);
+        break;
+    case ASP_ABI_NEAD:
+        for (i = 0; i < n_cmds; i++) exec_nead(cmds[2 * i], cmds[2 * i + 1]);
+        break;
+    case ASP_ABI_NAUDIO:
+        for (i = 0; i < n_cmds; i++) exec_naudio(cmds[2 * i], cmds[2 * i + 1]);
+        break;
+    default:
+        break;   /* an unknown microcode: nothing runs (the caller plays silence) */
+    }
 }
 
 void asp_hle_reset(void)
@@ -982,6 +1027,7 @@ void asp_hle_reset(void)
     memset(&s_dmem, 0, sizeof s_dmem);
     memset(&T, 0, sizeof T);
     memset(&s_stats, 0, sizeof s_stats);
+    s_uc.abi = ASP_ABI_AUDIO, s_uc.flags = 0, s_uc.present = 0xFFFFu, s_uc.entries = 16;
     lut_linear();
 }
 
