@@ -16,6 +16,7 @@ python tools/xbox/test_interp.py        # the MIPS interpreter: each instruction
 python tools/xbox/test_asp_hle.py       # the audio HLE: every command of every ABI vs a reference, SIMD = C, native = word-swapped RDRAM (hash: aspMain, hash2: nead + n_aspMain)
 python tools/xbox/test_xbe_rom.py       # the ROM inside the XBE: xbe_sections' $ROM, found and checked by xhw_rom.c's parser
 python tools/xbox/test_romcache.py      # the ROM page cache's core: chunk spans, word reads, the LRU and its cap, pins, failed fills
+python tools/xbox/test_saves.py         # saves: pak CRCs and PIF round trips, the blank format, Rumble, osPfs*, Flash, SRAM by PI DMA
 ```
 
 CI (`.github/workflows/build.yml`) is manual-only, for the maintainer's free
@@ -119,7 +120,11 @@ Auto, Restart), `hd` (A keeps 720p, shots with Widescreen Auto and after a
 change). `tools/xbox/scenarios/menu/autopad.txt`: `[MENU] opened`,
 `[MENU] Widescreen: ...`, `[MENU] closed (settings.ini saved)`, four shots.
 A COM1 `[FBDUMP]` takes seconds in xemu, so scenarios space their shots.
-Timed events follow the ACPI clock.
+Timed events follow the ACPI clock. A `SHOT` due before the game's first
+frame stalls the boot: put shots late. Saves: `pak_menu` (Mario Kart 64:
+START at the title; expect `[SI] port 1: the game's own code reaches its
+pak`, `[SAVE] ...mpk`), `pak_boot` (START held at boot: the game's own
+Controller Pak screen, its pages free).
 
 ## Switches
 
@@ -146,6 +151,9 @@ Timed events follow the ACPI clock.
 | `-DXHW_ROM_IN_XBE=0` | 1 | ignore `default.xbe`'s `$ROM` section: the ROM is looked for next to the XBE (the build-side switch is `n64rx build --rom-beside`, which leaves the section out and writes the file) |
 | `-DXRC_SAFETY_NET=0` | 1 | a call to an address with no function is the fatal card again (no interpreting, no `[LEARN]`, no `learn.txt`) |
 | `N64RX_WITHHOLD=<vram>,...` (env, n64rx) | unset | test: those functions left out of the analysis, so the safety net runs them (the learning loop's demo) |
+| `-DXRC_SAVE_PAK=0` | 1 | no pak in any port: the PIF's status says none, pak commands get no answer, osPfs* return `PFS_ERR_NOPACK` (the old behaviour) |
+| `-DXRC_SAVE_CART=0` | 1 | no SRAM or FlashRAM: domain 2 reads zeros and drops writes, osFlash* fail |
+| `-DXRC_CONT_MAX_ADDR=<a>` | per build | libultra's `__osMaxControllers`, which the runtime's osContInit sets to 4 (n64rx finds it: `saves.py`); unset, a game's own pak code sees no pak |
 | `-DASP_HLE_WORDSWAP=0` | 1 on the console | `asp_hle` on a native-order RDRAM (Wings64-X's layout; the host tests' first group) |
 | `-DASP_HLE_NEAD=0` | 1 | the nead audio microcodes (Mario Kart 64, SM64 EU, Zelda) read as unknown: silent |
 | `-DASP_HLE_NAUDIO=0` | 1 | `n_aspMain` (Paper Mario, Smash Bros.) reads as unknown: silent |

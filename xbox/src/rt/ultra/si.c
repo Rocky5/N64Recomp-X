@@ -16,13 +16,13 @@
  *   D-pad        D-pad
  *   L            none (remappable from M6)
  *
- * EEPROM: the pack's 4 Kbit or 16 Kbit image as E:\UDATA\<title id>\<id>.eep,
- * in the byte order Project64 and Mupen64Plus write (the cartridge's), so
- * saves move both ways. Writes mark it dirty; a writer thread flushes
- * through xhw_write_file_atomic within a second, and the exit combos flush
- * it before leaving (xhw_combo_set_flush). */
+ * EEPROM: the pack's 4 Kbit or 16 Kbit image (save.c keeps it and its
+ * file, E:\UDATA\<title id>\<id>.eep, and flushes it). The paks behind each
+ * controller answer at the PIF (savedev.c); the status byte says a pak is
+ * in where one is. */
 #include <stdio.h>
 
+#include "savedev.h"
 #include "settings.h"
 #include "ultra.h"
 
@@ -106,11 +106,16 @@ static void read_pads(void) {
     xhw_combo_act();
 }
 
+/* the status byte's CONT_CARD_ON: a pak is in (savedev.c; XRC_SAVE_PAK=0: none) */
+static uint8_t pak_status(int port) {
+    return XRC_SAVE_PAK && xu_pak_kind(port) != XU_PAK_NONE ? 0x01 : 0x00;
+}
+
 static void write_status(uint32_t status) {
     int i;
     for (i = 0; i < 4; i++) {
         wr16(status + 4 * (uint32_t)i, CONT_TYPE_NORMAL);
-        wr8(status + 4 * (uint32_t)i + 2, 0);
+        wr8(status + 4 * (uint32_t)i + 2, pak_status(i));
         wr8(status + 4 * (uint32_t)i + 3, i == 0 ? 0 : s_pads[i].err);   /* port 1 always answers */
     }
 }
@@ -121,6 +126,14 @@ ULTRA(osContInit) {
     uint8_t pattern = 0;
     int i;
     (void)rdram;
+#ifdef XRC_CONT_MAX_ADDR
+    /* libultra's __osMaxControllers, which the real osContInit sets: the
+     * game's own pak code (recompiled) asks the PIF about that many ports
+     * (n64rx finds it in the game's osContInit: tools/n64rx/n64rx_lib/saves.py) */
+    if (XRC_CONT_MAX_SIZE == 1) wr8(XRC_CONT_MAX_ADDR, 4);
+    else if (XRC_CONT_MAX_SIZE == 2) wr16(XRC_CONT_MAX_ADDR, 4);
+    else wr32(XRC_CONT_MAX_ADDR, 4);
+#endif
     read_pads();
     for (i = 0; i < 4; i++)
         if (i == 0 || !s_pads[i].err) pattern |= (uint8_t)(1 << i);
@@ -169,59 +182,12 @@ ULTRA(osContSetCh) {
     RET(0);
 }
 
-/* ---- EEPROM ---- */
-#define EEP_MAX 2048
-static uint8_t s_eep[EEP_MAX];
+/* ---- EEPROM (the image and its file: save.c) ---- */
+static uint8_t* s_eep;
 static uint32_t s_eep_size;   /* 512 (4 Kbit) or 2048 (16 Kbit) */
-static volatile int s_eep_dirty, s_eep_loaded;
-static xhw_mutex* s_eep_lock;
-static char s_eep_path[96];
 
 static void eep_load(void) {
-    void* f;
-    if (s_eep_loaded) return;
-    s_eep_loaded = 1;
-    s_eep_lock = xhw_mutex_create();
-    s_eep_size = xrc_game.eeprom_bytes ? xrc_game.eeprom_bytes : 512;
-    memset(s_eep, 0xFF, sizeof s_eep);   /* a blank EEPROM reads all ones */
-    snprintf(s_eep_path, sizeof s_eep_path, "%s%s.eep", xhw_save_dir(), xrc_game.id);
-    f = xhw_file_open(s_eep_path);
-    if (f) {
-        uint32_t n = xhw_file_size(f);
-        if (n > s_eep_size) n = s_eep_size;
-        if (!xhw_file_read(f, 0, s_eep, n)) xhw_logf("[SAVE] %s: read failed", s_eep_path);
-        xhw_file_close(f);
-        xhw_logf("[SAVE] %s: %u bytes", s_eep_path, (unsigned)n);
-    } else {
-        xhw_logf("[SAVE] %s: none yet (blank EEPROM)", s_eep_path);
-    }
-}
-
-void xu_save_flush(void) {
-    uint8_t copy[EEP_MAX];
-    if (!s_eep_dirty) return;
-    xhw_mutex_lock(s_eep_lock);
-    memcpy(copy, s_eep, s_eep_size);
-    s_eep_dirty = 0;
-    xhw_mutex_unlock(s_eep_lock);
-    if (xhw_write_file_atomic(s_eep_path, copy, s_eep_size)) xhw_logf("[SAVE] %s written", s_eep_path);
-    else xhw_logf("[SAVE] %s: write FAILED", s_eep_path);
-}
-
-static void writer(void* arg) {
-    (void)arg;
-    for (;;) {
-        xhw_sleep_ms(1000);
-        xu_save_flush();
-    }
-}
-
-static void eep_start_writer(void) {
-    static int up;
-    if (up) return;
-    up = 1;
-    xhw_combo_set_flush(xu_save_flush);
-    xu_spawn(writer, NULL, 6, 32 * 1024);
+    if (!s_eep) s_eep = xu_eep_image(&s_eep_size);
 }
 
 /* osEepromProbe(mq): EEPROM_TYPE_4K 1, _16K 2, none 0 */
@@ -231,23 +197,27 @@ ULTRA(osEepromProbe) {
         RET(0);
         return;
     }
+    xu_save_lock();
     eep_load();
+    xu_save_unlock();
     RET(s_eep_size == 2048 ? 2 : 1);
 }
 
 static int eep_io(uint32_t block, uint32_t buf, uint32_t n, int write) {
     uint32_t off = block * 8u;
+    xu_save_lock();
     eep_load();
-    if (off + n > s_eep_size) return -1;
-    xhw_mutex_lock(s_eep_lock);
+    if (off + n > s_eep_size) {
+        xu_save_unlock();
+        return -1;
+    }
     if (write) {
         xu_from_rdram(s_eep + off, buf, n);
-        s_eep_dirty = 1;
+        xu_eep_dirty();
     } else {
         xu_to_rdram(buf, s_eep + off, n);
     }
-    xhw_mutex_unlock(s_eep_lock);
-    if (write) eep_start_writer();
+    xu_save_unlock();
     return 0;
 }
 
@@ -275,10 +245,11 @@ ULTRA(osEepromWrite) {
  * it builds the 64-byte PIF command block itself and moves it with
  * __osSiRawStartDma. The PIF is emulated on that block: per channel a
  * transmit and a receive length, then the command; controllers 0-3 answer
- * status (0x00/0xFF: a standard pad, no pak) and buttons (0x01); channel 4
- * is the EEPROM (status, read and write a block of 8). Paks (0x02/0x03),
- * absent ports and anything else answer "no response" (0x80 in the receive
- * length byte), as an empty port does. Every transfer raises the SI event. */
+ * status (0x00/0xFF: a standard pad, and whether a pak is in), buttons
+ * (0x01) and the pak's read and write (0x02/0x03, savedev.c); channel 4 is
+ * the EEPROM (status, read and write a block of 8). Absent ports and
+ * anything else answer "no response" (0x80 in the receive length byte), as
+ * an empty port does. Every transfer raises the SI event. */
 static uint8_t s_pif[64];
 
 static void pif_channel(int ch, const uint8_t* cmd, int tx, uint8_t* resp, int rx, uint8_t* rxbyte) {
@@ -289,33 +260,41 @@ static void pif_channel(int ch, const uint8_t* cmd, int tx, uint8_t* resp, int r
             return;
         }
         if ((cmd[0] == 0x00 || cmd[0] == 0xFF) && rx >= 3) {
-            resp[0] = 0x05, resp[1] = 0x00, resp[2] = 0x00;   /* CONT_TYPE_NORMAL, no pak */
+            resp[0] = 0x05, resp[1] = 0x00, resp[2] = pak_status(ch);   /* CONT_TYPE_NORMAL */
         } else if (cmd[0] == 0x01 && rx >= 4) {
             resp[0] = (uint8_t)(s_pads[ch].button >> 8), resp[1] = (uint8_t)s_pads[ch].button;
             resp[2] = (uint8_t)s_pads[ch].x, resp[3] = (uint8_t)s_pads[ch].y;
+        } else if ((cmd[0] == 0x02 || cmd[0] == 0x03) && XRC_SAVE_PAK) {
+            static uint8_t seen[4];
+            int r;
+            if (!seen[ch]) {
+                seen[ch] = 1;
+                xhw_logf("[SI] port %d: the game's own code reaches its pak (PIF command %02x)", ch + 1, cmd[0]);
+            }
+            xu_save_lock();
+            r = xu_pak_pif(ch, cmd, tx, resp, rx);
+            xu_save_unlock();
+            if (r) *rxbyte |= 0x80;
         } else {
             *rxbyte |= 0x80;
         }
         return;
     }
     if (ch == 4 && xrc_game.eeprom_bytes) {
+        xu_save_lock();
         eep_load();
         if (cmd[0] == 0x00 && rx >= 3) {
             resp[0] = 0x00, resp[1] = s_eep_size == 2048 ? 0xC0 : 0x80, resp[2] = 0x00;
         } else if (cmd[0] == 0x04 && tx >= 2 && rx >= 8 && cmd[1] * 8u + 8 <= s_eep_size) {
-            xhw_mutex_lock(s_eep_lock);
             memcpy(resp, s_eep + cmd[1] * 8u, 8);
-            xhw_mutex_unlock(s_eep_lock);
         } else if (cmd[0] == 0x05 && tx >= 10 && cmd[1] * 8u + 8 <= s_eep_size) {
-            xhw_mutex_lock(s_eep_lock);
             memcpy(s_eep + cmd[1] * 8u, cmd + 2, 8);
-            s_eep_dirty = 1;
-            xhw_mutex_unlock(s_eep_lock);
-            eep_start_writer();
+            xu_eep_dirty();
             if (rx >= 1) resp[0] = 0x00;
         } else {
             *rxbyte |= 0x80;
         }
+        xu_save_unlock();
         return;
     }
     *rxbyte |= 0x80;

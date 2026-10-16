@@ -1,0 +1,8 @@
+# Controller Pak (test builds): Mario Kart 64 looks for its pak when the
+# title's START leads into the menus. Expect "[SI] port 1: the game's own
+# code reaches its pak" (or the runtime's osPfs*) and "[SAVE] ...mpk". A
+# COM1 [FBDUMP] takes seconds, and one before the first frame stalls the
+# boot: one late shot.
+t11000 START for 300
+t15000 START for 300
+t24000 SHOT

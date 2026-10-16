@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 
-from . import ROOT, VERSION, N64rxError, engines, packs, romonly, rom as romlib
+from . import ROOT, VERSION, N64rxError, engines, packs, romonly, rom as romlib, saves
 from . import learn as learnmod
 
 GEN_VERSION = 4   # bump when what n64rx writes into gen/ changes (the cache key)
@@ -371,6 +371,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
 
     prog.step(f'Compiling for the Xbox ({nfiles} generated files + the runtime{", fast" if fast else ", ThinLTO"})')
     flags = ['-DXRC_GPR32=1'] if bits == 32 else []
+    flags += saves.cflags(pack, rom.data)   # libultra globals the runtime's saves keep (saves.py)
     env = {
         'XBOX_BUILD_DIR': engines.msys_path(bdir / 'xbox') if engines.IS_WINDOWS else str(bdir / 'xbox'),
         'XRC_GEN_DIR': engines.msys_path(gen) if engines.IS_WINDOWS else str(gen),

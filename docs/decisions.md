@@ -323,3 +323,34 @@ log line instead of noise. The nead variants follow from which opcodes
 exist (no ADDMIXER = the first nead's envelope; a 32-entry table with
 opcode 14 = the old INTERLEAVE and POLEF; 24 entries = FILTER, DUPLICATE,
 HILOGAIN), checked against the maintainer's ROMs and the known variants.
+
+## Saves (2026-10-16, PLAN.md 3.6)
+
+**Which pak a port holds: AUTO by default** (`savedev.c`). A port answers as
+a Controller Pak until the game writes the Rumble Pak probe (0xFE or 0x80
+to 0x8000) before it ever read the pak's file system; then it is a Rumble
+Pak until a restart. Games that keep saves on the pak and probe for rumble
+later keep their saves (a save matters more than a motor); rumble through
+the replaced osMotor* works whatever the port holds. No BACK-menu row yet:
+the menu's rows are another task's file, and AUTO needs no choice; a
+`[portN] pak` setting is the next step if a game needs a swap.
+
+**One `.mpk` per port** (`<id>.mpk` for port 1, `<id>-2.mpk`..`<id>-4.mpk`),
+32 KB in the pak's order, so port 1's file trades with emulators' single-pak
+files. A pak with no file starts formatted and empty (libultra's layout,
+our own ID: device bit set, one bank) and gets a file on the game's first
+write. **SRAM and FlashRAM share one 128 KB buffer** (a cartridge has one)
+and are told apart on the first domain-2 access: a command to the Flash's
+register (0x08010000) means Flash, else an existing `.fla`, else SRAM. No
+pack field and no analyser rule are needed for it. The Flash says it is a
+Macronix part libultra treats as NEW_FLASH (page addresses in bytes), and
+programming only clears bits, as the chip does. Memory: 258 KB static.
+
+**libultra's controller count** (`tools/n64rx/n64rx_lib/saves.py`). The real
+osContInit sets `__osMaxControllers` (4); ours is the runtime's. A game
+whose pak code was recompiled (its osPfs* not named: Mario Kart 64 from its
+ROM alone) loops over that byte and saw no pak. n64rx finds the store of the
+constant 4 in the game's own osContInit (the pack's symbols, the ROM's
+code) and passes its address as `-DXRC_CONT_MAX_ADDR`; it is derived per
+build, never kept. The save writer holds the lock while it writes a file
+(no 128 KB copy; a game that saves again meanwhile waits for the disk).

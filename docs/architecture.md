@@ -77,6 +77,18 @@ docs/look/           baseline shots: the loading screen (xemu, STILL), the BACK 
   threads, events, timers) hangs off side tables keyed by N64 address.
   One N64 thread is one kernel thread (levels 2..14); one recursive lock
   stands for the interrupt mask.
+- Saves (`ultra/save.c`, `savedev.c`, `pfs.c`): every image (EEPROM, a
+  Controller Pak per port, SRAM or FlashRAM) lives in `save.c` with its
+  file in `E:\UDATA\<title id>\` (`<id>.eep`, `<id>.mpk`, `<id>-2.mpk`..,
+  `<id>.sra` / `<id>.fla`, the cartridge's byte order), read on first use,
+  written by one writer thread within a second of a write and by the exit
+  combos' flush, under one recursive lock. `savedev.c` holds the protocols
+  with no platform: the pak's PIF commands 0x02/0x03 with libultra's CRCs,
+  the Rumble Pak's probe and motor, SRAM and the Flash's commands on PI
+  domain 2. The replaced osPfs* (`pfs.c`), osFlash* and osEPi* (`extra.c`)
+  work on the same images as a game's own recompiled libultra reaching
+  them through the PIF (`si.c`) or the handle family. The SRAM-or-Flash
+  question is answered on the game's first domain-2 access.
 - Graphics and audio tasks run on the calling thread (`sp.c`): the
   interpreter for graphics, `asp_hle` for audio; their done events are put
   ahead of retraces already queued.

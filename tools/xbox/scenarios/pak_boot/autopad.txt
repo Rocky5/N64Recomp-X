@@ -1,0 +1,6 @@
+# Controller Pak screen at boot (test builds): START held while the game
+# starts opens Mario Kart 64's pak screen (its notes and free pages). Expect
+# "[SI] port 1: the game's own code reaches its pak" and a shot of the pak
+# screen. One late shot (one before the first frame stalls the boot).
+t0 START for 16000
+t22000 SHOT
