@@ -346,6 +346,12 @@ static inline double xrc_sqrt(double x) {
 #define sqrt(x) xrc_sqrt(x)
 #define fabsf(x) __builtin_fabsf(x)
 #define fabs(x) __builtin_fabs(x)
+/* ceil.* and floor.* (upstream's generator names libm's; the sweep found
+ * games that use them): pdclib's, as the interpreter's (interp.c) */
+#define floorf(x) __builtin_floorf(x)
+#define floor(x) __builtin_floor(x)
+#define ceilf(x) __builtin_ceilf(x)
+#define ceil(x) __builtin_ceil(x)
 
 #if XRC_CHECKS
 void xrc_check_failed(const char* what);

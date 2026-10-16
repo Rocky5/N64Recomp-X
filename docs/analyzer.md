@@ -132,6 +132,55 @@ counts agree; "placed" below).
 | Dr. Mario 64 (US) | boot 262 / 270 | boot; the main segment is gzip-compressed (not found) | 56 / 0; live set identical | links; boots, the net runs 4 functions, then interpreted code reads PI_STATUS through KSEG1 (`a4600010`) and faults; its gzip main segment is not found |
 | Paper Mario (US, GCC) | 2443 / 2680 in the segments found | main, engine1, engine2, evt, engine4, one partner and one map (overlays sharing a vram: one each) | 56 / 0 (87 missing: GCC-built libultra, Flash, the Pfs family) | not tried |
 
+### The whole library (`tools/xbox/sweep.py`, 2026-10-16)
+
+246 games (one ROM each from a 276-file folder), `n64rx build --fast`, a
+pack where one matches (Pilotwings 64, Mario Kart 64), the ROM alone for the
+rest. s1 is before the sweep's fixes, s2 after (`docs/decisions.md`, "The
+sweep and what it fixed").
+
+| stage reached | s1 | s2 |
+|---|---|---|
+| XBE built | 54 | 143 |
+| link (undefined libultra internals) | 78 | 0 |
+| compile (clang) | 19 | 12 |
+| recompile (N64Recomp stopped) | 6 | 6 |
+| analyse (n64rx stopped) | 89 | 85 |
+
+Where s2 stops, by cause (for the analyser):
+
+| cause | games | examples |
+|---|---|---|
+| "the entry code is not the SDK's (no BSS clear...)" | 71 | Armorines, Bust-A-Move '99, BattleTanx, A Bug's Life, Forsaken 64 |
+| "boot segment would be -0x..." | 14 | |
+| compile: `use of undeclared label L_x`: a branch into another function's body (function bounds) | 12 | Mario Party 1-3, Mario Golf, Vigilante 8 1-2, Earthworm Jim 3D, Bangai-O |
+| N64Recomp: "Unhandled branch in recomp_entrypoint ... to 0x84001064" (the entry jumps into SP IMEM) | 5 | Aidyn Chronicles, Ready 2 Rumble, South Park Rally |
+| N64Recomp: "Unhandled cop0 register in mtc0: 14" (EPC: an exception handler, no function named) | 1 | Pokémon Puzzle League |
+
+The 143 XBEs booted in xemu for up to 45 s each (`--run 45`; xemu, not
+hardware). Crash addresses are mapped back to the N64's:
+
+| in xemu | games |
+|---|---|
+| crash: game code reads or writes the RCP's registers through KSEG1 (0xA41-0xA48xxxxx) | 75 |
+| crash: a KUSEG (TLB-mapped) address | 23 |
+| frames presented | 17 |
+| no frames (threads up, no graphics task) | 14 |
+| crash: KSEG1 RDRAM (`-DXRC_MEM_MASK=1` territory) | 9 |
+| fatal: no function at an address | 2 |
+| fatal: the boot code returned without starting threads | 2 |
+| crash: the PIF through KSEG1 | 1 |
+
+The first is libultra the analyser did not name (Ogre Battle 64:
+`osCartRomInit`'s later version polling `PI_STATUS`): its code was
+recompiled instead of replaced, and its register accesses have nowhere to
+land. Naming more libultra versions (or a register trap in the memory
+model) moves most of the library on. Presenting frames: Mace, Mystical
+Ninja, Bio F.R.E.A.K.S., Deadly Arts, Hexen, ISS 64, Automobili
+Lamborghini, Rampage, Tetris 64, Tetrisphere, Wayne Gretzky's 3D Hockey,
+Stunt Racer 64, World Driver Championship, Air Boarder 64, Body Harvest,
+Pilotwings 64, Mario Kart 64 (frames presented, not judged playable).
+
 ## Known gaps
 
 - Code loaded with computed addresses (overlay tables, compressed code) is

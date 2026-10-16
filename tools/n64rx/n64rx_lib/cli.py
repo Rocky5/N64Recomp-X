@@ -221,6 +221,9 @@ def parser():
 
 
 def main(argv=None):
+    for s in (sys.stdout, sys.stderr):   # a console or pipe in a legacy code page must not stop a build
+        if hasattr(s, 'reconfigure'):
+            s.reconfigure(errors='replace')
     argv = list(sys.argv[1:] if argv is None else argv)
     # a ROM dropped onto n64rx.exe
     if argv and pathlib.Path(argv[0]).suffix.lower() in romlib.EXTENSIONS and pathlib.Path(argv[0]).is_file():
