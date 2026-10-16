@@ -40,10 +40,10 @@ SOFTWARE.
 | component | where | terms |
 |---|---|---|
 | **N64Recomp** (N64Recomp/N64Recomp, Copyright (c) 2024 Wiseguy) at `ffb39cd`: the recompiler, run on the host at build time, unmodified. `xbox/include/xrc/recomp.h` implements the contract of its `include/recomp.h` and follows its memory helpers closely | `tools/recomp/` (submodule), `xbox/include/xrc/recomp.h` | MIT |
-| **Wings64-X** (TechProGabe/Wings64-X), the maintainer's Pilotwings 64 port: the platform layer, the interpreter's base, the settings, the build and console tooling | `xbox/src/hw/`, `xbox/include/`, `xbox/src/rt/settings.c`, `tools/xbox/` | Copyright (c) 2026 Gabe Conway; MIT |
+| **Wings64-X** (TechProGabe/Wings64-X), the maintainer's Pilotwings 64 port: the platform layer, the interpreter's base, the settings, the build and console tooling | `xbox/src/hw/`, `xbox/include/`, `xbox/src/rt/settings.c`, `xbox/src/rt/audio.c` (its glue), `tools/xbox/`, `tests/xbox/test_asp_hle.c` and `asp_ref.c` | Copyright (c) 2026 Gabe Conway; MIT |
 | **Melee-X** (TechProGabe/Melee-X): the splash this loading screen is built on, the video mode selection, the NV2A code, the build tooling those files were carried from (each file's header says so) | `xbox/src/hw/` (`xhw_splash*.c`, `xhw_video.c`, `nv2a*.c`), `tools/xbox/` | Copyright (c) Gabe Conway; MIT, as relicensed by the author. Melee-X's Xbox code is GPL-3.0-or-later only because it builds on melee-pc, and none of melee-pc is used here |
 | **OpenCrossing-Xbox** (GabeConway/OpenCrossing-Xbox): the audio driver, crash reporter, code repair, RAM lock and clock code | `xbox/src/hw/` (`xhw_audio.c`, `xhw_crash.c`, `xhw_code_repair.c`, `xhw_ramlock.c`, `xhw_clock.c`) | MIT |
-| **Birdman64** (NoahVl/Birdman64, Copyright (c) 2026 Birdman64 contributors): the audio ABI that `asp_hle.c` ports | `xbox/src/hw/asp_hle.c` | MIT |
+| **Birdman64** (NoahVl/Birdman64, Copyright (c) 2026 Birdman64 contributors): the audio ABI that `asp_hle.c` ports | `xbox/src/hw/asp_hle.c`, the vectors in `tests/xbox/test_asp_hle.c` | MIT |
 | **unscii-16** (via nxdk's `hal/font_unscii_16.h`): the loading screen's and the overlay's font | included from nxdk at build time | public domain |
 | **`xhw_sha1.c`**: SHA-1, written for Wings64-X | `xbox/src/hw/xhw_sha1.c` | public domain |
 | **nxdk** (XboxDev/nxdk): the SDK, pbkit, SDL, pdclib | not vendored; built by `tools/xbox/setup.sh` or in the SDK image | its own licenses |

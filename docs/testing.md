@@ -12,6 +12,7 @@ python tools/xbox/test_recomp_h.py      # our recomp.h vs upstream's: x86-64, i6
 python tools/xbox/test_syms.py          # every committed symbol file against the function table's rules
 python tools/xbox/test_scan64.py        # the register-width scan on hand-assembled functions (rabbitizer)
 python tools/xbox/test_time.py          # the counter follows the ACPI clock; nothing else reads the TSC
+python tools/xbox/test_asp_hle.py       # the audio HLE: every command vs a reference, SIMD = C, native = word-swapped RDRAM
 ```
 
 CI (`.github/workflows/build.yml`) is manual-only, for the maintainer's free
@@ -91,6 +92,9 @@ BLACK UP DOWN LEFT RIGHT`, triggers `L R`, sticks `SL SR SU SD CL CR CU CD`,
 | `-DXRC_CHECKS=1` | 0 | `NAN_CHECK` and `CHECK_FR` as logged fatals |
 | `-DXRC_VIDEO_DEFAULT=<n>` | 0 (auto) | the default output (`n64rx build --video`) |
 | `-DXHW_AUTOPAD=1` | 0 | a test build with scripted input |
+| `-DXRC_AUDIO=0` | 1 | audio tasks counted and dropped: silent |
+| `-DXRC_AUDIO_DUMP=<s>` | 0 | test builds: 3 s of the output from second `<s>` as `[AUDDUMP]` lines (`tools/xbox/auddump_to_wav.py serial.log out.wav`: the WAV and its numbers, RMS, L/R correlation, the energy below 4 kHz; the WAV stays outside the tree) |
+| `-DASP_HLE_WORDSWAP=0` | 1 on the console | `asp_hle` on a native-order RDRAM (Wings64-X's layout; the host tests' first group) |
 
 Wings64-X's platform switches (`XHW_*`, `XGFX_*`) carry over; its
 `docs/testing.md` lists them.

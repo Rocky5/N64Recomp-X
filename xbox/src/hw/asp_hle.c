@@ -32,6 +32,20 @@
  * Kill switch -DASP_HLE_SEGMENTS=0 hands the raw word to the callback instead
  * (for glue that puts full host pointers in the list).
  *
+ * --- N64Recomp-X: the word-swapped RDRAM image (ASP_HLE_WORDSWAP 1) --------
+ * The recompiled game keeps RDRAM as native 32-bit words: an N64 halfword at
+ * A sits at host A ^ 2, a byte at A ^ 3 (xbox/include/xrc/recomp.h). Every
+ * value in it is the game's own N64 data, so nothing needs a port-side
+ * loader. Transfers between RDRAM and DMEM (LOADBUFF, SAVEBUFF, the state and
+ * table loads) move halfwords, swapping the two in each word: DMEM's s16
+ * lanes stay host-native, exactly as below, and a DMEM byte at offset o sits
+ * at host o ^ 1. Only the ADPCM decoder reads bytes (the frames), through
+ * that XOR. The address words are physical (osVirtualToPhysical) and resolve
+ * through the segments as on the RSP. Everything below the next heading
+ * describes the native layout (ASP_HLE_WORDSWAP 0, Wings64-X's port and the
+ * host tests' first group); test_asp_hle.py runs both and requires the same
+ * RDRAM results.
+ *
  * --- Byte order on the port (x86, little-endian) --------------------------
  * DMEM s16 lanes are host-endian; LOADBUFF/SAVEBUFF/DMEMMOVE copy raw bytes.
  * So every s16 buffer in RDRAM the microcode reads or writes is native s16:
@@ -118,11 +132,19 @@
 #include "asp_hle.h"
 
 #ifndef ASP_HLE_SEGMENTS
-#ifdef XBOX   /* the console: patches/029 puts full host pointers in the list */
-#define ASP_HLE_SEGMENTS 0
-#else
 #define ASP_HLE_SEGMENTS 1          /* 0: address words go to the callback unresolved */
 #endif
+#ifndef ASP_HLE_WORDSWAP
+#ifdef XBOX   /* N64Recomp-X's console build: the recompiled game's image */
+#define ASP_HLE_WORDSWAP 1
+#else
+#define ASP_HLE_WORDSWAP 0          /* 1: RDRAM is the word-swapped image (see above) */
+#endif
+#endif
+#if ASP_HLE_WORDSWAP
+#define DMEM_BX 1u                  /* a DMEM byte's host offset: o ^ 1 */
+#else
+#define DMEM_BX 0u
 #endif
 #ifndef ASP_HLE_ENV_FASTPATH
 #define ASP_HLE_ENV_FASTPATH 1      /* 0: ENVMIXER recomputes the gains every sample even when no ramp runs */
@@ -161,6 +183,7 @@ static union {
 } s_dmem;
 
 #define DB(off) s_dmem.b[(off) & DMEM_MASK]
+#define DBN(off) s_dmem.b[((off) ^ DMEM_BX) & DMEM_MASK]   /* a byte in the N64's order (the ADPCM frames) */
 #define DS(lane) s_dmem.s[(lane) & LANE_MASK]
 
 /* What the microcode keeps in its data segment: cleared at every task start. */
@@ -208,18 +231,48 @@ static uint8_t* rdram_at(uint32_t a)
     return p;
 }
 
+/* An RDRAM <-> DMEM transfer of n bytes (both ends 4-aligned in the
+ * word-swapped image, as the callers' a & ~7 and DMEM offsets & ~7 give):
+ * the halfwords of each word trade places, so s16 values arrive native. A
+ * last lone halfword (n % 4 == 2: the codebook's n & ~1) is the RDRAM
+ * word's high half; rd_load and rd_store move it themselves. */
+static void xfer(uint8_t* d, const uint8_t* s, uint32_t n)
+{
+#if ASP_HLE_WORDSWAP
+    uint32_t i;
+    for (i = 0; i + 4 <= n; i += 4) {
+        uint32_t w;
+        memcpy(&w, s + i, 4);
+        w = w << 16 | w >> 16;
+        memcpy(d + i, &w, 4);
+    }
+#else
+    memcpy(d, s, n);
+#endif
+}
+
 /* DIVERGES: an address the callback cannot map reads as zeros and is not written. */
 static void rd_load(uint32_t a, void* dst, uint32_t n)
 {
     uint8_t* p = rdram_at(a);
-    if (p) memcpy(dst, p, n);
-    else memset(dst, 0, n);
+    if (!p) {
+        memset(dst, 0, n);
+        return;
+    }
+    xfer((uint8_t*)dst, p, n);
+#if ASP_HLE_WORDSWAP
+    if (n & 2) memcpy((uint8_t*)dst + (n & ~3u), p + (n & ~3u) + 2, 2);
+#endif
 }
 
 static void rd_store(uint32_t a, const void* src, uint32_t n)
 {
     uint8_t* p = rdram_at(a);
-    if (p) memcpy(p, src, n);
+    if (!p) return;
+    xfer(p, (const uint8_t*)src, n);
+#if ASP_HLE_WORDSWAP
+    if (n & 2) memcpy(p + (n & ~3u) + 2, (const uint8_t*)src + (n & ~3u), 2);
+#endif
 }
 
 /* ---- DMEM bulk (wrap-aware) --------------------------------------------- */
@@ -240,6 +293,27 @@ static void dmem_to(uint8_t* dst, uint32_t off, uint32_t n)
         uint32_t o = off & DMEM_MASK, c = DMEM_SIZE - o;
         if (c > n) c = n;
         memcpy(dst, s_dmem.b + o, c);
+        dst += c, off += c, n -= c;
+    }
+}
+
+/* LOADBUFF / SAVEBUFF: dmem_from / dmem_to through xfer (DMEMMOVE stays raw) */
+static void dmem_from_rd(uint32_t off, const uint8_t* src, uint32_t n)
+{
+    while (n) {
+        uint32_t o = off & DMEM_MASK, c = DMEM_SIZE - o;
+        if (c > n) c = n;
+        xfer(s_dmem.b + o, src, c);
+        src += c, off += c, n -= c;
+    }
+}
+
+static void dmem_to_rd(uint8_t* dst, uint32_t off, uint32_t n)
+{
+    while (n) {
+        uint32_t o = off & DMEM_MASK, c = DMEM_SIZE - o;
+        if (c > n) c = n;
+        xfer(dst, s_dmem.b + o, c);
         dst += c, off += c, n -= c;
     }
 }
@@ -475,7 +549,13 @@ static void cmd_adpcm(uint32_t flags, uint32_t w1)
     /* straight on DMEM when the input bytes and the output lanes neither wrap nor overlap */
     if (nf && T.table_small && (in & DMEM_MASK) + 9 * nf <= DMEM_SIZE && lanes_flat(lane, 16 + 16 * nf) &&
         ((in & DMEM_MASK) + 9 * nf <= (lane & LANE_MASK) * 2 || (lane & LANE_MASK) * 2 + 32 + 32 * nf <= (in & DMEM_MASK))) {
+#if ASP_HLE_WORDSWAP
+        static uint8_t frames[DMEM_SIZE];   /* the frames in N64 byte order */
+        const uint8_t* fr = frames;
+        for (k = 0; k < 9 * nf; k++) frames[k] = DBN(in + k);
+#else
         const uint8_t* fr = s_dmem.b + (in & DMEM_MASK);
+#endif
         int16_t* o = s_dmem.s + (lane & LANE_MASK) + 16;
         for (f = 0; f < nf; f++, fr += 9, o += 16) {
             int sh;
@@ -496,7 +576,7 @@ static void cmd_adpcm(uint32_t flags, uint32_t w1)
     h[0] = last[14], h[1] = last[15];
     for (f = 0; f < nf; f++) {
         uint8_t fr[9];
-        for (k = 0; k < 9; k++) fr[k] = DB(in + k);
+        for (k = 0; k < 9; k++) fr[k] = DBN(in + k);
         adpcm_frame(fr, h, last);
         for (k = 0; k < 16; k++) DS(lane + k) = last[k];
         lane += 16, in += 9;
@@ -825,7 +905,7 @@ static void exec(uint32_t w0, uint32_t w1)
         uint8_t* p;
         if (!n) break;
         p = rdram_at(resolve(w1));
-        if (p) dmem_from(T.in & ~7u, p, n);
+        if (p) dmem_from_rd(T.in & ~7u, p, n);
         else dmem_zero(T.in & ~7u, n);
         break;
     }
@@ -837,7 +917,7 @@ static void exec(uint32_t w0, uint32_t w1)
         uint8_t* p;
         if (!n) break;
         p = rdram_at(resolve(w1));
-        if (p) dmem_to(p, T.out & ~7u, n);
+        if (p) dmem_to_rd(p, T.out & ~7u, n);
         break;
     }
     case A_SEGMENT:

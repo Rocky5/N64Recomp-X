@@ -5,9 +5,12 @@
  * is the buffer playing now, not the queued next one (wings64-dc's finding).
  * A late audio thread finds it overdrawn: the deficit is carried for up to
  * AI_CATCHUP_MAX frames, then dropped and counted as an underrun. OS_EVENT_AI
- * is posted when a buffer would have finished. The samples reach the AC97
- * in M2 (xhw_audio_write); until then they are dropped. */
+ * is posted when a buffer would have finished. Each buffer's samples go to
+ * the AC97 through ../audio.c. */
 #include "ultra.h"
+
+void xrc_audio_rate(uint32_t hz);
+void xrc_audio_buffer(uint32_t buf, uint32_t bytes);
 
 #define AI_CATCHUP_MAX 4
 static uint32_t s_rate = 22050;
@@ -27,16 +30,32 @@ static void drain(void) {
     s_pending -= n > 0x10000000ull ? 0x10000000 : (int32_t)n;
 }
 
-/* osAiSetFrequency(u32): the DAC's rate; the N64 rounds it to its clock's divider */
+uint32_t xu_ai_underruns(void) { return s_underruns; }
+
+/* osAiSetFrequency(u32): the DAC divides the video clock (osViClock, by
+ * osTvType), so the rate is rounded to clock / divider, and that is what
+ * libultra returns and the synthesizer then runs at (22050 asked: 22048) */
 ULTRA(osAiSetFrequency) {
+    uint32_t f = ARG(0), tv = rd32(0x80000300), clock, div;
     (void)rdram;
-    s_rate = ARG(0) ? ARG(0) : 22050;
+    clock = tv == 0 ? 49656530u : tv == 2 ? 48628316u : 48681812u;   /* PAL, MPAL, NTSC */
+    if (!f) {
+        RET(-1);
+        return;
+    }
+    div = (clock + f / 2) / f;
+    if (div < 132) {   /* AI_MIN_DAC_RATE */
+        RET(-1);
+        return;
+    }
+    s_rate = clock / div;
+    xrc_audio_rate(s_rate);
     RET(s_rate);
 }
 
 /* osAiSetNextBuffer(buf, size) */
 ULTRA(osAiSetNextBuffer) {
-    uint32_t size = ARG(1);
+    uint32_t buf = ARG(0), size = ARG(1);
     (void)rdram;
     drain();
     if (s_pending < -AI_CATCHUP_MAX * 368) {
@@ -46,6 +65,7 @@ ULTRA(osAiSetNextBuffer) {
     s_queued = (int32_t)(size >> 2);
     s_pending += s_queued;
     s_samples += size >> 2;
+    xrc_audio_buffer(buf, size);
     RET(0);
 }
 

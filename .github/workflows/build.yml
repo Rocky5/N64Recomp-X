@@ -89,6 +89,7 @@ jobs:
           python tools/xbox/test_syms.py
           python tools/xbox/test_scan64.py
           python tools/xbox/test_time.py
+          python tools/xbox/test_asp_hle.py --bench 0
 
       - name: The platform and runtime alone (no game)
         run: |
