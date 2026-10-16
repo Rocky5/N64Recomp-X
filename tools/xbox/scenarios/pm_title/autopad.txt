@@ -1,0 +1,12 @@
+# Paper Mario from its ROM alone (F3DEX2, docs/renderer.md): the intro and
+# title, START, A into the file select, shots along the way (frame events)
+300 SHOT
+600 SHOT
+900 SHOT
+1000 START for 6
+1100 SHOT
+1150 A for 6
+1250 SHOT
+1300 A for 6
+1500 SHOT
+1800 SHOT

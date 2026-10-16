@@ -255,3 +255,25 @@ singular package for the user to manage"; decided, not built yet, PLAN.md
 the page cache unchanged, the SHA-1 check on the embedded bytes. Nothing
 changes about publishing: a built XBE was never shareable (it holds the
 game's recompiled code). Until then the ROM sits next to `default.xbe`.
+
+## The renderer's microcode families (2026-10-16, PLAN.md 3.7, `docs/renderer.md`)
+
+**The microcode is named by its version text, not by a hash.** PLAN.md
+3.7 had "the task's ucode hash -> the family's opcode table". A table of
+hashes would be data taken from ROMs (and one entry per microcode build);
+the text every graphics microcode carries in its data segment ("RSP Gfx
+ucode F3DEX fifo 1.23 ...") is the microcode's own behaviour, names the
+family and its variant in one rule, and needs nothing per ROM. No text:
+Fast3D, the build before the registry (Pilotwings 64 unchanged).
+
+**One interpreter, a translation layer, not one per family.** F3DEX and
+F3DEX2 share the RDP, the texture loads, the matrix stack and the vertex
+pipeline with Fast3D; only numbering and a few layouts differ. `ex_cmd`
+rewrites a command into the Fast3D one it equals, or does the few that
+have no equal, so the shadow volumes, the widescreen rules, the held frame
+and every fix made for Pilotwings 64 apply to every family at once. The
+state stays in Fast3D's terms.
+
+**CI textures came with the F3DEX work.** Mario Kart 64's textures are
+mostly CI4/CI8 (Pilotwings 64 used none): G_LOADTLUT and a TLUT path in
+texconv.c, the palette in the texture cache key.

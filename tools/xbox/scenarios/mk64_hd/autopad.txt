@@ -1,0 +1,17 @@
+# Mario Kart 64 at 720p 16:9 (dashboard 480p/720p/widescreen): A keeps the
+# mode, then mk64_race's menus to a race with Widescreen Auto (generic hor+
+# on F3DEX lists); three shots (a 720p COM1 shot stalls ~10 s)
+t10000 A for 200
+400 SHOT
+450 START for 6
+600 A for 6
+660 A for 6
+720 A for 6
+780 A for 6
+900 A for 6
+960 A for 6
+1080 A for 6
+1140 A for 6
+1260 A for 600
+1500 SHOT
+1700 SHOT

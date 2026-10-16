@@ -20,8 +20,9 @@ xbox/include/        xhw.h, xgfx.h, xrom.h (the structs both triples share), xbu
 xbox/include/xrc/    recomp.h (the generated code's contract), librecomp/sections.h, xrc_game.h, xrc_prelude.h
 xbox/src/hw/         the platform (nxdk triple): Wings64-X's, plus xhw_combo.c, the loading screen and the
                      BACK menu's card (xhw_splash_draw.c), asp_hle.c on the word-swapped image
-xbox/src/gfx/        the Fast3D interpreter (game triple): Wings64-X's, reading RDRAM by N64 address,
-                     generic hor+, the held frame for the BACK menu
+xbox/src/gfx/        the display-list interpreter (game triple): Wings64-X's Fast3D, reading RDRAM by
+                     N64 address, plus F3DEX/F3DEX2 (f3dex_gbi.h) and the microcode registry (ucode.c;
+                     docs/renderer.md), CI textures, generic hor+, the held frame for the BACK menu
 xbox/src/rt/         the runtime (game triple): boot, settings, settings_menu (the BACK menu), video
                      (the probation's A and timeout), audio (asp_hle and the AI), gfx, mem, ovl (the
                      function table), interp (hand-written code), hooks, nogame/

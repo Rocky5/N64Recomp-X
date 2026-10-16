@@ -28,11 +28,17 @@ unsigned texconv_pow2(unsigned n);
    dst, a linear dst_w x dst_h array of 0xAARRGGBB. Columns beyond w and rows beyond h REPLICATE the last
    column/row (clamp-mode sampling at the edge stays right; the caller scales s,t by w/dst_w, h/dst_h).
    Formats: RGBA16, RGBA32, IA4, IA8, IA16, I4, I8 (I: rgb = alpha = intensity, as the RDP).
-   CI and YUV are unsupported (PW64 uses neither; a TLUT would be a new argument). Bit expansion:
+   CI goes through texconv_ci_to_argb8; YUV is unsupported. Bit expansion:
    5 -> 8 bits (v<<3)|(v>>2); 4 -> 8 (v<<4)|v; 3 -> 8 (v<<5)|(v<<2)|(v>>1); 1-bit alpha -> 0 or 255.
    Returns nonzero on success; 0 for an unsupported format, zero size, dst_w < w, dst_h < h, null
    pointers, or line_bytes too short for w texels. */
 int texconv_to_argb8(const uint8_t* src, unsigned line_bytes, unsigned w, unsigned h, n64_fmt_t fmt, n64_siz_t siz,
                      uint32_t* dst, unsigned dst_w, unsigned dst_h);
+
+/* CI4/CI8 through a TLUT (G_LOADTLUT's 256 entries, big-endian values as loaded): CI8 indexes it
+   directly, CI4 at base (the tile's palette x 16) + the nibble. ia16: the TLUT holds IA16 (othermode
+   G_TT_IA16), else RGBA16. Same layout, edge replication and failure rules as texconv_to_argb8. */
+int texconv_ci_to_argb8(const uint8_t* src, unsigned line_bytes, unsigned w, unsigned h, n64_siz_t siz,
+                        const uint16_t* tlut, unsigned base, int ia16, uint32_t* dst, unsigned dst_w, unsigned dst_h);
 
 #endif /* TEXCONV_H */

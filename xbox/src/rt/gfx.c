@@ -3,9 +3,10 @@
  * osSpTaskStartGo hands a graphics task here (ultra/sp.c); the display list
  * at the task's data_ptr goes through the Fast3D interpreter
  * (xbox/src/gfx/f3d_interp.c) onto the NV2A back end, and the frame is
- * presented at its end. The microcode registry (the task's ucode hash ->
- * the family's opcode table, PLAN.md 3.7) comes with the second family;
- * every pack today is Fast3D. */
+ * presented at its end. The microcode registry (xbox/src/gfx/ucode.c)
+ * names the task's GBI from the version text in its microcode's data
+ * segment (Fast3D, F3DEX, F3DEX2, S2DEX; docs/renderer.md), and the
+ * interpreter starts the list in it. */
 #include "f3d_interp.h"
 #include "settings.h"
 #include "ultra/ultra.h"
@@ -42,6 +43,7 @@ void xrc_gfx_task(uint32_t task) {
         xhw_sleep_ms(10);
         xrc_gfx_lock();
     }
+    f3d_set_ucode(gfx_ucode_at(rd32(task + TK_UCODE_DATA), rd32(task + TK_UCODE_DATA_SIZE)));
     f3d_run(rd32(task + TK_DATA_PTR));
     xrc_gfx_unlock();
 }

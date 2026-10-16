@@ -197,3 +197,31 @@ int texconv_to_argb8(const uint8_t* src, unsigned line_bytes, unsigned w, unsign
         memcpy(dst + (size_t)y * dst_w, dst + (size_t)(h - 1) * dst_w, dst_w * sizeof(uint32_t));
     return 1;
 }
+
+int texconv_ci_to_argb8(const uint8_t* src, unsigned line_bytes, unsigned w, unsigned h, n64_siz_t siz,
+                        const uint16_t* tlut, unsigned base, int ia16, uint32_t* dst, unsigned dst_w, unsigned dst_h)
+{
+    if (!src || !dst || !tlut || w == 0 || h == 0 || dst_w < w || dst_h < h)
+        return 0;
+    if (siz != N64SIZ_4b && siz != N64SIZ_8b)
+        return 0;
+    if ((w * bits_per_texel(siz) + 7) / 8 > line_bytes)
+        return 0;
+    if (!tabs_ready)
+        init_tabs();
+    for (unsigned y = 0; y < h; y++) {
+        const uint8_t* row = src + (size_t)y * line_bytes;
+        uint32_t* d = dst + (size_t)y * dst_w;
+        for (unsigned x = 0; x < w; x++) {
+            unsigned i = siz == N64SIZ_8b ? row[x] : ((base & 0xF0u) | ((row[x >> 1] >> ((x & 1) ? 0 : 4)) & 15u));
+            unsigned v = tlut[i & 255u];
+            d[x] = ia16 ? ARGB(v & 255u, v >> 8, v >> 8, v >> 8)
+                        : ARGB((v & 1) ? 255 : 0, exp5[v >> 11], exp5[(v >> 6) & 31], exp5[(v >> 1) & 31]);
+        }
+        for (unsigned x = w; x < dst_w; x++)
+            d[x] = d[w - 1];
+    }
+    for (unsigned y = h; y < dst_h; y++)
+        memcpy(dst + (size_t)y * dst_w, dst + (size_t)(h - 1) * dst_w, dst_w * sizeof(uint32_t));
+    return 1;
+}

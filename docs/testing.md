@@ -128,6 +128,24 @@ Timed events follow the ACPI clock.
 | `-DXRC_AUDIO_DUMP=<s>` | 0 | test builds: 3 s of the output from second `<s>` as `[AUDDUMP]` lines (`tools/xbox/auddump_to_wav.py serial.log out.wav`: the WAV and its numbers, RMS, L/R correlation, the energy below 4 kHz; the WAV stays outside the tree) |
 | `-DXRC_MENU=0` | 1 | no BACK menu (settings.ini still works) |
 | `-DASP_HLE_WORDSWAP=0` | 1 on the console | `asp_hle` on a native-order RDRAM (Wings64-X's layout; the host tests' first group) |
+| `-DXGFX_UCODE_F3DEX=0` | 1 | F3DEX 0.9x/1.x microcodes (and F3DLX, F3DLP, L3DEX, .NoN/.Rej) read as Fast3D, the build before the registry (`docs/renderer.md`) |
+| `-DXGFX_UCODE_F3DEX2=0` | 1 | F3DEX2 microcodes (F3DZEX, F3DLX2, .NoN/.Rej) read as Fast3D |
+| `-DXGFX_UCODE_S2DEX=0` | 1 | S2DEX 1.x/2.x read as Fast3D (its own commands are skipped either way; not drawn yet) |
 
 Wings64-X's platform switches (`XHW_*`, `XGFX_*`) carry over; its
 `docs/testing.md` lists them.
+
+## The renderer on the host (`docs/renderer.md`)
+
+`python tools/xbox/test_f3dex.py`: the real interpreter (`f3d_interp.c`,
+`texconv.c`, `ucode.c`) over a fake RDRAM and a back end that records
+`xgfx_draw`'s vertices. Display lists built in the test in each GBI
+(Fast3D, F3DEX, F3D_OLD's QUAD and CULLDL, F3DEX2 with its MTX, MOVEMEM,
+MOVEWORD and GEOMETRYMODE layouts, the 32-entry buffer, CULLDL, BRANCH_Z,
+POPMTX, a segmented G_VTX, G_LOAD_UCODE), CI4/CI8 through a TLUT, and the
+microcode version texts; no ROM. Scenarios for the F3DEX games:
+`tools/xbox/scenarios/mk64_race` (Mario Kart 64: the menus to a Luigi
+Raceway race, A held, shots), `mk64_hd` (the same at 720p 16:9: hor+;
+needs the 720p/widescreen slot config above) and `pm_title` (Paper Mario's title, once
+its ROM-only build gets that far); both use frame events, since the shots
+stall the game for seconds.
