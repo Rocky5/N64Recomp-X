@@ -12,17 +12,46 @@ runs [Melee-X](https://github.com/TechProGabe/Melee-X),
 [OpenCrossing-Xbox](https://github.com/TechProGabe/OpenCrossing-Xbox) and
 [Wings64-X](https://github.com/TechProGabe/Wings64-X).
 
-**Status: planning.** There is no code yet. The implementation plan is
-[`docs/PLAN.md`](docs/PLAN.md); the evidence behind it is
-[`docs/research.md`](docs/research.md).
+**Status: milestone M0.** The tool, the toolchain, the platform layer and
+the loading screen exist; no game runs yet (that is M1, Pilotwings 64). A
+ROM-free test program already goes the whole way: `n64rx build` recompiles
+it, builds the XBE, and the Xbox (xemu so far) runs the recompiled code and
+reports its checks. The plan is [`docs/PLAN.md`](docs/PLAN.md); what was
+verified, and how, is [`docs/handoff.md`](docs/handoff.md).
 
-How it is meant to work when it exists: install Docker (or let the tool set
-up a native toolchain), run `n64rx build "<your rom>.z64"` on Windows, macOS
-or Linux, and copy the folder it produces to your Xbox. Every game gets the
-same port features: a loading screen in the family's "TechProGabe
-Presents..." style with safe 480i fallbacks, output up to 720p, widescreen,
-a menu on the BACK button, drawn over the game, for the port's settings
-(video, controls, audio, saves), and `L + R + BACK + BLACK` to return to the
-dashboard from anywhere. Nothing from any game ships with this project, no
-built game is ever published, and nothing derived from a ROM is ever
-committed here.
+## Three steps (once games are supported)
+
+1. Install Docker Desktop, or run `n64rx doctor --install` for a native
+   toolchain (Windows, macOS, Linux). `n64rx doctor` says what is there and
+   what is missing.
+2. `n64rx build "Your Game (USA).z64"` (or drop the ROM onto `n64rx.cmd` on
+   Windows).
+3. Copy the folder it makes (`out/<game>/`) to your Xbox, for example to
+   `E:\Games\`, and start `default.xbe`.
+
+Nothing leaves your machine: the ROM is read where it is, the build is
+local, and the tool uploads nothing.
+
+From a checkout today:
+
+```sh
+git clone --recursive https://github.com/TechProGabe/N64Recomp-X && cd N64Recomp-X
+./n64rx doctor                                  # n64rx.cmd doctor on Windows
+python tools/xbox/make_test_rom.py build-host/test/test.z64
+./n64rx build build-host/test/test.z64          # -> out/N64Recomp-X test/
+```
+
+## On the console
+
+| | |
+|---|---|
+| hold BACK while it loads | safe video: this boot runs 480i 4:3, and it is saved |
+| hold BACK + START | safe video and the default settings |
+| BACK | the port's settings menu (from M2) |
+| L + R + BACK + BLACK | back to the dashboard, anywhere |
+| L + R + BACK + WHITE | restart, anywhere |
+
+Every game gets the same port: the "TechProGabe Presents..." loading screen,
+output up to 720p, widescreen, the BACK menu and the exit combos. Nothing
+from any game ships with this project, no built game is ever published, and
+nothing derived from a ROM is committed here ([`LICENSE.md`](LICENSE.md)).

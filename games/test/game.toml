@@ -1,0 +1,33 @@
+# The ROM-free end-to-end test (PLAN.md 4.6): a self-checking MIPS program
+# assembled by tools/xbox/make_test_rom.py (no libultra, no Nintendo code,
+# never committed: n64rx and CI build it). It goes through the whole
+# pipeline (recompiler, our recomp.h, the RDRAM window, the build, the XBE)
+# and the console runs it and shows what its checks found.
+[game]
+id = "test"
+title = "N64Recomp-X test"
+code = "NXTE"
+title_id = 0x4E52FFFE
+sha1 = ["a182648693f416078e0bff023243d552ad46fe16"]
+rom_size = 1048576
+test = true
+
+[rom]
+compressed = "none"
+resident = "always"
+
+[cpu]
+entrypoint = 0x80000400
+boot_size = 0x1000
+rdram_mb = 4
+gpr = "auto"
+
+[rsp]
+gfx = []
+audio = "hle"
+
+[save]
+type = "none"
+
+[status]
+stage = "complete"

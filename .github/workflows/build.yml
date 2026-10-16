@@ -1,0 +1,142 @@
+# The native toolchain on Linux, macOS and Windows (tools/xbox/setup.sh, as
+# a user's `n64rx doctor --install` runs it), the platform-and-runtime XBE,
+# the host tests, and the ROM-free end-to-end run: the test ROM
+# (tools/xbox/make_test_rom.py, assembled here, no Nintendo code) through
+# `n64rx build` to a linking XBE. A fourth job builds the multi-arch SDK
+# image and pushes it to GHCR when its inputs change. No job ever has a game
+# ROM (PLAN.md 4.6).
+name: build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          location: C:\
+          update: false
+          install: >-
+            make git bison flex cmake ninja patch mingw-w64-x86_64-clang mingw-w64-x86_64-lld
+            mingw-w64-x86_64-llvm mingw-w64-x86_64-python mingw-w64-x86_64-python-pillow
+
+      - name: Toolchain locations
+        run: |
+          # Windows: the defaults everywhere (MSYS2 in C:/msys64, nxdk in C:/xdev/nxdk)
+          if [ "$RUNNER_OS" != Windows ]; then
+            echo "NXDK_DIR=$HOME/toolchain/nxdk" >> "$GITHUB_ENV"
+            [ "$RUNNER_OS" = Linux ] && echo "LLVM=$HOME/toolchain/llvm21" >> "$GITHUB_ENV"
+          fi
+
+      # nxdk, LLVM and N64Recomp take most of the time; they change with setup.sh or the pins
+      - name: Toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/toolchain
+            C:/xdev/nxdk
+            build-host/recomp
+          key: toolchain-${{ runner.os }}-${{ hashFiles('tools/xbox/setup.sh') }}-${{ hashFiles('.gitmodules') }}-recomp-ffb39cd
+
+      - name: Toolchain (tools/xbox/setup.sh)
+        run: bash tools/xbox/setup.sh
+
+      - name: Homebrew's LLVM 21 and lld on the PATH (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "LLVM=$(brew --prefix llvm@21)" >> "$GITHUB_ENV"
+          if brew --prefix lld@21 >/dev/null 2>&1; then echo "$(brew --prefix lld@21)/bin" >> "$GITHUB_PATH"; fi
+
+      - name: n64rx doctor
+        run: python tools/n64rx/n64rx.py doctor
+
+      - name: Host tests
+        run: |
+          python tools/xbox/rom_leak_check.py
+          python tools/xbox/test_pad_combo.py
+          python tools/xbox/test_splash.py
+          python tools/xbox/test_settings.py
+
+      - name: The platform and runtime alone (no game)
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then tools/xbox/msys/build.sh; else xbox/build.sh; fi
+
+      - name: n64rx tests
+        run: python tools/xbox/test_n64rx.py
+
+      - name: End to end, ROM-free (the test ROM through n64rx build)
+        run: |
+          python tools/xbox/make_test_rom.py build-host/test/test.z64
+          python tools/n64rx/n64rx.py build build-host/test/test.z64 --engine native --out out
+          ls -la "out/N64Recomp-X test"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: n64recomp-x-${{ runner.os }}
+          path: |
+            build-xbox/xbe/default.xbe
+            build-xbox/n64recomp_x.map
+          if-no-files-found: error
+          retention-days: 14
+
+  sdk-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Image tag
+        id: tag
+        run: echo "image=$(cat tools/xbox/docker/IMAGE)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # pushed from dev only; every other run just checks that it builds
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: tools/xbox/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+          tags: ${{ steps.tag.outputs.image }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

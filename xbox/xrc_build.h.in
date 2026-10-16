@@ -1,0 +1,8 @@
+/* xrc_build.h - what this build is (xbox/CMakeLists.txt writes it from the
+ * game pack's facts; both triples include it). */
+#ifndef XRC_BUILD_H
+#define XRC_BUILD_H
+#define XRC_TITLE_ID_HEX "@XRC_TITLE_ID@"
+#define XRC_TITLE_ID 0x@XRC_TITLE_ID@u
+#define XRC_VERSION "@XRC_VERSION@"
+#endif

@@ -23,6 +23,7 @@ rsp/*.cpp
 # build output, releases, caches
 /build/
 /build-xbox*/
+/build-host/
 /out/
 /dist/
 /.n64rx/

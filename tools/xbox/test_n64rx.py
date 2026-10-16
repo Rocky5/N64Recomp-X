@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""The n64rx tool on the host, with no game ROM (PLAN.md 4.6, 5.1):
+detection in every byte order, the messages for a wrong ROM, the cache key,
+the output folder's layout (a fake engine stands in for the toolchain),
+doctor on a machine without Docker, and a ROM dropped onto the CLI."""
+import contextlib
+import io
+import pathlib
+import shutil
+import struct
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'tools/n64rx'))
+sys.path.insert(0, str(ROOT / 'tools/xbox'))
+
+from n64rx_lib import N64rxError, cli, doctor, engines, packs, pipeline, rom as romlib  # noqa: E402
+import make_test_rom  # noqa: E402
+
+TEST_SHA1 = 'a182648693f416078e0bff023243d552ad46fe16'
+
+
+def synthetic(code=b'NZZE', title=b'SYNTHETIC GAME      ', size=0x100000):
+    """a made-up image with an N64 header: no game data"""
+    d = bytearray(size)
+    struct.pack_into('>I', d, 0, 0x80371240)
+    d[0x20:0x34] = title
+    d[0x3B:0x3F] = code
+    for i in range(0x1000, size, 4):
+        struct.pack_into('>I', d, i, (i * 2654435761) & 0xFFFFFFFF)
+    return bytes(d)
+
+
+def to_v64(z):
+    b = bytearray(z)
+    b[0::2], b[1::2] = z[1::2], z[0::2]
+    return bytes(b)
+
+
+def to_n64(z):
+    b = bytearray(z)
+    b[0::4], b[1::4], b[2::4], b[3::4] = z[3::4], z[2::4], z[1::4], z[0::4]
+    return bytes(b)
+
+
+def fake_pack(tmp, rom, pid='n64rxtest', code=None):
+    d = pathlib.Path(tmp) / pid
+    d.mkdir()
+    (d / 'game.toml').write_text(f'''[game]
+id = "{pid}"
+title = "N64Rx: Test / Pack?"
+code = "{code or rom.code}"
+title_id = 0x4E52FFF0
+sha1 = ["{rom.sha1}"]
+[cpu]
+gpr = "64"
+''')
+    (d / 'recomp.toml').write_text('[input]\nsymbols_file_path = "x.syms.toml"\nrom_file_path = "@ROM@"\n'
+                                   'output_func_path = "@OUT@"\n')
+    (d / 'x.syms.toml').write_text('')
+    return packs.load(d)
+
+
+class Rom(unittest.TestCase):
+    def test_byte_orders(self):
+        z = synthetic()
+        roms = [romlib.parse('x.z64', z), romlib.parse('x.v64', to_v64(z)), romlib.parse('x.n64', to_n64(z))]
+        self.assertEqual({r.sha1 for r in roms}, {roms[0].sha1})
+        self.assertEqual([r.order for r in roms], ['z64', 'v64', 'n64'])
+        self.assertEqual(roms[1].code, 'NZZE')
+        self.assertEqual(roms[2].title, 'SYNTHETIC GAME')
+        self.assertEqual(roms[0].region, 'USA')
+
+    def test_not_a_rom(self):
+        with self.assertRaises(N64rxError) as e:
+            romlib.parse('x.z64', b'PK\x03\x04' + bytes(0x200000))
+        self.assertIn('not an N64 ROM', e.exception.message)
+        self.assertTrue(e.exception.hint)
+
+    def test_too_small_and_archive(self):
+        with self.assertRaises(N64rxError):
+            romlib.parse('x.z64', synthetic(size=0x10000))
+        with tempfile.TemporaryDirectory() as tmp:
+            z = pathlib.Path(tmp) / 'game.zip'
+            z.write_bytes(b'PK')
+            with self.assertRaises(N64rxError) as e:
+                romlib.read(z)
+            self.assertIn('Extract', e.exception.hint)
+            with self.assertRaises(N64rxError) as e:
+                romlib.read(pathlib.Path(tmp) / 'missing.z64')
+            self.assertIn('n64rx build', e.exception.hint)
+
+    def test_test_rom_is_deterministic(self):
+        _, data, _ = make_test_rom.build()
+        r = romlib.parse('test.z64', data)
+        self.assertEqual(r.sha1, TEST_SHA1)
+        self.assertIn(TEST_SHA1, packs.load(ROOT / 'games/test').sha1)
+        self.assertEqual(packs.match(r, packs.all_packs()).id, 'test')
+
+
+class Packs(unittest.TestCase):
+    def test_messages(self):
+        good = romlib.parse('a.z64', synthetic())
+        with tempfile.TemporaryDirectory() as tmp:
+            p = fake_pack(tmp, good)
+            self.assertIs(packs.match(good, [p]), p)
+            europe = romlib.parse('b.z64', synthetic(code=b'NZZP'))
+            with self.assertRaises(N64rxError) as e:
+                packs.match(europe, [p])
+            self.assertIn('Europe', e.exception.message)
+            self.assertIn('NZZE', e.exception.message)
+            other_dump = romlib.parse('c.z64', synthetic()[:-4] + b'\1\2\3\4')
+            with self.assertRaises(N64rxError) as e:
+                packs.match(other_dump, [p])
+            self.assertIn('not the dump', e.exception.message)
+            self.assertIn(other_dump.sha1, e.exception.hint)
+            unknown = romlib.parse('d.z64', synthetic(code=b'NQQE', title=b'SOMETHING ELSE      '))
+            with self.assertRaises(N64rxError) as e:
+                packs.match(unknown, [p])
+            self.assertIn('SOMETHING ELSE', e.exception.message)
+            self.assertIn('games/README.md', e.exception.hint)
+
+    def test_cache_key(self):
+        rom = romlib.parse('a.z64', synthetic())
+        with tempfile.TemporaryDirectory() as tmp:
+            p = fake_pack(tmp, rom)
+            k = pipeline.cache_key(rom, p, pin='abc')
+            self.assertEqual(k, pipeline.cache_key(rom, p, pin='abc'))
+            self.assertNotEqual(k, pipeline.cache_key(rom, p, pin='abd'))
+            self.assertNotEqual(k, pipeline.cache_key(rom, p, gpr='32', pin='abc'))
+            (p.dir / 'x.syms.toml').write_text('# changed\n')
+            self.assertNotEqual(k, pipeline.cache_key(rom, p, pin='abc'))
+
+    def test_folder_name(self):
+        self.assertEqual(pipeline.folder_name('N64Rx: Test / Pack?'), 'N64Rx_ Test _ Pack_')
+        self.assertEqual(len(pipeline.folder_name('x' * 80)), 42)
+
+
+class FakeEngine:
+    """stands in for the toolchain: writes what the real steps would"""
+    name = 'fake'
+
+    def __init__(self, xbe):
+        self.xbe = xbe
+        self.recompiles = 0
+
+    def ensure_recompiler(self, log):
+        pass
+
+    def recompile(self, config, log):
+        self.recompiles += 1
+        gen = pathlib.Path([l.split('"')[1] for l in config.read_text().splitlines() if 'output_func_path' in l][0])
+        gen.mkdir(parents=True, exist_ok=True)
+        (gen / 'funcs.h').write_text('void a(uint8_t* rdram, recomp_context* ctx);\n')
+        (gen / 'funcs_0.c').write_text('')
+        return 0
+
+    def build_xbe(self, env, log):
+        out = ROOT / 'build-xbox' / 'n64rxtest' / 'xbox'
+        (out / 'xbe').mkdir(parents=True, exist_ok=True)
+        shutil.copy2(self.xbe, out / 'xbe/default.xbe')
+        (out / 'n64recomp_x.map').write_text('map\n')
+        self.env = env
+        return 0
+
+
+@unittest.skipUnless(any((ROOT / d / 'xbe/default.xbe').exists() for d in ('build-xbox',)),
+                     'needs a built platform XBE (xbox/build.sh) for the XBE pass')
+class Build(unittest.TestCase):
+    def test_output_folder(self):
+        rom_data = synthetic()
+        with tempfile.TemporaryDirectory() as tmp:
+            rom_path = pathlib.Path(tmp) / 'game.v64'
+            rom_path.write_bytes(to_v64(rom_data))
+            rom = romlib.parse(rom_path, rom_data)
+            pack = fake_pack(tmp, rom)
+            eng = FakeEngine(ROOT / 'build-xbox/xbe/default.xbe')
+            out = pathlib.Path(tmp) / 'out'
+            lines = []
+            try:
+                with mock.patch.object(packs, 'all_packs', return_value=[pack]), \
+                        mock.patch.object(pipeline, 'cache_dir', return_value=pathlib.Path(tmp)):
+                    folder = pipeline.build(rom_path, out=out, eng=eng, echo=lines.append)
+                    self.assertEqual(eng.recompiles, 1)
+                    pipeline.build(rom_path, out=out, eng=eng, echo=lines.append)
+                    self.assertEqual(eng.recompiles, 1, 'the second build with the same inputs recompiled')
+            finally:
+                shutil.rmtree(ROOT / 'build-xbox/n64rxtest', ignore_errors=True)
+            self.assertEqual(folder.name, 'N64Rx_ Test _ Pack_')
+            names = sorted(p.name for p in folder.iterdir())
+            self.assertEqual(names, ['N64Rx_ Test _ Pack_.z64', 'README.txt', 'TitleImage.xbx', 'TitleMeta.xbx',
+                                     'debug', 'default.tbn', 'default.xbe'])
+            self.assertEqual((folder / 'N64Rx_ Test _ Pack_.z64').read_bytes(), rom_data, 'the ROM is not normalised')
+            xbe = (folder / 'default.xbe').read_bytes()
+            base, cert = struct.unpack_from('<I', xbe, 0x104)[0], struct.unpack_from('<I', xbe, 0x118)[0]
+            self.assertEqual(struct.unpack_from('<I', xbe, cert - base + 8)[0], 0x4E52FFF0)
+            self.assertIn(b'$$XTIMAGE', xbe)
+            self.assertIn('E:\\UDATA\\4E52FFF0', (folder / 'README.txt').read_text())
+            self.assertEqual(eng.env['XRC_TITLE_ID'], '4E52FFF0')
+            self.assertTrue(any(l.startswith('[5/5]') for l in lines))
+
+
+class Doctor(unittest.TestCase):
+    def test_without_docker(self):
+        real_which = shutil.which
+        with mock.patch.object(engines.shutil, 'which', lambda n: None if n == 'docker' else real_which(n)):
+            checks = engines.Docker().checks()
+            self.assertFalse(checks[0].ok)
+            self.assertIn('Docker Desktop', checks[0].fix)
+            out = io.StringIO()
+            with mock.patch.object(engines.Native, 'checks', lambda self: [engines.Check('nxdk', False, 'missing',
+                                                                                         'run setup.sh')]):
+                n, d, _ = doctor.report(echo=lambda s: out.write(s + '\n'))
+            self.assertFalse(n or d)
+            text = out.getvalue()
+            self.assertIn('Not ready yet', text)
+            self.assertIn('Docker Desktop', text)
+            self.assertIn('run setup.sh', text)
+
+
+class Cli(unittest.TestCase):
+    def test_dropped_rom_is_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r = pathlib.Path(tmp) / 'Game (USA).z64'
+            r.write_bytes(synthetic())
+            with mock.patch.object(pipeline, 'build') as b:
+                self.assertEqual(cli.main([str(r)]), 0)
+                b.assert_called_once()
+                self.assertEqual(b.call_args[0][0], str(r))
+
+    def test_error_says_what_to_do(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(cli.main(['build', 'no-such-file.z64']), 2)
+        self.assertIn('What to do:', err.getvalue())
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=1)

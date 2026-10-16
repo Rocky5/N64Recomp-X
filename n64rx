@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# n64rx from a checkout (macOS, Linux, Git Bash on Windows): PLAN.md 5.1.
+# The first Python 3.11+ on the PATH (Windows' "python3" may be the Store stub).
+for py in python3 python py; do
+  if command -v "$py" >/dev/null 2>&1 && "$py" -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1; then
+    exec "$py" "$(dirname "$0")/tools/n64rx/n64rx.py" "$@"
+  fi
+done
+echo "n64rx needs Python 3.11 or newer: https://www.python.org" >&2
+exit 1

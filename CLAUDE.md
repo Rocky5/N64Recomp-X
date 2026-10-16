@@ -8,10 +8,12 @@ platform layer (NV2A back end, AC97, USB pads, the splash, the console
 tooling). Target: retail Xbox, stock 64 MB. The user-facing tool, `n64rx`,
 runs on Windows, macOS and Linux with one command.
 
-**Status: planning.** `docs/PLAN.md` is binding on the approach (§1), the
-architecture (§3), the build, game packs and tests (§4), the feature specs
-(§5), the milestone order and exit checks (§6). `docs/research.md` holds the
-evidence. Read both before writing code.
+**Status: M0 done on `dev` (Windows + xemu verified; Linux, macOS, Docker
+and the console not yet: `docs/handoff.md`).** `docs/PLAN.md` is binding on
+the approach (§1), the architecture (§3), the build, game packs and tests
+(§4), the feature specs (§5), the milestone order and exit checks (§6).
+`docs/research.md` holds the evidence. Read both, then `docs/handoff.md` and
+`docs/decisions.md`, before writing code.
 
 ## Hard rules
 
@@ -75,8 +77,15 @@ evidence. Read both before writing code.
 |---|---|
 | `docs/PLAN.md` | the implementation plan: approach, architecture, the generated-code contract on the P3, runtime, overlays and code on demand, ROM sources, graphics and audio HLE, memory budget, build and game packs, `n64rx`, the game ladder, milestones, risks, open questions, seed prompt |
 | `docs/research.md` | the evidence: N64Recomp and its header, the GPL runtime's surface (read only), Zelda64Recomp's structure, the Xbox section-loading and memory facts, what each sibling gives, candidate games with "verify" marks |
+| `docs/architecture.md` | what exists: the tree, the boot, the generated code's world, the exit combos |
+| `docs/toolchain.md` | the two triples, setup per OS, Docker, N64Recomp, LTO |
+| `docs/testing.md` | host tests, the xemu runner, scripted input (`t<ms>` events), the switch table |
+| `docs/decisions.md` | decisions made while building and why (incl. the plan's departures) |
+| `docs/handoff.md` | per milestone: verified how, not verified, gaps carried on |
+| `docs/look/` | the loading screen's baseline shots (xemu, STILL) |
+| `games/README.md` | how a game pack is made |
+| `LICENSE.md` | MIT; what came from where; what was only read |
 
-Settled fact → the matching `docs/` file (to be created per `docs/PLAN.md`
-§3.1 and §6 M0: `architecture.md`, `platform.md`, `renderer.md`,
-`toolchain.md`, `testing.md`, `decisions.md`, `perf.md`, `handoff.md`,
-`games/README.md`). Add or remove a doc → update this map.
+Still to create per `docs/PLAN.md` §3.1 and §6: `platform.md`, `renderer.md`,
+`perf.md` (M3). Settled fact → the matching `docs/` file; add or remove a doc
+→ update this map.

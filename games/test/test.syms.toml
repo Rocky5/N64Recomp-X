@@ -1,0 +1,15 @@
+# The test ROM's symbols (tools/xbox/make_test_rom.py writes this file).
+
+[[section]]
+name = ".text"
+rom = 0x00001000
+vram = 0x80000400
+size = 0x4C4
+
+functions = [
+    { name = "entry", vram = 0x80000400, size = 0x410 },
+    { name = "check", vram = 0x80000810, size = 0x28 },
+    { name = "fib", vram = 0x80000838, size = 0x28 },
+    { name = "add3", vram = 0x80000860, size = 0xC },
+    { name = "sw_case", vram = 0x8000086C, size = 0x48 },
+]

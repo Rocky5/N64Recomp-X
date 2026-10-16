@@ -1,0 +1,124 @@
+/* boot.c - from the platform's boot to the game (PLAN.md 5.5, 6 M0).
+ *
+ * xhw_main.c has opened the log, started the watchdog and put the loading
+ * screen up; this runs its stages:
+ *
+ *   settings      settings.ini (per game), then the video line: which mode
+ *                 is coming, why, and the probation note when it is new here
+ *   the game      no game built in: the card says so and how to build one.
+ *                 The test pack (games/test): "Preparing memory" (the RDRAM
+ *                 window), "Loading code" (the function table), "Starting"
+ *                 (the recompiled entrypoint runs on the window), then a card
+ *                 with what its checks found. A game: M1.
+ *   the holds     xhw_splash_finish waits out the minimum hold and returns
+ *                 what BACK / BACK + START latched; the settings apply it
+ */
+#include <stdio.h>
+#include <string.h>
+
+#include "rt.h"
+#include "settings.h"
+#include "xhw.h"
+#include "xrc_build.h"
+
+#define TEST_RES 0x80100000u
+#define TEST_MAGIC 0x4E525831u   /* "NRX1": tools/xbox/make_test_rom.py */
+
+static const char* aspect(const xhw_video_plan* p) {
+    int ws = g_xrc_settings.widescreen;
+    if (ws == XRC_WS_STRETCH) return "stretched";
+    if (!strcmp(p->name, "720p")) return ws == XRC_WS_OFF ? "4:3" : "16:9";
+    if (ws == XRC_WS_ON) return "16:9";
+    if (ws == XRC_WS_AUTO && p->widescreen_dash) return "16:9";
+    return "4:3";
+}
+
+static void video_line(void) {
+    xhw_video_plan p;
+    char line[72], note[72];
+    xhw_video_set_pref(g_xrc_settings.output, g_xrc_settings.progressive);
+    xhw_video_set_confirmed(g_xrc_settings.video_confirmed);
+    xhw_video_predict(&p);
+    snprintf(line, sizeof line, "Video: %s %s (%s).", p.name, aspect(&p), p.why);
+    note[0] = '\0';
+    if (p.probation) snprintf(note, sizeof note, "First time at %s here: press A within 15 s to keep it.", p.name);
+    xhw_splash_video(line, note);
+    xhw_logf("[BOOT] video line: %s%s%s", line, note[0] ? " " : "", note);
+}
+
+static void finish_loading_screen(void) {
+    int hold = xhw_splash_finish();
+    xrc_settings_apply_hold(hold);
+}
+
+static void no_game(void) {
+    static const char* const lines[] = {
+        "This XBE is the N64Recomp-X platform and runtime alone.",
+        "",
+        "To play a game, build it from your own ROM on a PC:",
+        "    n64rx build \"<your ROM>.z64\"",
+        "and copy the folder it makes to the Xbox.",
+        NULL,
+    };
+    xhw_splash_card_set("No game built in", "n64rx build <your ROM>", NULL);
+    xhw_splash_stage("No game in this build");
+    xhw_splash_progress(1.0f);
+    finish_loading_screen();
+    xhw_exit_reason("card: no game built in");
+    xhw_error_card("No game built in", lines, 30);
+}
+
+/* games/test: the recompiled test program on the window, then its result */
+static void test_rom(void) {
+    static char l[6][72];
+    const char* lines[7];
+    recomp_context ctx;
+    uint32_t magic, fails, steps, last;
+    uint64_t t0, us;
+    xhw_splash_stage("Preparing memory");
+    xhw_splash_progress(0.2f);
+    if (!xrc_mem_init(xrc_game.rdram_mb ? xrc_game.rdram_mb : 4)) xhw_fatal("Out of memory", "No room for the N64's RAM.");
+    xhw_splash_stage("Loading code");
+    xhw_splash_progress(0.5f);
+    if (!xrc_ovl_init()) xhw_fatal("Can't load the code", "The function table could not be built.");
+    snprintf(l[0], sizeof l[0], "Starting %s", xrc_game.title);
+    xhw_splash_stage(l[0]);
+    xhw_splash_progress(0.8f);
+    memset(&ctx, 0, sizeof ctx);
+    ctx.r29 = (gpr)(int32_t)(0x80000000u + xrc_rdram_size - 16);   /* the N64 stack at the top of the window */
+    set_cop1_cs(0);
+    t0 = xhw_time_us();
+    xrc_game.entry(xrc_rdram, &ctx);
+    us = xhw_time_us() - t0;
+    set_cop1_cs(0);
+    magic = xrc_word(TEST_RES);
+    fails = xrc_word(TEST_RES + 4);
+    steps = xrc_word(TEST_RES + 8);
+    last = xrc_word(TEST_RES + 12);
+    xhw_logf("[RECOMP] test: magic %08x, %u checks, %u failed (last bad value %08x), %u us, gpr %d", (unsigned)magic,
+             (unsigned)steps, (unsigned)fails, (unsigned)last, (unsigned)us, xrc_game.gpr_bits);
+    xhw_splash_progress(1.0f);
+    finish_loading_screen();
+    snprintf(l[0], sizeof l[0], "The recompiled test program ran on the RDRAM window.");
+    snprintf(l[1], sizeof l[1], "Checks: %u, failed: %u%s", (unsigned)steps, (unsigned)fails,
+             magic == TEST_MAGIC ? "" : " (it did not finish)");
+    snprintf(l[2], sizeof l[2], "Registers: %d-bit; %u functions; %u us", xrc_game.gpr_bits,
+             (unsigned)xrc_ovl_function_count(), (unsigned)us);
+    l[3][0] = '\0';
+    if (fails) snprintf(l[3], sizeof l[3], "Last failing value: %08x", (unsigned)last);
+    lines[0] = l[0]; lines[1] = l[1]; lines[2] = l[2]; lines[3] = l[3]; lines[4] = NULL;
+    xhw_exit_reason(magic == TEST_MAGIC && !fails ? "card: test ROM passed" : "card: test ROM FAILED");
+    xhw_error_card(magic == TEST_MAGIC && !fails ? "Test ROM: passed" : "Test ROM: FAILED", lines, 30);
+}
+
+void xrc_boot(void) {
+    xhw_logf("[RECOMP] N64Recomp-X %s, game %s, title id " XRC_TITLE_ID_HEX, XRC_VERSION,
+             xrc_game.id ? xrc_game.id : "(none)");
+    xrc_settings_load();
+    video_line();
+    if (!xrc_game.id) no_game();
+    xhw_splash_card_set(xrc_game.title, xrc_game.test_rom ? "the ROM-free end-to-end test" : xrc_game.id,
+                        xrc_game.icon);
+    if (xrc_game.test_rom) test_rom();
+    xhw_fatal("Not yet", "Games run from milestone M1 on.");
+}
