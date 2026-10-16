@@ -109,9 +109,11 @@ def parse_entry(rom, entry):
             break
         elif ins.is_j:
             main = ins.target
+            empty = empty or (bss is None and i < 8 and 29 in regs)   # the stack, then j (Rogue Squadron)
             break
-        elif ins.is_jal and (bss is not None or empty):   # main called, the entry spins after it
-            main = ins.target
+        elif ins.is_jal and (bss is not None or empty or (i < 8 and 29 in regs)):
+            main = ins.target   # main called, the entry spins after it; or the stack set
+            empty = empty or bss is None   # and main called at once, no BSS clear (Madden 2000, Bust-A-Move '99)
             break
         elif d is not None and d not in (8, 9, 10, 29):
             regs.pop(d, None)
