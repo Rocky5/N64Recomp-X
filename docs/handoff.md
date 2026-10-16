@@ -405,3 +405,36 @@ microcode was never logged and its resampler table never searched.
 - The Rumble Pak at the PIF level ran on no game; the console not touched.
 - `-DXRC_CONT_MAX_ADDR` needs osContInit named (the analyser names it in
   every ROM so far); without it a recompiled pak path sees no pak.
+### The microcode registry and the F3DEX family (M4 work, agent `f3dex`, 2026-10-16)
+
+**Verified**
+
+- `python tools/xbox/test_f3dex.py`: the real interpreter over a fake
+  RDRAM and back end; Fast3D, F3DEX, F3D_OLD, F3DEX2 lists built in the
+  test (TRI2, QUAD, CULLDL, BRANCH_Z, POPMTX, segmented G_VTX, the 32-entry
+  buffer, back-face culling with F3DEX2's bits, G_LOAD_UCODE switching the
+  family), CI4/CI8 through a TLUT, the version texts; passes, and fails when
+  the F3DEX triangles are dropped (mutation check).
+- Mario Kart 64 from its ROM alone, xemu (slot 10), `scenarios/mk64_race`:
+  `[GFX] ucode RSP Gfx ucode F3DEX 0.95 ... F3DEX, 32 vertices, old`; the
+  title, game select, player select, map select and a Luigi Raceway race
+  (HUD, the karts, the track, the course map) drawn; no texture misses (CI
+  textures came with G_LOADTLUT), no unhandled commands; A held from the
+  countdown, the kart drives (5th place, an item picked up). At 720p 16:9
+  (`scenarios/mk64_hd`, a slot config with `eeprom_video.py
+  480p,720p,widescreen`): 720p kept with A, the race hor+ with the HUD in
+  the 4:3 box.
+- Pilotwings 64 (pack build), xemu, `scenarios/menu`: `[GFX] ucode RSP SW
+  Version: 2.0D ... Fast3D`; the BACK menu over the held frame as before.
+
+**Not verified / gaps**
+
+- No F3DEX2 game runs from its ROM alone yet: Paper Mario, Smash Bros.,
+  Pokemon Snap and Banjo-Kazooie stop in the analyser ("the boot segment
+  would be -0x... bytes"), Dr. Mario 64 at the link (undefined
+  `__osEnqueueAndYield_recomp`). F3DEX2 is host-tested only.
+- S2DEX's own commands are skipped, not drawn (`docs/renderer.md`).
+- Mario Kart 64 on the console; a white translucent puff over the driver's
+  back in races (particles or their depth; `docs/renderer.md` gaps).
+- `[MEM]`/`[CLOCK]`: unchanged by this work (no allocation added; the
+  vertex buffer grew from 16 to 80 entries, ~3 KB of BSS).

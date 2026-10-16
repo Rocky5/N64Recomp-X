@@ -93,6 +93,7 @@ the approach (§1), the architecture (§3), the build, game packs and tests
 | `docs/PLAN.md` | the implementation plan: approach, architecture, the generated-code contract on the P3, runtime, overlays and code on demand, ROM sources, graphics and audio HLE, memory budget, build and game packs, `n64rx`, the game ladder, milestones, risks, open questions, seed prompt |
 | `docs/research.md` | the evidence: N64Recomp and its header, the GPL runtime's surface (read only), Zelda64Recomp's structure, the Xbox section-loading and memory facts, what each sibling gives, candidate games with "verify" marks |
 | `docs/architecture.md` | what exists: the tree, the boot, the runtime's pieces, the generated code's world, the BACK menu, the exit combos |
+| `docs/renderer.md` | the graphics side as built: the microcode registry, the GBI families in the interpreter, what each game draws, gaps |
 | `docs/analyzer.md` | the ROM-only path as built: the analyser's steps, the interpreter, the PIF, how well it does per game, gaps |
 | `docs/toolchain.md` | the two triples, setup per OS, Docker, N64Recomp, LTO |
 | `docs/testing.md` | host tests, the xemu runner, scripted input (`t<ms>` events), the switch table |
@@ -102,6 +103,5 @@ the approach (§1), the architecture (§3), the build, game packs and tests
 | `games/README.md` | how a game pack is made |
 | `LICENSE.md` | MIT; what came from where; what was only read |
 
-Still to create per `docs/PLAN.md` §3.1 and §6: `platform.md`, `renderer.md`,
-`perf.md` (M3). Settled fact → the matching `docs/` file; add or remove a doc
+Still to create per `docs/PLAN.md` §3.1 and §6: `platform.md`, `perf.md` (M3). Settled fact → the matching `docs/` file; add or remove a doc
 → update this map.

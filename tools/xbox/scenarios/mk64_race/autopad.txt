@@ -1,0 +1,25 @@
+# Mario Kart 64 from its ROM alone (F3DEX, docs/renderer.md): the title,
+# START, A through the menus to a Mario GP race (1P, Mario GP, 50cc, OK,
+# the first driver, OK, the Mushroom Cup, OK), A held from the countdown
+# on (the kart drives), shots along the way. Frame
+# events (presented frames, ~30 a second here): a COM1 shot stalls the game
+# for seconds, which timed events would count.
+400 SHOT
+450 START for 6
+540 SHOT
+600 A for 6
+660 A for 6
+720 A for 6
+780 A for 6
+840 SHOT
+900 A for 6
+960 A for 6
+1020 SHOT
+1080 A for 6
+1140 A for 6
+1200 SHOT
+1260 A for 1200
+1500 SHOT
+1800 SHOT
+2100 SHOT
+2400 SHOT

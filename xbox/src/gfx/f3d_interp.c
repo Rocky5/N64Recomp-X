@@ -40,6 +40,7 @@
 
 #include "f3d_gbi.h"
 #include "f3d_interp.h"
+#include "f3dex_gbi.h"
 #include "texconv.h"
 #include "xgfx.h"
 #include "xhw.h"
@@ -80,6 +81,7 @@
 #define N64_H 240.0f
 #define MTX_DEPTH 11           /* 10 pushes + current (Birdman64 gfx.md) */
 #define DL_DEPTH 18
+#define VC_MAX 80              /* the largest vertex buffer of the families (F3DLP); Fast3D uses 16 */
 #define GUARD 2.0f             /* x/y clipped at +-GUARD*w: screen coordinates stay well inside the NV2A's range */
 /* DIVERGES: triangles are trivially rejected beyond the drawn extent, not
  * at the viewport edge: the port draws past the SUBSCREEN viewport (10..310 x
@@ -108,7 +110,7 @@ typedef struct {
 #define VTX_LERP_FLOATS 11
 
 typedef struct {
-    uint8_t fmt, siz, cms, cmt, masks, maskt, shifts, shiftt;
+    uint8_t fmt, siz, cms, cmt, masks, maskt, shifts, shiftt, palette;
     uint16_t line, tmem;
     uint16_t uls, ult, lrs, lrt;   /* 10.2 */
 } Tile;
@@ -131,7 +133,9 @@ static struct {
     float mvp[4][4];
     int mv_top, mvp_dirty;
     float vp_sx, vp_sy, vp_tx, vp_ty;   /* N64 pixels */
-    uint32_t geom, omh, oml;
+    float vp_sz, vp_tz;                 /* screen z units (G_MAXZ) */
+    uint32_t geom, omh, oml;            /* geom in Fast3D's bits whatever the microcode */
+    uint32_t geom2;                     /* F3DEX2: the RSP's own geometry word */
     uint32_t cc0, cc1;
     uint8_t prim[4], env[4], fogc[4], blend[4];
     uint8_t prim_lod_frac;
@@ -141,6 +145,7 @@ static struct {
     float tex_ss, tex_st;
     Tile tile[8];
     TmemLoad loads[64];                 /* indexed by tmem >> 3 */
+    uint16_t tlut[256];                 /* TMEM's upper half as G_LOADTLUT left it: one entry a 64-bit word */
     uint8_t timg_fmt, timg_siz;
     uint16_t timg_w;
     uint32_t timg_addr;
@@ -148,7 +153,7 @@ static struct {
     int num_lights;
     uint8_t light_col[9][3];
     int8_t light_dir[9][3];
-    Vtx vc[16];
+    Vtx vc[VC_MAX];
     uint32_t half1, half2;
 } R;
 
@@ -241,15 +246,32 @@ static void vtx_lit(Vtx* v, const uint8_t* cn) {
     }
 }
 
-static void do_vtx(uint32_t w0, uint32_t w1) {
-    uint32_t n, v0, len, addr, i, src;
-    f3d_vtx_decode(w0, w1, &n, &v0, &len, &addr);
+static uint32_t outcode(const Vtx* v) {
+    uint32_t o = 0;
+    float gw = GUARD * v->w, rw = XGFX_REJECT_RATIO * v->w;
+    if (v->x > rw * s_rej_kx) o |= 1;   /* hor+: the drawn extent is wider (map_setup) */
+    if (v->x < -rw * s_rej_kx) o |= 2;
+    if (v->y > rw) o |= 4;
+    if (v->y < -rw) o |= 8;
+    if (v->z < -v->w) o |= 16;
+    if (v->z + v->w < 0.0f || v->x > gw || v->x < -gw || v->y > gw || v->y < -gw) o |= 32;
+    if (XGFX_FAR_CLIP && v->z > v->w) o |= 64 | 32;
+    return o;
+}
+
+/* the vertex buffer of the microcode running (f3d_set_ucode) */
+static const GfxUcode s_uc_f3d = { GFX_UC_F3D, 0, 16, 0, "" };
+static const GfxUcode* s_uc = &s_uc_f3d;
+static unsigned s_vmax = 16;
+
+static void do_vtx(uint32_t n, uint32_t v0, uint32_t addr) {
+    uint32_t i, src;
     src = seg(addr);
     if (R.mvp_dirty) {
         mtx_mul(R.mvp, R.mv[R.mv_top], R.proj);   /* row vectors: v MV P */
         R.mvp_dirty = 0;
     }
-    for (i = 0; i < n && v0 + i < 16; i++, src += 16) {
+    for (i = 0; i < n && v0 + i < s_vmax; i++, src += 16) {
         /* N64 Vtx: s16 ob[3], u16 flag, s16 tc[2], u8 cn[4] */
         int16_t ob[3], tc[2];
         uint8_t cn[4];
@@ -260,22 +282,11 @@ static void do_vtx(uint32_t w0, uint32_t w1) {
         cn[0] = rd8(src + 12); cn[1] = rd8(src + 13); cn[2] = rd8(src + 14); cn[3] = rd8(src + 15);
         x = ob[0]; y = ob[1]; z = ob[2];
         const float(*m)[4] = R.mvp;
-        uint32_t o = 0;
-        float gw, rw;
         v->x = x * m[0][0] + y * m[1][0] + z * m[2][0] + m[3][0];
         v->y = x * m[0][1] + y * m[1][1] + z * m[2][1] + m[3][1];
         v->z = x * m[0][2] + y * m[1][2] + z * m[2][2] + m[3][2];
         v->w = x * m[0][3] + y * m[1][3] + z * m[2][3] + m[3][3];
-        gw = GUARD * v->w;
-        rw = XGFX_REJECT_RATIO * v->w;
-        if (v->x > rw * s_rej_kx) o |= 1;   /* hor+: the drawn extent is wider (map_setup) */
-        if (v->x < -rw * s_rej_kx) o |= 2;
-        if (v->y > rw) o |= 4;
-        if (v->y < -rw) o |= 8;
-        if (v->z < -v->w) o |= 16;
-        if (v->z + v->w < 0.0f || v->x > gw || v->x < -gw || v->y > gw || v->y < -gw) o |= 32;
-        if (XGFX_FAR_CLIP && v->z > v->w) o |= 64 | 32;
-        v->oc = o;
+        v->oc = outcode(v);
         if (R.geom & (F3D_G_LIGHTING | F3D_G_TEXTURE_GEN)) {
             vtx_lit(v, cn);
         } else {
@@ -520,6 +531,12 @@ static TexEntry* texture_for_tile(int tidx) {
     bytes = line * h;
     if (bytes > sizeof raw) { tex_miss("too big", tidx); return NULL; }
     key = t->fmt | t->siz << 3 | (w - 1) << 5 | (h - 1) << 15 | (uint32_t)(line & 0xFF) << 24 | (uint32_t)(ld->dxt != 0) << 31;
+    if (t->fmt == F3D_G_IM_FMT_CI) {   /* the palette is part of the picture: in the key (equality only) */
+        unsigned n = t->siz == F3D_G_IM_SIZ_4b ? 16u : 256u, b = t->siz == F3D_G_IM_SIZ_4b ? t->palette * 16u : 0u;
+        uint32_t th = f3d_omh_text_lut(R.omh);
+        for (i = 0; i < n; i++) th = (th ^ R.tlut[b + i]) * 16777619u;
+        key ^= th | 1u;
+    }
 #if XGFX_TEX_MEMO
     {
         unsigned m = ((ld->addr >> 3) ^ (key * 0x9E3779B1u >> 26)) & (MEMO - 1);
@@ -563,7 +580,10 @@ static TexEntry* texture_for_tile(int tidx) {
     pw = texconv_pow2(w);
     ph = texconv_pow2(h);
     if (pw * ph > sizeof conv / 4) { tex_miss("too big", tidx); return NULL; }
-    if (!texconv_to_argb8(raw, line, w, h, (n64_fmt_t)t->fmt, (n64_siz_t)t->siz, conv, pw, ph)) {
+    if (t->fmt == F3D_G_IM_FMT_CI
+            ? !texconv_ci_to_argb8(raw, line, w, h, (n64_siz_t)t->siz, R.tlut, t->palette * 16u,
+                                   f3d_omh_text_lut(R.omh) == 3, conv, pw, ph)
+            : !texconv_to_argb8(raw, line, w, h, (n64_fmt_t)t->fmt, (n64_siz_t)t->siz, conv, pw, ph)) {
         tex_miss("format", tidx);
         return NULL;
     }
@@ -1146,12 +1166,247 @@ static void clip_rect_update(void) {
 
 static uint32_t s_unknown[256];
 
+/* -------------------------------------------- the F3DEX family (ucode.h)
+ *
+ * One interpreter for every family: run_dl's switch is Fast3D's, and a
+ * command of another GBI is either done in ex_cmd (what Fast3D has no
+ * equal for: the 32-80 vertex buffer, TRI2, QUAD, MODIFYVTX, CULLDL,
+ * BRANCH_Z, LOAD_UCODE, F3DEX2's geometry mode and MOVEWORD/MOVEMEM
+ * layouts) or rewritten in place as the Fast3D command it equals (G_DL,
+ * G_ENDDL, G_MTX, G_TEXTURE, the othermodes, the RDP halves) and left to
+ * the switch, which keeps the display-list stack, the shadow passes, the
+ * widescreen tags and the RDP. The state stays in Fast3D's terms (R.geom
+ * in Fast3D's bits). F3DLX/F3DLP and the .NoN/.Rej variants differ from
+ * their parent in clipping and precision only: the same commands. */
+static int s_fam = GFX_UC_F3D;   /* s_uc->family */
+
+void f3d_set_ucode(const GfxUcode* uc) {
+    s_uc = uc ? uc : &s_uc_f3d;
+    s_fam = s_uc->family;
+    s_vmax = s_uc->vtx_max > VC_MAX ? VC_MAX : s_uc->vtx_max < 16 ? 16 : s_uc->vtx_max;
+}
+
+/* the RDP halves that follow a G_TEXRECT */
+static int is_half(uint32_t op) {
+    if (s_fam == GFX_UC_F3DEX2 || s_fam == GFX_UC_S2DEX2) return op == F3DEX2_G_RDPHALF_1 || op == F3DEX2_G_RDPHALF_2;
+    return op >= 0xB2 && op <= 0xB4;
+}
+
+static void do_viewport(uint32_t m) {   /* Vp: s16 vscale[4], vtrans[4]; x, y with 2 fraction bits */
+    R.vp_sx = (int16_t)rd16(m) * 0.25f; R.vp_sy = (int16_t)rd16(m + 2) * 0.25f;
+    R.vp_tx = (int16_t)rd16(m + 8) * 0.25f; R.vp_ty = (int16_t)rd16(m + 10) * 0.25f;
+    R.vp_sz = (int16_t)rd16(m + 4); R.vp_tz = (int16_t)rd16(m + 12);
+    clip_rect_update();
+}
+
+static void do_light(unsigned l, uint32_t m) {   /* Light: u8 col[3], pad, colc[3], pad, s8 dir[3] */
+    if (l > 8) return;
+    R.light_col[l][0] = rd8(m); R.light_col[l][1] = rd8(m + 1); R.light_col[l][2] = rd8(m + 2);
+    R.light_dir[l][0] = (int8_t)rd8(m + 8); R.light_dir[l][1] = (int8_t)rd8(m + 9);
+    R.light_dir[l][2] = (int8_t)rd8(m + 10);
+}
+
+static void ex_tri(unsigned a, unsigned b, unsigned c) {
+    /* the flag rotates the indices: the flat-shade vertex comes first */
+    if (a < s_vmax && b < s_vmax && c < s_vmax && !(s_uc->flags & GFX_UC_F_LINE)) do_tri((int)a, (int)b, (int)c, 0);
+}
+
+/* gSPModifyVertex: one field of a loaded vertex, in the RSP's screen terms */
+static void do_modifyvtx(uint8_t where, unsigned i, uint32_t val) {
+    Vtx* v;
+    if (i >= s_vmax) return;
+    v = &R.vc[i];
+    switch (where) {
+        case F3DEX_G_MWO_POINT_RGBA:
+            v->r = (val >> 24) * (1.0f / 255.0f); v->g = ((val >> 16) & 0xFF) * (1.0f / 255.0f);
+            v->b = ((val >> 8) & 0xFF) * (1.0f / 255.0f); v->a = (val & 0xFF) * (1.0f / 255.0f);
+            break;
+        case F3DEX_G_MWO_POINT_ST:   /* s10.5, already scaled by gSPTexture */
+            v->s = (int16_t)(val >> 16) * (1.0f / 32.0f);
+            v->t = (int16_t)val * (1.0f / 32.0f);
+            break;
+        case F3DEX_G_MWO_POINT_XYSCREEN:   /* s13.2 screen pixels, back through the viewport at this w */
+            if (R.vp_sx != 0.0f && R.vp_sy != 0.0f) {
+                v->x = ((int16_t)(val >> 16) * 0.25f - R.vp_tx) / R.vp_sx * v->w;
+                v->y = (R.vp_ty - (int16_t)val * 0.25f) / R.vp_sy * v->w;
+                v->oc = outcode(v);
+            }
+            break;
+        case F3DEX_G_MWO_POINT_ZSCREEN:   /* 16.16 screen z */
+            if (R.vp_sz != 0.0f) {
+                v->z = ((float)(int32_t)val * (1.0f / 65536.0f) - R.vp_tz) / R.vp_sz * v->w;
+                v->oc = outcode(v);
+            }
+            break;
+    }
+}
+
+/* gSPCullDisplayList: the rest of the list is skipped when every vertex in
+ * the range is outside the same plane */
+static int cull_dl(unsigned vs, unsigned ve) {
+    uint32_t all = 0xFFFFFFFFu;
+    unsigned i;
+    if (ve >= s_vmax) ve = s_vmax - 1;
+    if (vs > ve) return 0;
+    for (i = vs; i <= ve; i++) all &= R.vc[i].oc;
+    return (all & (15u | 16u | 64u)) != 0;
+}
+
+/* gSPBranchLessZ: branch when the vertex's screen z (0..G_MAXZ, 16.16) is
+ * at most zval */
+static int branch_z(unsigned i, uint32_t zval) {
+    const Vtx* v;
+    if (i >= s_vmax) return 0;
+    v = &R.vc[i];
+    if (v->w <= 0.0f) return 0;
+    return (v->z / v->w * R.vp_sz + R.vp_tz) * 65536.0f <= (float)zval;
+}
+
+static void load_ucode(uint32_t w0) { f3d_set_ucode(gfx_ucode_at(R.half1, (w0 & 0xFFFFu) + 1u)); }
+
+/* S2DEX's own commands (backgrounds, objects): not drawn yet; they must not
+ * reach Fast3D's switch, where their numbers mean MTX, VTX, MOVEMEM */
+static int s2dex_own(uint32_t op) {
+    if (s_fam == GFX_UC_S2DEX) return (op >= 0x01 && op <= 0x05) || (op >= 0xB0 && op <= 0xB2) || (op >= 0xC1 && op <= 0xC4);
+    if (s_fam == GFX_UC_S2DEX2) return (op >= 0x01 && op <= 0x0B) || op == 0xDA || op == 0xDC;
+    return 0;
+}
+
+static int ex_cmd(uint32_t* pw0, uint32_t* pw1) {
+    uint32_t w0 = *pw0, w1 = *pw1, op = w0 >> 24, n, v0;
+    uint8_t a, b, c, where, q[4];
+    uint16_t vi;
+    if (s2dex_own(op)) {
+        s_unknown[op]++;
+        return 1;
+    }
+    if (s_fam == GFX_UC_F3DEX || s_fam == GFX_UC_S2DEX) {
+        int old = (s_uc->flags & GFX_UC_F_OLD) != 0;
+        switch (op) {
+            case F3DEX_G_VTX:
+                f3dex_vtx_decode(w0, &n, &v0);
+                s_vtx_loads++;
+                do_vtx(n, v0, w1);
+                return 1;
+            case F3DEX_G_TRI1: f3dex_tri_decode(w1, &a, &b, &c); ex_tri(a, b, c); return 1;
+            case F3DEX_G_TRI2:
+                f3dex_tri_decode(w0, &a, &b, &c); ex_tri(a, b, c);
+                f3dex_tri_decode(w1, &a, &b, &c); ex_tri(a, b, c);
+                return 1;
+            case F3DEX_G_QUAD:   /* F3D_OLD's; the line microcodes' G_LINE3D otherwise (not drawn) */
+                if (old) {
+                    f3dex_old_quad_decode(w1, q);
+                    ex_tri(q[0], q[1], q[2]);
+                    ex_tri(q[0], q[2], q[3]);
+                }
+                return 1;
+            case F3DEX_G_MODIFYVTX:
+                if (old) return 0;   /* G_RDPHALF_CONT */
+                f3dex_modifyvtx_decode(w0, &where, &vi);
+                do_modifyvtx(where, vi, w1);
+                return 1;
+            case F3DEX_G_CULLDL:
+                f3dex_culldl_decode(w0, w1, old, &a, &b);
+                if (!cull_dl(a, b)) return 1;
+                *pw0 = (uint32_t)F3D_G_ENDDL << 24;
+                return 0;
+            case F3DEX_G_BRANCH_Z:
+                if (!branch_z(f3dex_branchz_vtx(w0), w1)) return 1;
+                *pw0 = (uint32_t)F3D_G_DL << 24 | (uint32_t)F3D_G_DL_NOPUSH << 16;
+                *pw1 = R.half1;
+                return 0;
+            case F3DEX_G_LOAD_UCODE: load_ucode(w0); return 1;
+        }
+        return 0;
+    }
+    /* F3DEX2, S2DEX2 */
+    switch (op) {
+        case F3DEX2_G_NOOP: case F3DEX2_G_SPNOOP: case F3DEX2_G_DMA_IO: case F3DEX2_G_SPECIAL_1:
+        case F3DEX2_G_SPECIAL_2: case F3DEX2_G_SPECIAL_3: case F3DEX2_G_LINE3D:
+            return 1;
+        case F3DEX2_G_VTX:
+            f3dex2_vtx_decode(w0, &n, &v0);
+            s_vtx_loads++;
+            do_vtx(n, v0, w1);
+            return 1;
+        case F3DEX2_G_MODIFYVTX:
+            f3dex_modifyvtx_decode(w0, &where, &vi);
+            do_modifyvtx(where, vi, w1);
+            return 1;
+        case F3DEX2_G_CULLDL:
+            f3dex_culldl_decode(w0, w1, 0, &a, &b);
+            if (!cull_dl(a, b)) return 1;
+            *pw0 = (uint32_t)F3D_G_ENDDL << 24;
+            return 0;
+        case F3DEX2_G_BRANCH_Z:
+            if (!branch_z(f3dex_branchz_vtx(w0), w1)) return 1;
+            *pw0 = (uint32_t)F3D_G_DL << 24 | (uint32_t)F3D_G_DL_NOPUSH << 16;
+            *pw1 = R.half1;
+            return 0;
+        case F3DEX2_G_TRI1: f3dex_tri_decode(w0, &a, &b, &c); ex_tri(a, b, c); return 1;
+        case F3DEX2_G_TRI2:
+        case F3DEX2_G_QUAD:
+            f3dex_tri_decode(w0, &a, &b, &c); ex_tri(a, b, c);
+            f3dex_tri_decode(w1, &a, &b, &c); ex_tri(a, b, c);
+            return 1;
+        case F3DEX2_G_TEXTURE:
+            *pw0 = (uint32_t)F3D_G_TEXTURE << 24 | (w0 & 0x3F00u) | f3dex2_texture_on(w0);
+            return 0;
+        case F3DEX2_G_POPMTX:
+            for (n = f3dex2_popmtx_count(w1); n && R.mv_top > 0; n--) R.mv_top--;
+            R.mvp_dirty = 1;
+            return 1;
+        case F3DEX2_G_GEOMETRYMODE:
+            R.geom2 = f3dex2_geom_apply(R.geom2, w0, w1);
+            R.geom = f3dex2_geom_to_f3d(R.geom2);
+            DIRTY();
+            return 1;
+        case F3DEX2_G_MTX:
+            *pw0 = (uint32_t)F3D_G_MTX << 24 | (uint32_t)f3dex2_mtx_params(w0) << 16;
+            return 0;
+        case F3DEX2_G_MOVEWORD: {
+            uint8_t idx, l;
+            uint16_t off;
+            f3dex2_moveword_decode(w0, &idx, &off);
+            if (idx == F3D_G_MW_SEGMENT) R.seg[(off >> 2) & 15] = w1;
+            else if (idx == F3D_G_MW_NUMLIGHT) R.num_lights = f3dex2_numlights_from_data(w1);
+            else if (idx == F3D_G_MW_FOG) f3d_fog_from_data(w1, &R.fog_m, &R.fog_o);
+            else if (idx == F3D_G_MW_LIGHTCOL && (l = f3dex2_lightcol_index(off)) < 9) {
+                R.light_col[l][0] = w1 >> 24; R.light_col[l][1] = w1 >> 16; R.light_col[l][2] = w1 >> 8;
+            }
+            return 1;
+        }
+        case F3DEX2_G_MOVEMEM: {
+            uint8_t idx;
+            uint32_t ofs, len, m = seg(w1);
+            f3dex2_movemem_decode(w0, &idx, &ofs, &len);
+            if (idx == F3DEX2_G_MV_VIEWPORT) do_viewport(m);
+            else if (idx == F3DEX2_G_MV_LIGHT) do_light(f3dex2_light_index(ofs), m);
+            else s_unknown[op]++;   /* the forced matrix, points: not used by the games so far */
+            return 1;
+        }
+        case F3DEX2_G_LOAD_UCODE: load_ucode(w0); return 1;
+        case F3DEX2_G_DL: *pw0 = (uint32_t)F3D_G_DL << 24 | (w0 & 0x00FF0000u); return 0;
+        case F3DEX2_G_ENDDL: *pw0 = (uint32_t)F3D_G_ENDDL << 24; return 0;
+        case F3DEX2_G_RDPHALF_1: *pw0 = (uint32_t)F3D_G_RDPHALF_1 << 24; return 0;
+        case F3DEX2_G_RDPHALF_2: *pw0 = (uint32_t)F3D_G_RDPHALF_2 << 24; return 0;
+        case F3DEX2_G_SETOTHERMODE_L: *pw0 = (uint32_t)F3D_G_SETOTHERMODE_L << 24 | f3dex2_othermode_to_f3d(w0); return 0;
+        case F3DEX2_G_SETOTHERMODE_H: *pw0 = (uint32_t)F3D_G_SETOTHERMODE_H << 24 | f3dex2_othermode_to_f3d(w0); return 0;
+    }
+    if (op < 0xC0) {   /* no F3DEX2 command: Fast3D's numbers here would mean something else */
+        s_unknown[op]++;
+        return 1;
+    }
+    return 0;   /* the RDP's */
+}
+
 static void run_dl(const uint32_t* pc) {
     const uint32_t* stack[DL_DEPTH];
     int sp = 0;
     for (;;) {
         uint32_t w0 = pc[0], w1 = pc[1];
         pc += 2;
+        if (s_fam != GFX_UC_F3D && ex_cmd(&w0, &w1)) continue;
         switch (w0 >> 24) {
             case F3D_G_TEXTURE: case F3D_G_SETOTHERMODE_H: case F3D_G_SETOTHERMODE_L: case F3D_G_SETGEOMETRYMODE:
             case F3D_G_CLEARGEOMETRYMODE: case F3D_G_SETTILE: case F3D_G_SETTILESIZE: case F3D_G_LOADBLOCK:
@@ -1164,7 +1419,13 @@ static void run_dl(const uint32_t* pc) {
             case F3D_G_POPMTX:
                 if (R.mv_top > 0) { R.mv_top--; R.mvp_dirty = 1; }
                 break;
-            case F3D_G_VTX: s_vtx_loads++; do_vtx(w0, w1); break;
+            case F3D_G_VTX: {
+                uint32_t n, v0, len, addr;
+                f3d_vtx_decode(w0, w1, &n, &v0, &len, &addr);
+                s_vtx_loads++;
+                do_vtx(n, v0, addr);
+                break;
+            }
             case F3D_G_TRI1: {
                 uint8_t a, b, c, f;
                 f3d_tri1_decode(w1, &a, &b, &c, &f);
@@ -1204,16 +1465,8 @@ static void run_dl(const uint32_t* pc) {
                 uint32_t len, addr, m;
                 f3d_movemem_decode(w0, w1, &idx, &len, &addr);
                 m = seg(addr);
-                if (idx == F3D_G_MV_VIEWPORT) {   /* Vp: s16 vscale[4], vtrans[4] */
-                    R.vp_sx = (int16_t)rd16(m) * 0.25f; R.vp_sy = (int16_t)rd16(m + 2) * 0.25f;
-                    R.vp_tx = (int16_t)rd16(m + 8) * 0.25f; R.vp_ty = (int16_t)rd16(m + 10) * 0.25f;
-                    clip_rect_update();
-                } else if (idx >= F3D_G_MV_L0 && idx <= F3D_G_MV_L7) {   /* Light: u8 col[3], pad, colc[3], pad, s8 dir[3] */
-                    int l = (idx - F3D_G_MV_L0) / 2;
-                    R.light_col[l][0] = rd8(m); R.light_col[l][1] = rd8(m + 1); R.light_col[l][2] = rd8(m + 2);
-                    R.light_dir[l][0] = (int8_t)rd8(m + 8); R.light_dir[l][1] = (int8_t)rd8(m + 9);
-                    R.light_dir[l][2] = (int8_t)rd8(m + 10);
-                }
+                if (idx == F3D_G_MV_VIEWPORT) do_viewport(m);
+                else if (idx >= F3D_G_MV_L0 && idx <= F3D_G_MV_L7) do_light((idx - F3D_G_MV_L0) / 2, m);
                 break;
             }
             case F3D_G_MOVEWORD: {
@@ -1251,7 +1504,7 @@ static void run_dl(const uint32_t* pc) {
             case F3D_G_TEXRECTFLIP:
                 /* PW64's F3D emits E4, B3 (s,t), B2 (dsdx,dtdy); current gbi.h says E4, B4, B3:
                  * take the two halves that follow, whichever numbering (wings64-dc traps.md) */
-                if ((pc[0] >> 24) >= 0xB2 && (pc[0] >> 24) <= 0xB4 && (pc[2] >> 24) >= 0xB2 && (pc[2] >> 24) <= 0xB4) {
+                if (is_half(pc[0] >> 24) && is_half(pc[2] >> 24)) {
                     R.half1 = pc[1];
                     R.half2 = pc[3];
                     pc += 4;
@@ -1267,7 +1520,7 @@ static void run_dl(const uint32_t* pc) {
                 t = &R.tile[s.tile & 7];
                 t->fmt = s.fmt; t->siz = s.siz; t->line = s.line; t->tmem = s.tmem;
                 t->cms = s.cms; t->cmt = s.cmt; t->masks = s.masks; t->maskt = s.maskt;
-                t->shifts = s.shifts; t->shiftt = s.shiftt;
+                t->shifts = s.shifts; t->shiftt = s.shiftt; t->palette = s.palette;
                 break;
             }
             case F3D_G_SETTILESIZE: {
@@ -1312,6 +1565,18 @@ static void run_dl(const uint32_t* pc) {
                 ld->dxt = 0;
                 ld->tile = 1;
                 ld->valid = 1;
+                break;
+            }
+            case F3D_G_LOADTLUT: {   /* the palette at TMEM word 256 + n (CI4: 16 a palette) */
+                uint8_t tile;
+                uint16_t count;
+                unsigned at, i;
+                uint32_t src = seg(R.timg_addr);
+                f3d_loadtlut_decode(w1, &tile, &count);
+                at = R.tile[tile & 7].tmem;
+                if (at < 256) break;
+                for (at -= 256, i = 0; i <= count && at + i < 256; i++) R.tlut[at + i] = rd16(src + 2 * i);
+                DIRTY();
                 break;
             }
             case F3D_G_SETCOMBINE: R.cc0 = w0; R.cc1 = w1; break;

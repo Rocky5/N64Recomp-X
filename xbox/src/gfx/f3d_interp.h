@@ -1,12 +1,18 @@
-/* f3d_interp.h - the Fast3D interpreter (f3d_interp.c) and the hooks it
- * takes from the rest of the game side. */
+/* f3d_interp.h - the display-list interpreter (f3d_interp.c: Fast3D, F3DEX,
+ * F3DEX2, S2DEX's shared commands) and the hooks it takes from the rest of
+ * the game side. */
 #ifndef F3D_INTERP_H
 #define F3D_INTERP_H
 #include <stdint.h>
 
+#include "ucode.h"
+
 /* One graphics task: interpret the display list at this N64 address and
  * present the frame. */
 void f3d_run(uint32_t dl);
+/* The microcode the next f3d_run starts in (ucode.h; NULL: Fast3D). A
+ * G_LOAD_UCODE in the list switches it for the rest of that task. */
+void f3d_set_ucode(const GfxUcode* uc);
 /* hor+ on or off (the settings' Widescreen row), taken at the next frame */
 void f3d_set_widescreen(int on);
 /* Level load (the game reuses its heap): drop every cached texture. */
