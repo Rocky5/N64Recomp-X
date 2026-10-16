@@ -3,7 +3,7 @@ r"""The post-link XBE pass (PLAN.md 4.3 step 4): the game pack's title ID and
 name, the dashboard icon, and (M5) sections loaded on demand.
 
   tools/xbox/xbe_sections.py <default.xbe> --title-id 4E520001 --name "Pilotwings 64"
-        [--icon icon.png [--tbn default.tbn]] [--demand .ovl_]
+        [--icon icon.png [--tbn default.tbn]] [--demand .ovl_] [--rom rom.z64]
 
 From Wings64-X's xbe_title_image.py:
 - the certificate's title ID: cxbe leaves nxdk's default FFFF0002, which
@@ -19,6 +19,14 @@ From Wings64-X's xbe_title_image.py:
 - --demand PREFIX clears the preload bit of every section whose name starts
   with PREFIX, so the kernel loads it only on XeLoadSection (PLAN.md 3.4,
   XRC_OVL_SECTIONS; nxdk's cxbe marks every section preload).
+- --rom FILE appends the user's ROM as a section `$ROM` (PLAN.md 3.5) that
+  is never preloaded and never XeLoadSection'd: the kernel maps the header
+  and the preload sections only, so the ROM costs no RAM; the runtime
+  (xhw_rom.c) finds it in the header the kernel mapped at 0x10000 and reads
+  its bytes from D:\default.xbe at the raw offset. The section is the last
+  thing in the file, 4 KB aligned, with no virtual range (VirtualSize 0,
+  SizeOfImage unchanged; add_section says why): the boot's free RAM is the
+  same as with the ROM beside the XBE.
 """
 import argparse
 import os
@@ -84,7 +92,16 @@ def xpr_dxt1(img):
     return bytes(head) + bytes(data)
 
 
-def add_section(xbe, name, payload):
+# section flags (XBE section header +0)
+WRITABLE, PRELOAD, EXECUTABLE, INSERTED, HEAD_RO, TAIL_RO = 0x1, 0x2, 0x4, 0x8, 0x10, 0x20
+ROM_SECTION = "$ROM"
+
+
+def add_section(xbe, name, payload, flags=INSERTED | HEAD_RO | TAIL_RO, mapped=True):
+    """mapped=False: raw bytes only, no virtual range (VirtualSize 0, SizeOfImage
+    unchanged): the kernel builds page tables for the whole image range at
+    launch, so a 64 MB range past the image would cost up to 64 KB of RAM
+    for pages nothing maps (xemu: 4 KB for an 8 MB $ROM, [MEM] boot)"""
     d = bytearray(xbe)
     base, size_hdrs, size_img = struct.unpack_from("<III", d, 0x104)
     nsec, sec_addr = struct.unpack_from("<II", d, 0x11C)
@@ -106,14 +123,16 @@ def add_section(xbe, name, payload):
     if end > HDR_LIMIT:
         sys.exit("no room in the XBE header area")
     tab = bytearray(old)
-    tab += struct.pack("<IIIIIIIII", 0x08 | 0x10 | 0x20, va, len(payload), raw, len(payload),
+    vsize = len(payload) if mapped else 0
+    tab += struct.pack("<IIIIIIIII", flags, va, vsize, raw, len(payload),
                        base + name_at, 0, base + refs, base + refs + 2) + bytes(20)
     d[new_tab:new_tab + len(tab)] = tab
     d[refs:refs + 4] = bytes(4)
     d[name_at:end] = name.encode() + b"\0"
 
     struct.pack_into("<I", d, 0x108, end)                       # SizeOfHeaders
-    struct.pack_into("<I", d, 0x10C, va + len(payload) - base)  # SizeOfImage
+    if mapped:
+        struct.pack_into("<I", d, 0x10C, va + vsize - base)     # SizeOfImage
     struct.pack_into("<II", d, 0x11C, nsec + 1, base + new_tab)
     d += bytes(raw - len(d)) + payload
     return bytes(d)
@@ -125,9 +144,6 @@ def set_title_id(xbe, title_id):
     cert = struct.unpack_from("<I", d, 0x118)[0] - base
     struct.pack_into("<I", d, cert + 8, title_id)
     return bytes(d)
-
-
-PRELOAD = 0x2   # XBE section flag
 
 
 def section_name(d, base, va):
@@ -150,6 +166,28 @@ def set_demand(xbe, prefix):
     return bytes(d), names
 
 
+def find_section(xbe, name):
+    """(flags, va, vsize, raw, rawsize) of the section called `name`, or None"""
+    base = struct.unpack_from("<I", xbe, 0x104)[0]
+    nsec, sec_addr = struct.unpack_from("<II", xbe, 0x11C)
+    for i in range(nsec):
+        h = struct.unpack_from("<6I", xbe, sec_addr - base + i * 0x38)
+        if section_name(xbe, base, h[5]) == name:
+            return h[:5]
+    return None
+
+
+def add_rom(xbe, rom):
+    """the ROM as `$ROM` (not preloaded: no RAM until the runtime reads it);
+    a $ROM already there (ninja didn't relink) is replaced only if it differs"""
+    have = find_section(xbe, ROM_SECTION)
+    if have:
+        if have[4] == len(rom) and xbe[have[3]:have[3] + have[4]] == rom:
+            return None
+        sys.exit(f"{ROM_SECTION} is already in this XBE with other bytes: relink it first")
+    return add_section(xbe, ROM_SECTION, rom, INSERTED | HEAD_RO | TAIL_RO, mapped=False)
+
+
 def set_title_name(xbe, name):
     """the certificate's title name: 40 UTF-16LE characters"""
     d = bytearray(xbe)
@@ -168,6 +206,7 @@ def main():
     ap.add_argument("--icon")
     ap.add_argument("--tbn")
     ap.add_argument("--demand", metavar="PREFIX")
+    ap.add_argument("--rom", help="the normalised ROM to embed as the $ROM section")
     args = ap.parse_args()
     title_id = int(args.title_id, 16)
     xbe = open(args.xbe, "rb").read()
@@ -184,6 +223,13 @@ def main():
     if args.demand:
         xbe, names = set_demand(xbe, args.demand)
         print(f"{args.xbe}: {len(names)} sections on demand ({args.demand}*)")
+    if args.rom:
+        out = add_rom(xbe, open(args.rom, "rb").read())
+        if out is None:
+            print(f"{args.xbe}: {ROM_SECTION} already present")
+        else:
+            xbe = out
+            print(f"{args.xbe}: +{ROM_SECTION} ({find_section(xbe, ROM_SECTION)[4]} bytes, not preloaded)")
     xbe = set_title_name(set_title_id(xbe, title_id), args.name)
     open(args.xbe, "wb").write(xbe)
     print(f'{args.xbe}: title ID {title_id:08X}, "{args.name}"')

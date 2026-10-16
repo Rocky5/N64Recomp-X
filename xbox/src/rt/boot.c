@@ -9,7 +9,8 @@
  *                 The test pack (games/test): "Preparing memory" (the RDRAM
  *                 window), "Loading code" (the function table), "Starting"
  *                 (the recompiled entrypoint runs on the window), then a card
- *                 with what its checks found. A game: the ROM ("Reading ROM",
+ *                 with what its checks found. A game: the ROM (default.xbe's
+ *                 $ROM section, or a file beside it; "Reading ROM",
  *                 "Checking the ROM (SHA-1)", xhw_rom.c against the pack's
  *                 dumps), the window with the boot block and the boot
  *                 segment the IPL3 would have copied, the function table,

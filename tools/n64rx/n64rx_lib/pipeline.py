@@ -235,13 +235,15 @@ const XrcGame xrc_game = {{
 ''', encoding='utf-8', newline='\n')
 
 
-def readme(pack, folder):
+def readme(pack, folder, rom_beside=False):
+    where = ('The ROM next to it is yours,\nnormalised; the game reads it from here and checks its SHA-1.'
+             if rom_beside else
+             'Your ROM is inside default.xbe\n(normalised); the game reads it from there and checks its SHA-1.')
     return f'''{pack.title} for the original Xbox, built by N64Recomp-X {VERSION}
 
 Copy this whole folder to your Xbox, for example to
     E:\\Games\\{folder}\\    or    F:\\Games\\{folder}\\
-and start default.xbe from your dashboard. The ROM next to it is yours,
-normalised; the game reads it from here and checks its SHA-1.
+and start default.xbe from your dashboard. {where}
 
 On the console:
   BACK                     the settings menu (video, widescreen, volume, ...)
@@ -256,7 +258,7 @@ This folder contains your game's code: keep it to yourself.
 
 
 def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None, echo=None, eng=None,
-          analyze=False):
+          analyze=False, rom_beside=False):
     echo = echo or (lambda s: print(s, flush=True))
     prog = Progress(echo, 5)
     prog.step('Reading the ROM')
@@ -268,7 +270,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     eng = eng or engines.pick(engine)
     out_root = pathlib.Path(out) if out else pathlib.Path.cwd() / 'out'
     if eng.name == 'docker':
-        return _build_in_docker(eng, rom, out_root, video, fast, gpr, prog)
+        return _build_in_docker(eng, rom, out_root, video, fast, gpr, prog, rom_beside)
     ainfo = None
     if analyze or pack is None:
         base = pack
@@ -341,7 +343,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     if eng.build_xbe(env, log) or not (bdir / 'xbox/xbe/default.xbe').exists():
         raise N64rxError('Compiling or linking the XBE failed.', f'the log says why:\n{tail(log)}\nfull log: {log}')
 
-    prog.step('Finishing the XBE (title ID, icon)')
+    prog.step('Finishing the XBE (title ID, icon' + (')' if rom_beside else ', the ROM inside)'))
     xbe = bdir / 'xbox/xbe/default.xbe'
     folder = out_root / folder_name(pack.title)
     if folder.exists():
@@ -350,15 +352,18 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     shutil.copy2(xbe, folder / 'default.xbe')
     r = subprocess.run([sys.executable, str(ROOT / 'tools/xbox/xbe_sections.py'), str(folder / 'default.xbe'),
                         '--title-id', pack.title_id_hex, '--name', pack.title, '--icon', str(pack.icon),
-                        '--tbn', str(folder / 'default.tbn')], capture_output=True, text=True)
+                        '--tbn', str(folder / 'default.tbn')]
+                       # the ROM as a $ROM section the kernel never loads (PLAN.md 3.5); --rom-beside: a file
+                       + ([] if rom_beside else ['--rom', str(rom_file)]), capture_output=True, text=True)
     with open(log, 'a', encoding='utf-8') as f:
         f.write(r.stdout + r.stderr)
     if r.returncode:
         raise N64rxError('The XBE pass failed.', f'{r.stderr.strip()}\nPillow is needed: pip install pillow')
 
     prog.step('Writing the folder for the Xbox')
-    (folder / f'{folder_name(pack.title)}.z64').write_bytes(rom.data)
-    (folder / 'README.txt').write_text(readme(pack, folder.name), encoding='utf-8', newline='\r\n')
+    if rom_beside:
+        (folder / f'{folder_name(pack.title)}.z64').write_bytes(rom.data)
+    (folder / 'README.txt').write_text(readme(pack, folder.name, rom_beside), encoding='utf-8', newline='\r\n')
     shutil.copy2(bdir / 'xbox/n64recomp_x.map', folder / 'debug/n64recomp_x.map')
     prog.done()
     (cache_dir() / 'last.json').write_text(json.dumps({'pack': pack.id, 'log': str(log), 'folder': str(folder),
@@ -368,7 +373,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     return folder
 
 
-def _build_in_docker(eng, rom, out_root, video, fast, gpr, prog):
+def _build_in_docker(eng, rom, out_root, video, fast, gpr, prog, rom_beside=False):
     out_root.mkdir(parents=True, exist_ok=True)
     log = cache_dir() / 'docker.log'
     log.write_text('', encoding='utf-8')
@@ -377,6 +382,8 @@ def _build_in_docker(eng, rom, out_root, video, fast, gpr, prog):
         args.append('--fast')
     if gpr:
         args += ['--gpr', str(gpr)]
+    if rom_beside:
+        args.append('--rom-beside')
     prog.note(f'in the SDK image {engines.image_name()} (the first build pulls it)')
     if eng.run_inside(args, rom.path.resolve().parent, out_root.resolve(), log):
         raise N64rxError('The build inside Docker failed.', f'{tail(log)}\nfull log: {log}')

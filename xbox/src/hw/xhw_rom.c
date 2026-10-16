@@ -1,15 +1,20 @@
 /* xhw_rom.c - find, load and validate the user's ROM (PLAN.md 3.5; from
  * Wings64-X's, made game-agnostic).
  *
- * The port ships no game data: the ROM is the user's own, next to default.xbe.
+ * The port ships no game data: the ROM is the user's own, inside default.xbe
+ * as the section $ROM that n64rx appends and the kernel never loads (read
+ * from D:\default.xbe at its raw offset, so it costs no RAM until here), or,
+ * for a build without it (n64rx build --rom-beside, or -DXHW_ROM_IN_XBE=0
+ * here), a file next to default.xbe.
  * Nothing runs on an image that has not passed the SHA-1 check against the
  * game pack's list (the runtime hands it over as an xrom_target), so a bad
  * dump, another game or another release stops here with a card that says
  * what was found and what is expected.
  *
  * Two halves. The pure functions (detect order, normalise, parse header,
- * check size/header/hash) call no kernel routines and build on a host with
- * -DXROM_HOST_TEST. The Xbox half (find the file in D:\, read it in 256 KB
+ * check size/header/hash, find a section in an XBE header) call no kernel
+ * routines and build on a host with -DXROM_HOST_TEST (test_xbe_rom.py). The
+ * Xbox half (find $ROM or the file in D:\, read it in 256 KB
  * pieces under the loading screen's bar, hash, report) is behind
  * #ifndef XROM_HOST_TEST.
  *
@@ -155,15 +160,43 @@ uint32_t xrom_verify(uint8_t* buf, uint32_t size, xrom_info* info, const xrom_ta
     return xrom_check_hash(info, t);
 }
 
+static uint32_t le32(const uint8_t* p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+uint32_t xrom_xbe_section(const uint8_t* hdr, uint32_t len, const char* name, uint32_t* raw, uint32_t* size) {
+    uint32_t base, nsec, tab, i, n = (uint32_t)strlen(name);
+    if (len < 0x178 || len > 0x10000 || memcmp(hdr, "XBEH", 4) != 0) return 0;
+    base = le32(hdr + 0x104);
+    nsec = le32(hdr + 0x11C);
+    tab = le32(hdr + 0x120) - base;
+    if (nsec > 256 || tab >= len || nsec * 0x38u > len - tab) return 0;
+    for (i = 0; i < nsec; i++) {
+        const uint8_t* s = hdr + tab + i * 0x38u;
+        uint32_t at = le32(s + 20) - base;
+        if (at >= len || n + 1 > len - at || memcmp(hdr + at, name, n + 1) != 0) continue;
+        *raw = le32(s + 12);
+        *size = le32(s + 16);
+        return 1;
+    }
+    return 0;
+}
+
 /* ---- Xbox part ---- */
 #ifndef XROM_HOST_TEST
 
+#ifndef XHW_ROM_IN_XBE
+#define XHW_ROM_IN_XBE 1   /* 0: ignore $ROM, read a ROM beside default.xbe only */
+#endif
+
 #define CHUNK (256u * 1024u)
+#define XBE_HDR ((const uint8_t*)0x00010000)   /* where the kernel maps the image header */
 #define CARD_LINES 8
 #define CARD_COLS 70   /* the card's lines: the loading screen's safe width */
 
 static xrom_info s_info;
 static xrom_target s_target;
+static int s_inside;   /* the ROM is default.xbe's $ROM section */
 
 const xrom_info* xhw_rom_info(void) { return &s_info; }
 
@@ -227,7 +260,8 @@ static void __attribute__((noreturn)) no_rom_card(void) {
     xhw_exit_reason("ROM check failed (no ROM)");
     c.n = 0;
     card_line(&c, "This needs your own copy of %s (%s),", s_target.title, s_target.code);
-    card_line(&c, "in the same folder as default.xbe (n64rx build puts it there).");
+    card_line(&c, "in the same folder as default.xbe: this build has none inside it");
+    card_line(&c, "(n64rx build puts it in default.xbe; --rom-beside next to it).");
     card_line(&c, "");
     card_line(&c, "Any file name works: .z64 .n64 .v64 .rom .bin");
     card_line(&c, "Nothing is bundled with this build.");
@@ -244,7 +278,8 @@ static void __attribute__((noreturn)) fail_card(const xrom_info* info, const cha
     c.n = 0;
     card_wrap(&c, info->message);
     card_line(&c, "");
-    card_line(&c, "File: D:\\%s (%u bytes, %s)", info->file, (unsigned)info->size, order_name(info->order));
+    card_line(&c, "File: D:\\%s%s (%u bytes, %s)", info->file, s_inside ? ", " XROM_XBE_SECTION : "",
+              (unsigned)info->size, order_name(info->order));
     if (info->code[0])
         card_line(&c, "Title \"%s\", code %s, version %u", info->title, info->code, (unsigned)info->version);
     if (info->verdict == XROM_BAD_HASH) {
@@ -254,20 +289,36 @@ static void __attribute__((noreturn)) fail_card(const xrom_info* info, const cha
     xhw_error_card(title, c.ptr, 30);
 }
 
+/* test builds: a file on D: by name (MX_ROM), ahead of $ROM. 1 if set. */
+static int forced_rom(char* name, int cap) {
+#if XHW_TEST_BUILD
+    const char* forced = getenv("MX_ROM");
+    if (forced && *forced) {
+        snprintf(name, (size_t)cap, "%s", forced);
+        return 1;
+    }
+#endif
+    (void)name;
+    (void)cap;
+    return 0;
+}
+
+/* $ROM in the image header the kernel mapped: 1 and its place in default.xbe */
+static int rom_in_xbe(uint32_t* raw, uint32_t* size) {
+#if XHW_ROM_IN_XBE
+    return (int)xrom_xbe_section(XBE_HDR, le32(XBE_HDR + 0x108), XROM_XBE_SECTION, raw, size);
+#else
+    (void)raw;
+    (void)size;
+    return 0;
+#endif
+}
+
 /* First file in D:\ with an accepted extension. 1 if found. */
 static int find_rom(char* name, int cap) {
     xhw_dir_entry e;
     void* h;
     int ok;
-#if XHW_TEST_BUILD
-    {
-        const char* forced = getenv("MX_ROM");   /* test builds: a file on D: by name */
-        if (forced && *forced) {
-            snprintf(name, (size_t)cap, "%s", forced);
-            return 1;
-        }
-    }
-#endif
     h = xhw_dir_first("D:\\*", &e);
     if (!h) return 0;
     for (ok = 1; ok;) {
@@ -287,15 +338,24 @@ const uint8_t* xhw_rom_load_verified(const xrom_target* target, xrom_info* out) 
     HANDLE h;
     DWORD hi = 0, lo;
     uint8_t* buf;
-    uint32_t done = 0, size;
+    uint32_t done = 0, size = 0, raw = 0;
     uint64_t t0, t1, t2;
     xsha1_ctx sha;
 
     s_target = *target;
     memset(info, 0, sizeof *info);
-    if (!find_rom(info->file, (int)sizeof info->file)) no_rom_card();
+    s_inside = 0;
+    if (!forced_rom(info->file, (int)sizeof info->file)) {
+        s_inside = rom_in_xbe(&raw, &size);
+        if (s_inside) snprintf(info->file, sizeof info->file, "default.xbe");
+        else if (!find_rom(info->file, (int)sizeof info->file)) no_rom_card();
+    }
     snprintf(path, sizeof path, "D:\\%s", info->file);
-    xhw_logf("[ROM] file %s", path);
+    if (s_inside)
+        xhw_logf("[ROM] " XROM_XBE_SECTION " in %s at 0x%x, %u bytes, not preloaded", path, (unsigned)raw,
+                 (unsigned)size);
+    else
+        xhw_logf("[ROM] file %s", path);
 
     h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) {
@@ -305,6 +365,26 @@ const uint8_t* xhw_rom_load_verified(const xrom_target* target, xrom_info* out) 
         fail_card(info, "ROM can't be read");
     }
     lo = GetFileSize(h, &hi);
+    if (s_inside) {
+        /* the section must lie inside the file (a copy of the XBE cut short) */
+        if (hi == 0 && (lo < raw || size > lo - raw)) {
+            snprintf(info->message, sizeof info->message,
+                     "default.xbe is cut short (%u bytes; the ROM inside it ends at %u). Copy it again.",
+                     (unsigned)lo, (unsigned)(raw + size));
+            CloseHandle(h);
+            fail(info, XROM_UNREADABLE);
+            fail_card(info, "ROM can't be read");
+        }
+        if (SetFilePointer(h, (LONG)raw, NULL, FILE_BEGIN) == INVALID_SET_FILE_POINTER) {
+            snprintf(info->message, sizeof info->message, "Can't seek to the ROM in default.xbe (error %u).",
+                     (unsigned)GetLastError());
+            CloseHandle(h);
+            fail(info, XROM_UNREADABLE);
+            fail_card(info, "ROM can't be read");
+        }
+        hi = 0;
+        lo = size;
+    }
     if (hi || xrom_check_size(info, &s_target, lo) != XROM_OK) {
         CloseHandle(h);
         if (hi) xrom_check_size(info, &s_target, 0xFFFFFFFFu);
@@ -359,6 +439,10 @@ const uint8_t* xhw_rom_load_verified(const xrom_target* target, xrom_info* out) 
              (unsigned)((t2 - t1) / 1000));
     if (xrom_check_hash(info, &s_target) != XROM_OK) {
         xhw_logf("[ROM] SHA-1 %s", info->sha1_hex);
+        if (s_inside)   /* the build checked it on the PC: the copy went wrong */
+            snprintf(info->message, sizeof info->message,
+                     "The ROM inside default.xbe is damaged (SHA-1 is %s, expected %s). Copy default.xbe again.",
+                     info->sha1_hex, s_target.nsha1 ? s_target.sha1[0] : "(none)");
         fail_card(info, "Bad or modified ROM dump");
     }
     xhw_logf("[ROM] verified: %s %s, SHA-1 ok", s_target.title, info->label);

@@ -13,6 +13,7 @@ python tools/xbox/test_syms.py          # every committed symbol file against th
 python tools/xbox/test_scan64.py        # the register-width scan on hand-assembled functions (rabbitizer)
 python tools/xbox/test_time.py          # the counter follows the ACPI clock; nothing else reads the TSC
 python tools/xbox/test_asp_hle.py       # the audio HLE: every command vs a reference, SIMD = C, native = word-swapped RDRAM
+python tools/xbox/test_xbe_rom.py       # the ROM inside the XBE: xbe_sections' $ROM, found and checked by xhw_rom.c's parser
 ```
 
 CI (`.github/workflows/build.yml`) is manual-only, for the maintainer's free
@@ -66,7 +67,7 @@ MX_XBE="out/N64Recomp-X test/default.xbe" tools/xbox/xemu_run.sh 40 'card:'
 | variable | meaning |
 |---|---|
 | `MX_XBE` | the XBE to stage (default `build-xbox/xbe/default.xbe`) |
-| `MX_ROM` | a ROM to pack next to it (yours; never committed) |
+| `MX_ROM` | a ROM to pack next to it (yours; never committed). Not needed for an n64rx build: its ROM is inside `default.xbe` (`$ROM`, PLAN.md 3.5); only a `--rom-beside` build or the platform XBE wants one. In a test build (`-DXHW_TEST_BUILD`) an `MX_ROM` env set by autopad wins over `$ROM` |
 | `MX_RUN` | work folder: `stage/`, `game.xiso`, `serial.log` |
 | `MX_STAGE_EXTRA` | a folder whose files are packed too (`autopad.txt`) |
 | `MX_XISO` | a native extract-xiso instead of the image's |
@@ -127,6 +128,7 @@ Timed events follow the ACPI clock.
 | `-DXRC_AUDIO=0` | 1 | audio tasks counted and dropped: silent |
 | `-DXRC_AUDIO_DUMP=<s>` | 0 | test builds: 3 s of the output from second `<s>` as `[AUDDUMP]` lines (`tools/xbox/auddump_to_wav.py serial.log out.wav`: the WAV and its numbers, RMS, L/R correlation, the energy below 4 kHz; the WAV stays outside the tree) |
 | `-DXRC_MENU=0` | 1 | no BACK menu (settings.ini still works) |
+| `-DXHW_ROM_IN_XBE=0` | 1 | ignore `default.xbe`'s `$ROM` section: the ROM is looked for next to the XBE (the build-side switch is `n64rx build --rom-beside`, which leaves the section out and writes the file) |
 | `-DASP_HLE_WORDSWAP=0` | 1 on the console | `asp_hle` on a native-order RDRAM (Wings64-X's layout; the host tests' first group) |
 
 Wings64-X's platform switches (`XHW_*`, `XGFX_*`) carry over; its

@@ -42,7 +42,10 @@ docs/look/           baseline shots: the loading screen (xemu, STILL), the BACK 
    starts.
 4. `xrc_boot` (`rt/boot.c`): `settings.ini`, the video line, then: no game
    (a card), the test pack (its checks on a card), or a game: the ROM read
-   and checked by SHA-1, the RDRAM window, the boot block (`osTvType` ...
+   (`xhw_rom.c`: `default.xbe`'s own `$ROM` section, found in the image
+   header at 0x10000 and read from `D:\default.xbe` at its raw offset; a
+   ROM file beside the XBE when the build has none) and checked by SHA-1,
+   the RDRAM window, the boot block (`osTvType` ...
    `osMemSize`), the boot copy (1 MB from ROM 0x1000), the function table,
    the mode switch (`xhw_video_boot`), the renderer, the recompiled
    entrypoint.

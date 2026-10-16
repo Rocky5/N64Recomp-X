@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / 'tools/xbox'))
 
 from n64rx_lib import N64rxError, cli, doctor, engines, packs, pipeline, rom as romlib  # noqa: E402
 import make_test_rom  # noqa: E402
+import xbe_sections  # noqa: E402
 
 TEST_SHA1 = 'a182648693f416078e0bff023243d552ad46fe16'
 
@@ -191,16 +192,41 @@ class Build(unittest.TestCase):
                 shutil.rmtree(ROOT / 'build-xbox/n64rxtest', ignore_errors=True)
             self.assertEqual(folder.name, 'N64Rx_ Test _ Pack_')
             names = sorted(p.name for p in folder.iterdir())
-            self.assertEqual(names, ['N64Rx_ Test _ Pack_.z64', 'README.txt', 'TitleImage.xbx', 'TitleMeta.xbx',
-                                     'debug', 'default.tbn', 'default.xbe'])
-            self.assertEqual((folder / 'N64Rx_ Test _ Pack_.z64').read_bytes(), rom_data, 'the ROM is not normalised')
+            self.assertEqual(names, ['README.txt', 'TitleImage.xbx', 'TitleMeta.xbx', 'debug', 'default.tbn',
+                                     'default.xbe'])
             xbe = (folder / 'default.xbe').read_bytes()
+            # the ROM is inside, normalised, as a section the kernel never loads (PLAN.md 3.5)
+            flags, _, _, raw, size = xbe_sections.find_section(xbe, '$ROM')
+            self.assertFalse(flags & xbe_sections.PRELOAD)
+            self.assertEqual(xbe[raw:raw + size], rom_data, 'the ROM inside is not the normalised image')
+            self.assertTrue(cli.rom_inside(folder / 'default.xbe'))
+            self.assertIn('inside default.xbe', (folder / 'README.txt').read_text())
             base, cert = struct.unpack_from('<I', xbe, 0x104)[0], struct.unpack_from('<I', xbe, 0x118)[0]
             self.assertEqual(struct.unpack_from('<I', xbe, cert - base + 8)[0], 0x4E52FFF0)
             self.assertIn(b'$$XTIMAGE', xbe)
             self.assertIn('E:\\UDATA\\4E52FFF0', (folder / 'README.txt').read_text())
             self.assertEqual(eng.env['XRC_TITLE_ID'], '4E52FFF0')
             self.assertTrue(any(l.startswith('[5/5]') for l in lines))
+
+    def test_rom_beside(self):
+        """the kill switch: --rom-beside writes the ROM as a file, as before"""
+        rom_data = synthetic()
+        with tempfile.TemporaryDirectory() as tmp:
+            rom_path = pathlib.Path(tmp) / 'game.z64'
+            rom_path.write_bytes(rom_data)
+            rom = romlib.parse(rom_path, rom_data)
+            pack = fake_pack(tmp, rom)
+            eng = FakeEngine(ROOT / 'build-xbox/xbe/default.xbe')
+            try:
+                with mock.patch.object(packs, 'all_packs', return_value=[pack]), \
+                        mock.patch.object(pipeline, 'cache_dir', return_value=pathlib.Path(tmp)):
+                    folder = pipeline.build(rom_path, out=pathlib.Path(tmp) / 'out', eng=eng, echo=lambda s: None,
+                                            rom_beside=True)
+            finally:
+                shutil.rmtree(ROOT / 'build-xbox/n64rxtest', ignore_errors=True)
+            self.assertEqual((folder / 'N64Rx_ Test _ Pack_.z64').read_bytes(), rom_data, 'the ROM is not normalised')
+            self.assertFalse(cli.rom_inside(folder / 'default.xbe'))
+            self.assertNotIn(b'$ROM\0', (folder / 'default.xbe').read_bytes()[:0x1000])
 
 
 class Doctor(unittest.TestCase):

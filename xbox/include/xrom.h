@@ -85,6 +85,15 @@ uint32_t xrom_verify(uint8_t* buf, uint32_t size, xrom_info* info, const xrom_ta
 /* "size", "bad header", ... for lastexit.txt */
 const char* xrom_verdict_name(uint32_t verdict);
 
+/* The ROM inside the XBE (PLAN.md 3.5): n64rx appends it as a section of
+ * this name that the kernel never loads (tools/xbox/xbe_sections.py). */
+#define XROM_XBE_SECTION "$ROM"
+/* Section `name` in an XBE image header: `hdr` holds the file's first `len`
+ * bytes (SizeOfHeaders; the kernel maps them at the base address, 0x10000).
+ * 1 with its raw offset and size in the file; 0 if it isn't there or the
+ * header doesn't hold together. */
+uint32_t xrom_xbe_section(const uint8_t* hdr, uint32_t len, const char* name, uint32_t* raw, uint32_t* size);
+
 #ifndef XROM_HOST_TEST
 /* ---- the Xbox part (xhw_rom.c): find, load, check ---- */
 /* The normalised image in RAM (z64 byte order), or never returns: a card,

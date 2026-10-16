@@ -3,7 +3,10 @@
 #   tools/xbox/xemu_run.sh [seconds] [stop-regex]
 # Env:
 #   MX_ROM    your own ROM to pack next to default.xbe ("none" = omit,
-#             to exercise the "No ROM found" card). Never committed.
+#             to exercise the "No ROM found" card). Never committed. Not
+#             needed for an n64rx build: its ROM is inside default.xbe
+#             ($ROM, PLAN.md 3.5) and only the XBE is staged; a ROM given
+#             anyway is staged and ignored by the runtime.
 #   MX_XBE    default: build-xbox/xbe/default.xbe
 #   MX_RUN    work dir (XISO + logs), default ~/xemu/nrx-run
 #   MX_GUI=1  leave xemu running (don't kill at timeout)
@@ -30,6 +33,10 @@ mkdir -p "$run/stage"
 rm -rf "$run/stage/"*
 cp "$xbe" "$run/stage/default.xbe"
 [ -n "${MX_STAGE_EXTRA:-}" ] && cp -R "$MX_STAGE_EXTRA"/. "$run/stage/"
+# an n64rx build holds its ROM ($ROM, in the header area): the XBE is all it needs
+if head -c 4096 "$xbe" | grep -qa '[$]ROM'; then
+  echo "xemu_run: the ROM is inside $(basename "$xbe")${iso:+; MX_ROM staged too, unused}"
+fi
 if [ -n "$iso" ] && [ "$iso" != none ]; then ln -f "$iso" "$run/stage/$(basename "$iso")" 2>/dev/null || cp "$iso" "$run/stage/"; fi
 rm -f "$run/game.xiso"
 vrun="$run"; [ "$win" = 1 ] && vrun="$(cd "$run" && pwd -W)"
