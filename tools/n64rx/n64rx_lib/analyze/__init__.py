@@ -87,6 +87,7 @@ def analyze(rom, extra_segments=()):
     img.segments.append(boot)
     a = Analysis(entry, main, bss, img)
     a.funcs['boot'] = F.discover(img, boot, [entry, main])
+    _end_entry(a, rom)
     a.notes.append(f'boot: ROM 0x1000 at {entry:08X}, {boot.size:#x} bytes (BSS {bss:08X} +{bss_size:#x}), '
                    f'main {main:08X}, {len(a.funcs["boot"])} functions')
     for seg in extra_segments:
@@ -102,6 +103,29 @@ def analyze(rom, extra_segments=()):
                            f'called at {", ".join(f"{t:08X}" for t in inside[:3])}), '
                            f'{len(a.funcs[seg.name])} functions')
     return a
+
+
+def _end_entry(a, rom):
+    """an entry that calls main with jal (parse_entry) ends after the call
+    and the spin loop after it, if any: what follows is data (strings, the
+    linker's padding) a walk would take for code"""
+    from .mips import Ins
+    ef = a.funcs['boot'].get(a.entry)
+    if ef is None:
+        return
+    for i in range(48):
+        pc = a.entry + 4 * i
+        ins = Ins(int.from_bytes(rom[0x1000 + 4 * i:0x1004 + 4 * i], 'big'), pc)
+        if ins.is_jr or ins.is_j:
+            return
+        if ins.is_jal and ins.target == a.main:
+            end = pc + 8
+            nxt = Ins(int.from_bytes(rom[0x1000 + 4 * i + 8:0x1000 + 4 * i + 12], 'big'), end)
+            if nxt.is_branch and nxt.is_unconditional_branch and nxt.branch_target <= end:
+                end += 8   # b . and its delay slot
+            if end < ef.end:
+                ef.end = end
+            return
 
 
 def _add(a, seg, roots, weak=()):

@@ -159,7 +159,7 @@ def report(a: Analysis, ids, live, nm, replaced):
 
 def cross_funcs(a: Analysis, live, nm, replaced):
     """live functions with a branch or j into the body of another function
-    (not its start): the recompiler emits a goto to a label the other
+    (not its start), or a branch to code no function holds: the recompiler emits a goto to a label the other
     function holds, which C cannot compile ("use of undeclared label"; the
     library sweep's 12 games: a shared tail, a function whose bounds the
     walk split). The runtime's interpreter runs them; the target function
@@ -187,7 +187,12 @@ def cross_funcs(a: Analysis, live, nm, replaced):
                 if f.start <= t < f.end:
                     continue
                 k = bisect.bisect_right(starts, t) - 1
-                if k >= 0 and spans[k][0] < t < spans[k][1]:
+                inside = k >= 0 and spans[k][0] < t < spans[k][1]
+                start = k >= 0 and spans[k][0] == t
+                if inside or (not start and ins.is_branch and seg.has(t)):
+                    # into another function's body, or a conditional branch out to
+                    # code no function holds (the recompiler only turns a j or
+                    # an unconditional branch to a start into a tail call)
                     out[x] = nm[x]
                     break
     return out
