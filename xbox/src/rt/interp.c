@@ -36,7 +36,7 @@
  * Every instruction of the VR4300's user ISA the recompiler handles, plus
  * ll/sc/lld/scd (one CPU: sc always succeeds), the traps (do_break when
  * taken), syscall, break; COP0 Status through the runtime, the other COP0
- * registers as a shadow and the TLB instructions as nothing (below); cache
+ * registers as a shadow and the TLB instructions through tlb.c (below); cache
  * and sync are no-ops.
  * Anything else stops the game with the instruction named, never a guess.
  * There is no decoded-block cache: each instruction is read from RDRAM when
@@ -239,10 +239,26 @@ static void divu32(St* st, uint32_t a, uint32_t b) {
 }
 
 /* COP0 other than Status (Index, EntryHi, Wired ...): what was written reads
- * back. DIVERGES: there is no TLB (the runtime runs KSEG0 only and its
- * osMapTLB family does nothing), so osMapTLB / osUnmapTLBAll code the
- * analyser did not name runs here harmlessly instead of stopping. */
+ * back. The TLB instructions go to tlb.c with Index (0), EntryLo0/1 (2, 3),
+ * PageMask (5) and EntryHi (10), so osMapTLB / osUnmapTLBAll / __osProbeTLB
+ * code the analyser did not name (the recompiler refuses it) maps for real.
+ * DIVERGES: tlbwr writes the entry Random would pick as Wired (no random
+ * replacement: games that use tlbwr refill on a miss we never raise). */
 static uint32_t s_cop0[32];
+
+static void tlb_op(uint32_t fn) {
+    switch (fn) {
+    case 1:   /* tlbr */
+        xrc_tlb_read(s_cop0[0] & 31, &s_cop0[5], &s_cop0[10], &s_cop0[2], &s_cop0[3]);
+        return;
+    case 2: case 6:   /* tlbwi, tlbwr */
+        xrc_tlb_write((fn == 2 ? s_cop0[0] : s_cop0[6]) & 31, s_cop0[5], s_cop0[10], s_cop0[2], s_cop0[3]);
+        return;
+    case 8:   /* tlbp */
+        s_cop0[0] = xrc_tlb_probe(s_cop0[10]);
+        return;
+    }
+}
 
 /* one instruction; a branch or jump only fills `br` (the caller runs the delay slot) */
 static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint32_t w, Br* br) {
@@ -354,15 +370,14 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
     case 13: SET(rt, s | uimm); return;
     case 14: SET(rt, s ^ uimm); return;
     case 15: SET(rt, SX32(uimm << 16)); return;
-    case 16:   /* COP0: Status is the runtime's; the rest a shadow, the TLB nothing */
+    case 16:   /* COP0: Status is the runtime's; the rest a shadow, the TLB tlb.c's */
         if (rs == 0) { SET(rt, SX32(rd == 12 ? (uint32_t)cop0_status_read(ctx) : s_cop0[rd])); return; }
         if (rs == 4) {
             if (rd == 12) cop0_status_write(ctx, (gpr)t);
             else s_cop0[rd] = (uint32_t)t;
             return;
         }
-        if (rs == 16 && (fn == 1 || fn == 2 || fn == 6)) return;          /* tlbr, tlbwi, tlbwr */
-        if (rs == 16 && fn == 8) { s_cop0[0] = 0x80000000u; return; }     /* tlbp: never a match */
+        if (rs == 16 && (fn == 1 || fn == 2 || fn == 6 || fn == 8)) { tlb_op(fn); return; }   /* tlbr, tlbwi, tlbwr, tlbp */
         break;
     case 17: cop1(ctx, st, pc, w, br); return;
     case 24: case 25: SET(rt, s + (uint64_t)(int64_t)imm); return;

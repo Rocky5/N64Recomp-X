@@ -98,6 +98,13 @@ function pointers, then faults in recompiled goddard code (a read of the
 address `04000650`, frame ~225): goddard maps `0x04000000` through the TLB
 (its renderer's `osMapTLB` calls, read in the decomp) and the runtime has
 no TLB. Not the net: the runtime needs TLB mapping for SM64's head screen.
+With the TLB (`tlb.c`, `docs/decisions.md` "The TLB") the same build
+draws Mario's head and PRESS START; two more learn rounds (437, then ~470
+learnt functions: goddard's and the engine's function pointers) and START,
+START, A, A reach the castle grounds' Lakitu intro (xemu, emulator only).
+The analyser names osMapTLB, osUnmapTLBAll and osMapTLBRdb (`_tlb` rule);
+goddard's dynlists are read through `0x04000000` -> 64 KB pages aliased in
+the page tables.
 
 Interpreted code reaches the runtime's libultra by address:
 `gen/xrc_interp.c` carries `xrc_ultra_table` (each `ULTRA(name)` of
@@ -110,6 +117,8 @@ the function table before the recompiled sections.
 |---|---|---|---|---|
 | Pilotwings 64 (US) | 1952 / 1956 (the 4: libultra's exception handler) | boot + app, exact | 54 of 54 / 0 | title, menus, flight, results, saves, sound: the same as the decomp-symbol build |
 | Mario Kart 64 (US) | 3203 (not yet compared) | boot + both race segments | 71 named | title screen drawn; races need F3DEX |
+| Super Mario 64 (US) | 5053 with three `--learn` rounds | boot + engine + goddard (learnt) | 78 named | title head, the interactive head screen, castle grounds (Lakitu intro); the head's shading is off (graphics) |
+| Dr. Mario 64 (US) | 263 | boot only | 56 named | links (`__osEnqueueAndYield`, osYieldThread named); boots, the net runs 4 functions at `8002xxxx`, then interpreted code reads PI_STATUS through KSEG1 (`a4600010`) and faults; `--learn` (25 functions, 0 DMAs) does not change it: its code segment's DMA is not seen yet |
 
 The validation track (PLAN.md §6, "V") adds a game at a time from the
 decomps and keeps every result here.

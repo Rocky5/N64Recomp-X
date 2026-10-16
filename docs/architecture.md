@@ -63,6 +63,13 @@ docs/look/           baseline shots: the loading screen (xemu, STILL), the BACK 
   miss goes to the safety net (`learn.c`): code in RDRAM is interpreted
   through a per-address stub entered in the table, and logged for
   `n64rx --learn`; anything else is the fatal card.
+- The TLB (`tlb.c`, `hw/xhw_alias.c`): 32 entries as the game wrote them;
+  a valid entry's pages are mapped a second time in the x86 page tables at
+  the host address `rdram + vaddr` gives, onto the frames that hold the
+  N64 pages, so the generated code reads TLB-mapped data with its ordinary
+  loads. The runtime's osMapTLB family (`ultra/more2.c`) and the
+  interpreter's `tlbwi`/`tlbp`/`tlbr` both write it; `osVirtualToPhysical`
+  and `__osProbeTLB` translate through it. Kill switch `-DXRC_TLB=0`.
 - `xrc_game` (`gen/xrc_game.c`, written by n64rx): id, title, title ID,
   RDRAM size, entrypoint, register width, the section table, the icon,
   the save size.

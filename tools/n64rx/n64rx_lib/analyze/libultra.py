@@ -478,7 +478,33 @@ def _sp_init(N):
         N.one(cands, 'osVirtualToPhysical', 'masks KSEG0/KSEG1 addresses, asks the TLB for the rest')
 
 
-RULES = (_anchors, _hardware, _structure, _vi, _io, _sp_init)
+# ---- the TLB family and osYieldThread (added by the tlb work; the runtime's
+# are tlb.c / ultra/more2.c / thread.c). Behaviour only: the TLB routines
+# write Index, EntryHi, EntryLo0/1 and run tlbwi, told apart by their
+# arguments and whether they set PageMask; osYieldThread takes none and is __osDisableInt,
+# __osEnqueueAndYield, __osRestoreInt and nothing else.
+TLB_WRITE = {('mt', 0), ('mt', 2), ('mt', 3), ('mt', 10)}
+
+
+def _tlb(N):
+    for a, ft in N.f.items():
+        if a in N.name or 'tlbwi' not in ft.special or not TLB_WRITE <= ft.cop0:
+            continue
+        if {0, 1, 2, 3} <= ft.args_used and ('mt', 5) in ft.cop0:
+            N.one([a], 'osMapTLB', 'PageMask, EntryHi, EntryLo0/1 from its arguments, tlbwi')
+        elif ft.args_used == {0}:
+            N.one([a], 'osUnmapTLB', 'tlbwi of an invalid entry at the index in arg0')
+        elif not ft.args_used and ('mt', 5) in ft.cop0:
+            N.one([a], 'osMapTLBRdb', 'PageMask and a fixed entry (the debugger port), no arguments')
+        elif not ft.args_used:
+            N.one([a], 'osUnmapTLBAll', 'tlbwi of invalid entries over the whole TLB, PageMask untouched')
+    di, ri, eay = N.a_('__osDisableInt'), N.a_('__osRestoreInt'), N.a_('__osEnqueueAndYield')
+    if di and ri and eay:
+        cands = [a for a, ft in N.f.items() if a not in N.name and not ft.args_used and ft.calls == [di, eay, ri]]
+        N.one(cands, 'osYieldThread', '__osDisableInt, __osEnqueueAndYield, __osRestoreInt, no arguments')
+
+
+RULES = (_anchors, _hardware, _structure, _vi, _io, _sp_init, _tlb)
 
 
 def identify(img, funcs):

@@ -15,6 +15,7 @@
 /* ---- the runtime the interpreter reaches, stubbed ---- */
 static uint8_t s_ram[0x10000];
 uint8_t* xrc_rdram;
+uint8_t* xrc_rdram_host = s_ram;
 uint32_t xrc_rdram_size = sizeof s_ram;
 static jmp_buf s_jb;
 static const char* s_fatal;
@@ -28,6 +29,17 @@ void xrc_fatal_vram(const char* what, uint32_t vram, uint32_t extra) {
 }
 void cop0_status_write(recomp_context* ctx, gpr value) { ctx->status_reg = (uint32_t)value; }
 gpr cop0_status_read(recomp_context* ctx) { return ctx->status_reg; }
+/* tlb.c's host side (xhw_alias.c): the calls, recorded */
+static uint32_t s_alias[8][3], s_nalias, s_unalias[8][2], s_nunalias;
+int xhw_alias_map(uint32_t va, uint32_t pa, uint32_t bytes) {
+    if (s_nalias < 8) s_alias[s_nalias][0] = va, s_alias[s_nalias][1] = pa, s_alias[s_nalias][2] = bytes;
+    s_nalias++;
+    return 1;
+}
+void xhw_alias_unmap(uint32_t va, uint32_t bytes) {
+    if (s_nunalias < 8) s_unalias[s_nunalias][0] = va, s_unalias[s_nunalias][1] = bytes;
+    s_nunalias++;
+}
 void do_break(uint32_t vram) { s_breaks++, s_fatal_pc = vram; }
 void recomp_syscall_handler(uint8_t* rdram, recomp_context* ctx, int32_t vram) { (void)rdram, (void)vram, ctx->r2 = 0x5C, s_syscalls++; }
 void pause_self(uint8_t* rdram) { (void)rdram; xrc_fatal_vram("pause_self", 0, 0); }
@@ -276,6 +288,32 @@ static void t_misc(void) {
     CHECK("tlbp", REG(t2), G(0x80000000u));
     CHECK("Status", C.status_reg, 0xFF01);
     CHECK("mfc0 Status", REG(t4), 0xFF01);
+
+    fresh();   /* the TLB (tlb.c): osMapTLB's sequence maps two 4 KB pages at 0x04000000, tlbp and
+                * tlbr read the entry back, osUnmapTLB's sequence takes the aliases away */
+    s_nalias = s_nunalias = 0;
+    C.r8 = 3, C.r9 = 0x04000000u, C.r10 = ((0x4000u >> 12) << 6) | 0x1F, C.r11 = ((0x5000u >> 12) << 6) | 0x1F;
+    RUN(IT(16, 4, t0, 0 << 11) /* mtc0 Index */, IT(16, 4, zero, 5 << 11) /* PageMask 4 KB */,
+        IT(16, 4, t1, 10 << 11) /* EntryHi */, IT(16, 4, t2, 2 << 11) /* EntryLo0 */, IT(16, 4, t3, 3 << 11),
+        0x42000002u /* tlbwi */, IT(16, 4, zero, 2 << 11), IT(16, 4, zero, 0 << 11),
+        LUI(t4, 0x0400), ORI(t4, t4, 0x1234), IT(16, 4, t4, 10 << 11), 0x42000008u /* tlbp */,
+        IT(16, 0, t5, 0 << 11), 0x42000001u /* tlbr */, IT(16, 0, t6, 3 << 11), JR_RA, NOP);
+    CHECK("tlb aliases", s_nalias, 2);
+    CHECK("tlb even host", s_alias[0][0], (uint32_t)(uintptr_t)(xrc_rdram + 0x04000000u));
+    CHECK("tlb even phys", s_alias[0][1], ((uint32_t)(uintptr_t)s_ram & 0x7FFFFFFFu) + 0x4000);
+    CHECK("tlb odd host", s_alias[1][0], (uint32_t)(uintptr_t)(xrc_rdram + 0x04001000u));
+    CHECK("tlb odd phys", s_alias[1][1], ((uint32_t)(uintptr_t)s_ram & 0x7FFFFFFFu) + 0x5000);
+    CHECK("tlb page", s_alias[1][2], 0x1000);
+    CHECK("tlbp", REG(t5), 3);
+    CHECK("tlbr", REG(t6), C.r11);
+    CHECK("tlb to_phys", xrc_tlb_to_phys(0x04001234u), 0x5234);
+    CHECK("tlb to_phys miss", xrc_tlb_to_phys(0x04002000u), 0xFFFFFFFFu);
+    C.r9 = 0x80006000u, C.r10 = C.r11 = 1;
+    RUN(IT(16, 4, t0, 0 << 11), IT(16, 4, t1, 10 << 11), IT(16, 4, t2, 2 << 11), IT(16, 4, t3, 3 << 11),
+        0x42000002u, JR_RA, NOP);
+    CHECK("tlb unaliases", s_nunalias, 2);
+    CHECK("tlb unalias host", s_unalias[1][0], (uint32_t)(uintptr_t)(xrc_rdram + 0x04001000u));
+    CHECK("tlb unmapped", xrc_tlb_to_phys(0x04001234u), 0xFFFFFFFFu);
 
     fresh();   /* an instruction it does not run stops with its address */
     RUN(NOP, 0x4A000000u /* COP2 */, JR_RA, NOP);

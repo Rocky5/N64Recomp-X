@@ -78,6 +78,12 @@ uint32_t xhw_mem_free_kb(void);
  * 0x80000000 | physical (bit 31 set: the game's RAM-not-ROM test). NULL if
  * there is not that much contiguous memory. Never freed. */
 void* xhw_rdram_alloc(uint32_t bytes);
+/* The N64 TLB's host side (xhw_alias.c): map `bytes` (4 KB multiples) of
+ * physical memory at kernel address va, a second view of frames the window
+ * already maps; 0 when the range is in use (nothing changed). _unmap undoes
+ * only what _map did. */
+int xhw_alias_map(uint32_t va, uint32_t pa, uint32_t bytes);
+void xhw_alias_unmap(uint32_t va, uint32_t bytes);
 /* 128 MB consoles run as 64 MB ones (xhw_ramlock.c): call first in main_body.
  * _log writes the [MEM] line once the log is open. */
 void xhw_ram_lock64(void);

@@ -30,9 +30,12 @@ ULTRA(osInvalICache) {
     xrc_learn_inval(ARG(0), ARG(1));   /* learn.c: code there may be new */
 }
 
+/* KSEG0/KSEG1 masked; a TLB-mapped address through tlb.c's entries (an
+ * unmapped one masked as before, where libultra would return -1) */
 ULTRA(osVirtualToPhysical) {
+    uint32_t v = ARG(0), p = v - 0x80000000u < 0x40000000u ? 0xFFFFFFFFu : xrc_tlb_to_phys(v);
     (void)rdram;
-    RET(ARG(0) & 0x1FFFFFFFu);
+    RET(p != 0xFFFFFFFFu ? p : v & 0x1FFFFFFFu);
 }
 
 ULTRA(osPhysicalToVirtual) {

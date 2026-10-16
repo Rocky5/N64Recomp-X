@@ -224,6 +224,19 @@ ULTRA(osYieldThread) {
     xhw_yield();
 }
 
+/* more2.c's __osEnqueueAndYield: a pause with every level of the lock let
+ * go when the thread holds it (interrupts "off", as libultra's callers do),
+ * taken back after */
+void xu_pause_unlocked(uint32_t ms);
+void xu_pause_unlocked(uint32_t ms) {
+    Thr* me = self();
+    int n = me->ints_off ? s_depth : 0, i;
+    for (i = 0; i < n; i++) xu_unlock();
+    if (ms) xhw_sleep_ms(ms);
+    else xhw_yield();
+    for (i = 0; i < n; i++) xu_lock();
+}
+
 /* ---- message queues ---- */
 ULTRA(osCreateMesgQueue) {
     uint32_t mq = ARG(0);
