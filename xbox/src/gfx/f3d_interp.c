@@ -1705,6 +1705,10 @@ static void hold_quad(uint32_t tex, float u, float v, int filter) {
     xgfx_draw(&st, q, 2);
 }
 
+#ifndef XGFX_HOLD_EVICT
+#define XGFX_HOLD_EVICT 1   /* 0: never drop the texture cache for the BACK menu's frame and card */
+#endif
+
 static void hold_frame(void) {
     if (s_hold_req != s_hold_on) {
         uint64_t t0 = xhw_time_us();
@@ -1724,6 +1728,10 @@ static void hold_frame(void) {
             if (last) xgfx_tex_destroy(last);
         }
         if (s_hold_on && !s_hold_tex) s_hold_tex = xgfx_capture_last(&s_hold_u, &s_hold_v);
+        if (s_hold_on && !s_hold_tex && XGFX_HOLD_EVICT) {   /* the game's textures fill the pool: see below */
+            f3d_tex_reset();
+            s_hold_tex = xgfx_capture_last(&s_hold_u, &s_hold_v);
+        }
         if (XHW_TEST_BUILD && s_hold_on)
             xhw_logf("[GFX] hold: last frame captured %s in %u ms", s_hold_linear ? "on the GPU" : "by the CPU",
                      (unsigned)((xhw_time_us() - t0) / 1000u));
@@ -1800,7 +1808,23 @@ void f3d_present_held(const uint32_t* img, int tw, int th, int pw, int ph, int f
         q[i].rgba[3] = (uint8_t)(140 * fade / 256);
     }
     xgfx_draw(&st, q, 2);
-    if (img && fade > 0) tex = xgfx_tex_create((uint32_t)tw, (uint32_t)th, img);
+    if (img && fade > 0) {
+        tex = xgfx_tex_create((uint32_t)tw, (uint32_t)th, img);
+        /* A game's cached textures can fill the pool so the card (512x512, 1 MB)
+         * finds no room (Mario Kart 64 on red: 1.2 MB free in pieces, the menu
+         * opened with no card). The game is frozen while the menu shows: drop
+         * its cache (the textures reload from RDRAM after) and try again. */
+        if (!tex && XGFX_HOLD_EVICT) {
+            static int said;
+            f3d_tex_reset();
+            tex = xgfx_tex_create((uint32_t)tw, (uint32_t)th, img);
+            if (!said) {
+                said = 1;
+                xhw_logf("[GFX] menu card: texture pool full, the game's texture cache dropped (%s)",
+                         tex ? "card shown" : "still no room");
+            }
+        }
+    }
     if (tex) {
         /* TEXEL0 x SHADE in colour and alpha: the card, faded by the shade's alpha */
         st.cc0 = (1u << 20) | (4u << 15) | (1u << 12) | (4u << 9) | (1u << 5) | 4u;

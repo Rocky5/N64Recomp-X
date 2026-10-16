@@ -178,6 +178,7 @@ Controller Pak screen, its pages free).
 | `-DASP_HLE_WORDSWAP=0` | 1 on the console | `asp_hle` on a native-order RDRAM (Wings64-X's layout; the host tests' first group) |
 | `-DASP_HLE_NEAD=0` | 1 | the nead audio microcodes (Mario Kart 64, SM64 EU, Zelda) read as unknown: silent |
 | `-DASP_HLE_NAUDIO=0` | 1 | `n_aspMain` (Paper Mario, Smash Bros.) reads as unknown: silent |
+| `-DXGFX_HOLD_EVICT=0` | 1 | the BACK menu never drops the game's texture cache when its held frame or card finds the texture pool full (Mario Kart 64 on red: the card was missing) |
 | `-DXGFX_UCODE_F3DEX=0` | 1 | F3DEX 0.9x/1.x microcodes (and F3DLX, F3DLP, L3DEX, .NoN/.Rej) read as Fast3D, the build before the registry (`docs/renderer.md`) |
 | `-DXGFX_UCODE_F3DEX2=0` | 1 | F3DEX2 microcodes (F3DZEX, F3DLX2, .NoN/.Rej) read as Fast3D |
 | `-DXGFX_UCODE_S2DEX=0` | 1 | S2DEX 1.x/2.x read as Fast3D (its own commands are skipped either way; not drawn yet) |
