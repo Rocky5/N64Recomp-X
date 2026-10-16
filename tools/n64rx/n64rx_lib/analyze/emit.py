@@ -155,3 +155,39 @@ def report(a: Analysis, ids, live, nm, replaced):
         out.append('walks that stopped early (their end may be short):')
         out += [f'  {nm[k]}: {f.bad}' for k, f in funcs.items() if f.bad]
     return '\n'.join(out) + '\n'
+
+
+def cross_funcs(a: Analysis, live, nm, replaced):
+    """live functions with a branch or j into the body of another function
+    (not its start): the recompiler emits a goto to a label the other
+    function holds, which C cannot compile ("use of undeclared label"; the
+    library sweep's 12 games: a shared tail, a function whose bounds the
+    walk split). The runtime's interpreter runs them; the target function
+    stays recompiled for its own callers."""
+    from .mips import Ins, words
+    out = {}
+    for seg in a.img.segments:
+        fs = a.funcs.get(seg.name, {})
+        spans = sorted((f.start, f.end) for f in fs.values())
+        starts = [s for s, _ in spans]
+        import bisect
+        for x, f in fs.items():
+            if x not in live or x == a.entry or nm[x] in replaced:
+                continue
+            n = (f.end - f.start) // 4
+            ws = words(a.img.rom, seg.rom + (f.start - seg.vram), n)
+            for i, w in enumerate(ws):
+                ins = Ins(w, f.start + 4 * i)
+                if ins.is_branch and not ins.is_link_branch:
+                    t = ins.branch_target
+                elif ins.is_j:
+                    t = ins.target
+                else:
+                    continue
+                if f.start <= t < f.end:
+                    continue
+                k = bisect.bisect_right(starts, t) - 1
+                if k >= 0 and spans[k][0] < t < spans[k][1]:
+                    out[x] = nm[x]
+                    break
+    return out

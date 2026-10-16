@@ -302,13 +302,20 @@ def _structure(N):
             elif (cq and list(f[a].calls).count(cq) >= 2 or any(f.get(c) and cq in f[c].calls for c in callees
                                                                 if c != cq)) and not starts_mgr:
                 pim += [a] if len(f[a].args_used) >= 3 else []
+        sem = N.a_('osSetEventMesg')
+        if len(pim) > 1 and sem:   # the real one registers its event queue for OS_EVENT_PI
+            pim = [a for a in pim if sem in f[a].calls]
         N.one(pim, 'osCreatePiManager', 'starts the PI device manager thread with its queues')
         for a in [m for m in mgrs if m not in N.name]:
             pass
-    # osSetEventMesg(event, mq, msg): disable, two stores into a table indexed by arg0, restore
+    # osSetEventMesg(event, mq, msg): disable, two stores into a table indexed by arg0, restore;
+    # the later libultras also send the message at once for OS_EVENT_PRENMI when a
+    # reset is already pending (osSendMesg, a little longer: Ridge Racer 64)
     if di and ri:
-        cands = [a for a, ft in f.items() if a not in N.name and set(ft.calls) == {di, ri} and
-                 ft.args_used >= {0, 1, 2} and ft.size <= 0x90 and not ft.gptr]
+        sm = N.a_('osSendMesg')
+        ok = {di, ri} | ({sm} if sm else set())
+        cands = [a for a, ft in f.items() if a not in N.name and {di, ri} <= set(ft.calls) <= ok and
+                 ft.args_used >= {0, 1, 2} and ft.size <= 0xC0 and not ft.gptr]
         vim = N.a_('osCreateViManager')
         if vim:
             cands = [c for c in cands if c in f[vim].calls]

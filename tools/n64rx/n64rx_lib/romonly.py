@@ -71,6 +71,10 @@ def make(rom, bdir, base=None, learnt=None):
     # the runtime's register model (N64RX_MMIO_INTERP=0: recompiled, as before)
     if os.environ.get('N64RX_MMIO_INTERP', '1') != '0':
         interp.update({x: n for x, n in emit.hw_funcs(a, live, nm, replaced).items() if n not in ignored})
+    # a branch into another function's body cannot be compiled: interpreted
+    # (N64RX_XBRANCH_INTERP=0: recompiled, the compile then fails as before)
+    if os.environ.get('N64RX_XBRANCH_INTERP', '1') != '0':
+        interp.update({x: n for x, n in emit.cross_funcs(a, live, nm, replaced).items() if n not in ignored})
     ignored |= set(interp.values())
     (pdir / 'interp.txt').write_text(''.join(f'{n} 0x{x:08X}\n' for x, n in sorted(interp.items())),
                                      encoding='utf-8')
