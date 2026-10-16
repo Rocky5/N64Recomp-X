@@ -30,6 +30,7 @@ uint32_t xrc_tlb_to_phys(uint32_t vaddr);
 /* mmio.c: the RCP's registers, the PIF and the cartridge through KSEG1, for
  * the interpreter (xrc_mmio_is: KSEG1 past RDRAM; -DXRC_MMIO=0: never) */
 void xrc_mmio_init(void);
+void xrc_trace_init(void);   /* trace.c: a trace build's functions in the crash report */
 void xrc_mmio_vi(void);
 int xrc_mmio_is(uint32_t vaddr);
 uint32_t xrc_mmio_read(uint32_t vaddr);

@@ -53,6 +53,7 @@ recomp_func_t* xrc_try_function(uint32_t vram) { return vram == 0x80003000u ? kn
 
 static struct { uint32_t vram, len, caller; } s_learnt[8];
 static int s_nlearnt;
+void xrc_trace_vram(uint32_t vram) { (void)vram; }   /* trace.c: nothing to record on the host */
 void xrc_learn_func(uint32_t vram, uint32_t len, uint32_t caller) {
     if (s_nlearnt < 8) s_learnt[s_nlearnt].vram = vram, s_learnt[s_nlearnt].len = len, s_learnt[s_nlearnt++].caller = caller;
 }

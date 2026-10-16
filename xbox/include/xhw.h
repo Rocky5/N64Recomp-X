@@ -96,6 +96,8 @@ void* xhw_alias_page(uint32_t va);
 /* diagnosis: log every write to the word at host address `host` (DR0;
  * xhw_crash.c), with the writer; the runtime's -DXRC_WATCH=<N64 address> */
 void xhw_watch_write(uint32_t host);
+/* a report the runtime adds to a crash (rt/trace.c: the functions entered last) */
+void xhw_crash_set_extra(void (*fn)(void));
 /* 128 MB consoles run as 64 MB ones (xhw_ramlock.c): call first in main_body.
  * _log writes the [MEM] line once the log is open. */
 void xhw_ram_lock64(void);

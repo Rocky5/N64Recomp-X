@@ -129,6 +129,10 @@ static void show_screen(void) {
  * mem.c): DR0 on the word's host address, writes only; every thread runs in
  * ring 0 under this guard, so each write raises a single-step exception here,
  * which logs the writer and the new value and carries on (the first 200). ---- */
+static void (*s_extra)(void);
+
+void xhw_crash_set_extra(void (*fn)(void)) { s_extra = fn; }
+
 static volatile uint32_t s_watch;
 static volatile LONG s_watch_hits;
 
@@ -172,6 +176,7 @@ __attribute__((cdecl)) static int on_exception(EXCEPTION_RECORD* er, void* frame
         for (;;) {}   /* no waits or file I/O at raised IRQL */
     }
     xhw_log(s_rep);
+    if (s_extra) s_extra();   /* the runtime's own (a trace build's functions), into the log's tail */
     write_crash_log();
     xhw_exit_write("crash (crash.log)");
     for (;;) Sleep(1000);

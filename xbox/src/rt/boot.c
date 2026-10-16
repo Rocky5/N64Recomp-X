@@ -89,6 +89,7 @@ static void test_rom(void) {
     if (!xrc_mem_init(xrc_game.rdram_mb ? xrc_game.rdram_mb : 4)) xhw_fatal("Out of memory", "No room for the N64's RAM.");
     xhw_splash_stage("Loading code");
     xhw_splash_progress(0.5f);
+    xrc_trace_init();
     if (!xrc_ovl_init()) xhw_fatal("Can't load the code", "The function table could not be built.");
     snprintf(l[0], sizeof l[0], "Starting %s", xrc_game.title);
     xhw_splash_stage(l[0]);
@@ -172,6 +173,7 @@ static void game(void) {
 
     xhw_splash_stage("Loading code");
     xhw_splash_progress(0.6f);
+    xrc_trace_init();
     if (!xrc_ovl_init()) xhw_fatal("Can't load the code", "The function table could not be built.");
 
     snprintf(line, sizeof line, "Starting %s", xrc_game.title);

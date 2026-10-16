@@ -1,0 +1,44 @@
+/* trace.c - the functions a trace build (N64RX_TRACE=1: N64Recomp's
+ * trace_mode, xbox/include/xrc/trace.h) entered last, logged when the game
+ * crashes. One ring for every thread, each entry with the kernel thread
+ * that made it; a store and an increment per function, so a trace build
+ * runs slower but still runs. A build without trace_mode never calls in. */
+#include "rt.h"
+#include "xhw.h"
+
+#define RING 256
+
+static const char* volatile s_name[RING];
+static void* volatile s_thread[RING];
+static volatile uint32_t s_vram[RING];   /* the interpreter's calls: an address, no name */
+static volatile unsigned s_n;
+
+void xrc_trace_enter(const char* name) {
+    unsigned i = __atomic_fetch_add(&s_n, 1u, __ATOMIC_RELAXED) & (RING - 1);
+    s_name[i] = name;
+    s_vram[i] = 0;
+    s_thread[i] = xhw_thread_self();
+}
+
+/* the interpreter's entries and calls (interp.c), in every build: the code a
+ * crash in interpreted code was running */
+void xrc_trace_vram(uint32_t vram) {
+    unsigned i = __atomic_fetch_add(&s_n, 1u, __ATOMIC_RELAXED) & (RING - 1);
+    s_name[i] = 0;
+    s_vram[i] = vram;
+    s_thread[i] = xhw_thread_self();
+}
+
+/* the crash guard's extra report (xhw_crash_set_extra): the last 64, oldest first */
+static void dump(void) {
+    unsigned n = s_n, k, first = n > 64 ? n - 64 : 0;
+    if (!n) return;
+    xhw_logf("[TRACE] the last %u functions entered (of %u), oldest first:", n - first, n);
+    for (k = first; k < n; k++) {
+        unsigned i = k & (RING - 1);
+        if (s_name[i]) xhw_logf("[TRACE]   %s (thread %p)", s_name[i], s_thread[i]);
+        else if (s_vram[i]) xhw_logf("[TRACE]   %08x, interpreted (thread %p)", (unsigned)s_vram[i], s_thread[i]);
+    }
+}
+
+void xrc_trace_init(void) { xhw_crash_set_extra(dump); }

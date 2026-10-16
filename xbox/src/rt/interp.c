@@ -59,6 +59,7 @@
 #define MAX_FRAMES 32               /* in-line calls tracked for the learn log */
 
 recomp_func_t* xrc_try_function(uint32_t vram);   /* ovl.c: NULL when no function starts there */
+void xrc_trace_vram(uint32_t vram);                /* trace.c */
 /* learn.c: a function the analyser missed ran here (len: bytes it spanned) */
 void xrc_learn_func(uint32_t vram, uint32_t len, uint32_t caller);
 
@@ -466,6 +467,7 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
     st.fcc = 0, st.learning = learning, st.nframes = 0;
     st.r[31] = SX32(SENTINEL);
     if (learning) st.fr[st.nframes++] = (Frame){entry, SENTINEL, entry, caller};
+    xrc_trace_vram(entry);   /* trace.c: what the crash report names */
     while (pc != SENTINEL) {
         Br br = {0}, ds = {0};
         uint32_t w = fetch(rdram, pc);
@@ -495,6 +497,7 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
         if (br.target == pc && !br.link && !fetch(rdram, pc + 4)) pause_self(rdram);   /* b . (an idle loop), as the recompiler does */
         if (br.link) {   /* a call */
             recomp_func_t* f = xrc_try_function(br.target);
+            xrc_trace_vram(br.target);
             if (f) {
                 regs_out(&st, ctx);
                 f(rdram, ctx);

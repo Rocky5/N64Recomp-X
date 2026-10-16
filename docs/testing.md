@@ -236,6 +236,7 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_THREAD_SP16=0` | 1 | threads start at the sp the game gives instead of 16 bytes below it, as libultra does |
 | `-DXRC_WATCH=<N64 address>` | unset | diagnosis: every write to that word logged with the writer's EIP and the new value (`[WATCH]`, x86 DR0; `xhw_crash.c`) |
 | `-DXRC_TLB_HELPERS=0` | 1 | the runtime's RDRAM helpers mask a KUSEG address to physical instead of translating it through the game's TLB |
+| `N64RX_TRACE=1` (env, n64rx) | unset | diagnosis: N64Recomp's `trace_mode`; the last 64 functions entered (recompiled by name, interpreted by address) are logged with a crash (`[TRACE]`, `xbox/src/rt/trace.c`) |
 | `-DXGFX_HOLD_EVICT=0` | 1 | the BACK menu never drops the game's texture cache when its held frame or card finds the texture pool full (Mario Kart 64 on red: the card was missing) |
 | `-DXGFX_UCODE_F3DEX=0` | 1 | F3DEX 0.9x/1.x microcodes (and F3DLX, F3DLP, L3DEX, .NoN/.Rej) read as Fast3D, the build before the registry (`docs/renderer.md`) |
 | `-DXGFX_UCODE_F3DEX2=0` | 1 | F3DEX2 microcodes (F3DZEX, F3DLX2, .NoN/.Rej) read as Fast3D |

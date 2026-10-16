@@ -69,7 +69,7 @@ def cache_key(rom, pack, gpr=None, pin=None):
     """the recompile step is skipped when this is unchanged: the ROM, every
     file of the pack, the recompiler's pin, what n64rx writes, the width"""
     return hashlib.sha256(json.dumps([rom.sha1, pack.file_hash(), pin or engines.recompiler_pin(), GEN_VERSION,
-                                      gpr or '']).encode()).hexdigest()
+                                      gpr or '', os.environ.get('N64RX_TRACE', '')]).encode()).hexdigest()
 
 
 def decide_gpr(pack, rom, override, prog):
@@ -191,6 +191,8 @@ def write_recomp_config(pack, rom_file, gen, cfg_dir):
     text = text.replace('@ROM@', rom_file.resolve().as_posix()).replace('@OUT@', gen.resolve().as_posix())
     text = re.sub(r'^(\s*symbols_file_path\s*=\s*)"([^"]+)"', lambda m: f'{m.group(1)}"{(pack.dir / m.group(2)).resolve().as_posix()}"',
                   text, flags=re.M)
+    if os.environ.get('N64RX_TRACE') == '1':   # diagnosis: N64Recomp's trace_mode (xbox/include/xrc/trace.h)
+        text = re.sub(r'^\[input\]$', '[input]\ntrace_mode = true', text, count=1, flags=re.M)
     cfg_dir.mkdir(parents=True, exist_ok=True)
     cfg = cfg_dir / 'recomp.toml'
     cfg.write_text(text, encoding='utf-8', newline='\n')
