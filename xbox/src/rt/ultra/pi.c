@@ -51,6 +51,7 @@ uint32_t xu_pi_dma(uint32_t dev, uint32_t dram, uint32_t n) {
     uint32_t i;
     if (src) {
         xu_to_rdram(dram, src, n);
+        xrc_learn_dma(rom_offset(dev), dram, n);   /* learn.c: where code came from */
         return 0;
     }
     for (i = 0; i < n; i++) wr8(dram + i, 0);
@@ -69,6 +70,7 @@ ULTRA(osPiStartDma) {
         xhw_logf("[PI] write to the cart domain %08x (%u bytes): ignored", (unsigned)dev, (unsigned)n);
     } else if ((src = xu_rom_ptr(rom_offset(dev), n)) != NULL) {
         xu_to_rdram(dram, src, n);
+        xrc_learn_dma(rom_offset(dev), dram, n);   /* learn.c: where code came from */
     } else {
         uint32_t i;
         for (i = 0; i < n; i++) wr8(dram + i, 0);

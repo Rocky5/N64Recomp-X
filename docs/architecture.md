@@ -24,7 +24,7 @@ xbox/src/gfx/        the Fast3D interpreter (game triple): Wings64-X's, reading 
                      generic hor+, the held frame for the BACK menu
 xbox/src/rt/         the runtime (game triple): boot, settings, settings_menu (the BACK menu), video
                      (the probation's A and timeout), audio (asp_hle and the AI), gfx, mem, ovl (the
-                     function table), interp (hand-written code), hooks, nogame/
+                     function table), interp (hand-written code), learn (the safety net, the learn log), hooks, nogame/
 xbox/src/rt/ultra/   libultra's surface: threads, queues, events, time, VI, PI (and the osEPi family), SI
                      (pads, EEPROM, the PIF), SP, AI, misc, extra (rumble, paks, Flash, VRU, probes)
 tests/xbox/          the host tests' C
@@ -56,7 +56,10 @@ docs/look/           baseline shots: the loading screen (xemu, STILL), the BACK 
   native, halfwords at `^2`, bytes at `^3`.
 - `get_function` (`ovl.c`): a page map over 8 MB of KSEG0 to per-page
   `uint16_t` index arrays; every section of `recomp_overlays.inl` and every
-  interpreted routine (`gen/xrc_interp.c`) is entered at its address.
+  interpreted routine (`gen/xrc_interp.c`) is entered at its address. A
+  miss goes to the safety net (`learn.c`): code in RDRAM is interpreted
+  through a per-address stub entered in the table, and logged for
+  `n64rx --learn`; anything else is the fatal card.
 - `xrc_game` (`gen/xrc_game.c`, written by n64rx): id, title, title ID,
   RDRAM size, entrypoint, register width, the section table, the icon,
   the save size.

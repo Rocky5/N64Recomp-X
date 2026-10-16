@@ -9,8 +9,10 @@
  * its link address here. Overlays tracked by their PI DMA source, and code
  * loaded on demand as XBE sections, come in M5.
  *
- * A function pointer that misses the table is a fatal card with the address
- * and the caller, never a silent jump. */
+ * A function pointer that misses the table goes to the safety net (learn.c:
+ * the code there is interpreted and logged for the next build) when the
+ * address holds code; otherwise, or with -DXRC_SAFETY_NET=0, it is a fatal
+ * card with the address and the caller, never a silent jump. */
 #include <stdlib.h>
 #include <string.h>
 
@@ -20,10 +22,11 @@
 #define PAGE_SHIFT 12
 #define PAGE_WORDS (1u << (PAGE_SHIFT - 2))
 #define MAX_PAGES ((8u << 20) >> PAGE_SHIFT)
+#define LEARN_SLOTS 512   /* learn.c's stubs, entered at run time */
 
 static uint16_t* s_pages[MAX_PAGES];
 static recomp_func_t** s_funcs;   /* index -> function; [0] unused */
-static uint32_t s_nfuncs;
+static uint32_t s_nfuncs, s_cap;
 
 static int32_t s_section_addr_store[1];
 int32_t* section_addresses = s_section_addr_store;
@@ -35,31 +38,61 @@ uint32_t xrc_ovl_function_count(void) { return s_nfuncs; }
 typedef struct { uint32_t vram; recomp_func_t* fn; } XrcInterpEntry;
 __attribute__((weak)) const XrcInterpEntry xrc_interp_table[1];
 __attribute__((weak)) const unsigned xrc_interp_count;
+/* the runtime's libultra at the game's addresses (gen/xrc_interp.c): only
+ * interpreted code calls them by address (the recompiled code by name) */
+typedef struct { uint32_t vram; recomp_func_t* fn; } XrcUltraEntry;
+__attribute__((weak)) const XrcUltraEntry xrc_ultra_table[1];
+__attribute__((weak)) const unsigned xrc_ultra_count;
 
 static int enter(uint32_t vram, recomp_func_t* f) {
     uint32_t off = vram - 0x80000000u, page = off >> PAGE_SHIFT;
     if (vram < 0x80000000u || page >= MAX_PAGES || (vram & 3)) return 0;
+    if (s_nfuncs >= s_cap) return 0;
     if (!s_pages[page]) {
         s_pages[page] = (uint16_t*)calloc(PAGE_WORDS, sizeof(uint16_t));
         if (!s_pages[page]) return 0;
     }
-    s_funcs[++s_nfuncs] = f;
-    s_pages[page][(off >> 2) & (PAGE_WORDS - 1)] = (uint16_t)s_nfuncs;
+    s_funcs[s_nfuncs + 1] = f;
+    __asm__ volatile("" ::: "memory");   /* the pointer before the index: get_function runs on other threads */
+    s_pages[page][(off >> 2) & (PAGE_WORDS - 1)] = (uint16_t)++s_nfuncs;
     return 1;
+}
+
+/* learn.c: a stub for an address the net took (under its lock) */
+int xrc_ovl_enter(uint32_t vram, recomp_func_t* f);
+int xrc_ovl_enter(uint32_t vram, recomp_func_t* f) { return enter(vram, f); }
+
+/* the recompiled function whose x86 holds `host` (the nearest start at or
+ * below it; under ThinLTO an estimate), 0 when none: the caller the learn
+ * log names */
+uint32_t xrc_ovl_vram_of(uintptr_t host);
+uint32_t xrc_ovl_vram_of(uintptr_t host) {
+    uintptr_t best = 0;
+    uint32_t vram = 0;
+    size_t i, j;
+    for (i = 0; i < xrc_game.num_sections; i++)
+        for (j = 0; j < xrc_game.sections[i].num_funcs; j++) {
+            uintptr_t f = (uintptr_t)xrc_game.sections[i].funcs[j].func;
+            if (f <= host && f > best) best = f, vram = xrc_game.sections[i].ram_addr + xrc_game.sections[i].funcs[j].offset;
+        }
+    return vram;
 }
 
 int xrc_ovl_init(void) {
     size_t i, j, total = 0;
     for (i = 0; i < xrc_game.num_sections; i++) total += xrc_game.sections[i].num_funcs;
-    total += xrc_interp_count;
-    if (total > 65535) {
+    total += xrc_interp_count + xrc_ultra_count;
+    if (total + LEARN_SLOTS > 65535) {
         xhw_logf("[RECOMP] %u functions: more than the table holds", (unsigned)total);
         return 0;
     }
-    s_funcs = (recomp_func_t**)calloc(total + 1, sizeof *s_funcs);
+    s_cap = (uint32_t)total + LEARN_SLOTS;
+    s_funcs = (recomp_func_t**)calloc(s_cap + 1, sizeof *s_funcs);
     if (xrc_game.num_sections > 1)
         section_addresses = (int32_t*)calloc(xrc_game.num_sections, sizeof(int32_t));
     if (!s_funcs || !section_addresses) return 0;
+    for (i = 0; i < xrc_ultra_count; i++)   /* first: a recompiled function at the same address wins */
+        enter(xrc_ultra_table[i].vram, xrc_ultra_table[i].fn);
     for (i = 0; i < xrc_game.num_sections; i++) {
         const SectionTableEntry* s = &xrc_game.sections[i];
         section_addresses[s->index] = (int32_t)s->ram_addr;
@@ -109,6 +142,10 @@ recomp_func_t* get_function(int32_t vram) {
     if (page < MAX_PAGES && s_pages[page]) {
         uint16_t i = s_pages[page][(off >> 2) & (PAGE_WORDS - 1)];
         if (i) return s_funcs[i];
+    }
+    {
+        recomp_func_t* f = xrc_learn_lookup((uint32_t)vram, (uintptr_t)__builtin_return_address(0));
+        if (f) return f;
     }
     xrc_fatal_vram("No function at this address", (uint32_t)vram, (uint32_t)(uintptr_t)__builtin_return_address(0));
 }

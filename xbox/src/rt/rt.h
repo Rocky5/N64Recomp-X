@@ -37,6 +37,15 @@ static inline void xrc_ctx_init(recomp_context* ctx, uint32_t sp) {
     ctx->mips3_float_mode = 0;
 }
 
+/* learn.c: the safety net (PLAN.md 3.14 step 5). -DXRC_SAFETY_NET=0: a call
+ * to an address with no function is the fatal card, as before the net */
+#ifndef XRC_SAFETY_NET
+#define XRC_SAFETY_NET 1
+#endif
+recomp_func_t* xrc_learn_lookup(uint32_t vram, uintptr_t host_caller);
+void xrc_learn_dma(uint32_t rom, uint32_t ram, uint32_t size);
+void xrc_learn_inval(uint32_t ram, uint32_t size);
+
 /* hooks.c */
 void xrc_fatal_vram(const char* what, uint32_t vram, uint32_t extra) __attribute__((noreturn));
 

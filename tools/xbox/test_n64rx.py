@@ -139,6 +139,39 @@ class Packs(unittest.TestCase):
         self.assertEqual(len(pipeline.folder_name('x' * 80)), 42)
 
 
+class Learn(unittest.TestCase):
+    """the learning loop's input (n64rx_lib/learn.py): a learn.txt or a serial log"""
+
+    def test_read_and_apply(self):
+        from n64rx_lib import learn
+        from n64rx_lib.analyze import funcs as F
+        with tempfile.TemporaryDirectory() as t:
+            p = pathlib.Path(t) / 'serial.log'
+            p.write_text('[BOOT] hello\n[LEARN] safety net: 80300010 has no function\n'
+                         '[LEARN] dma 00123450 80300000 1000\n[LEARN] func 80300010 0 from 80001234\n'
+                         'func 80300010 2c from 0\nfunc 80000102 4 from 0\n# a comment\n', encoding='utf-8')
+            lt = learn.read([p])
+            self.assertEqual(lt.funcs, {0x80300010: (0x2C, 0x80001234)})   # unaligned: dropped
+            self.assertEqual(lt.dmas, [(0x123450, 0x80300000, 0x1000)])
+            learn.write(lt, pathlib.Path(t) / 'learned.txt')
+            self.assertEqual(learn.read([pathlib.Path(t) / 'learned.txt']).funcs, lt.funcs)
+        # a function outside every segment brings its DMA in as a segment (a jr ra; nop there)
+        rom = bytearray(0x200000)
+        rom[0x123460:0x123468] = bytes.fromhex('03E0000800000000')
+
+        class A:
+            img = F.Image(bytes(rom))
+            funcs = {}
+            notes = []
+        a = A()
+        learn.apply(a, lt, len(rom))
+        self.assertEqual([(s.name, s.rom, s.vram, s.size) for s in a.img.segments],
+                         [('learn_80300000', 0x123450, 0x80300000, 0x1000)])
+        self.assertIn(0x80300010, a.funcs['learn_80300000'])
+        with mock.patch.dict('os.environ', {'N64RX_WITHHOLD': '80300010,func_80400000'}):
+            self.assertEqual(learn.withheld(lt), {0x80400000})   # the learnt one is never withheld
+
+
 class FakeEngine:
     """stands in for the toolchain: writes what the real steps would"""
     name = 'fake'

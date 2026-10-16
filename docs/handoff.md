@@ -190,3 +190,42 @@ is 480i only: needs an HD AV pack), a save moved to or from Wings64-X
   fixtures) and `decomp_check.py` are the V track's first files.
 - Decided, to build: the ROM inside the XBE (`$ROM`, PLAN.md §3.5); the
   output folder still holds the ROM next to `default.xbe`.
+
+### The safety net and the learning loop (2026-10-16, branch `agent/learn`)
+
+**Done, verified how**
+
+- `xbox/src/rt/interp.c` made complete for game code: a 64-bit register
+  file per run (GPR32 builds run 64-bit code inside), COP1 as the
+  generated code reaches it (all formats, round/trunc/ceil/floor/cvt, the
+  FCR31 rounding mode, compare and likely branches), traps, syscall,
+  ll/sc, VR4300 divide by zero, `b .` -> `pause_self`, COP0 shadow + TLB
+  no-ops. `tools/xbox/test_interp.py` (new): passes with 64- and 32-bit
+  registers.
+- `xbox/src/rt/learn.c` (new): the safety net (a miss in `get_function`
+  that holds code runs interpreted through a per-address stub), the
+  `[LEARN]` log and `E:\UDATA\<title id>\learn.txt`, the DMA ring
+  (`ultra/pi.c`), `osInvalICache` relogs (`ultra/misc.c`).
+  `-DXRC_SAFETY_NET=0` restores the card.
+- `n64rx build --learn` (`n64rx_lib/learn.py`; hooks in `romonly.py`,
+  `pipeline.py`, `cli.py`); `n64rx log --pull` fetches `learn.txt`;
+  `N64RX_WITHHOLD` test switch; pipeline's refusal retries 40 -> 400.
+- xemu (emulator only, slot 14): Pilotwings 64 ROM-only with its app
+  thread withheld runs on the net (35 fps), the `--learn` rebuild logs
+  nothing (38.5 fps); Super Mario 64 learns its two run-time segments
+  (`docs/analyzer.md`); Mario Kart 64 to its title: no net hits.
+- `[MEM]`/`[CLOCK]`: not re-measured (no console run; the net adds 512
+  stubs x 24 B, a 1,024-entry DMA ring, a 48 KB learn text).
+
+**Not verified / gaps**
+
+- No console run of the net (the stubs execute from .bss: fine on the
+  P3, which has no NX; xemu agrees).
+- SM64 after `--learn` faults in recompiled goddard code (a read of
+  `04000650`: goddard maps `0x04000000` through the TLB, which the runtime
+  does not have); Dr. Mario 64 does not link (`__osEnqueueAndYield_recomp`
+  undefined); Banjo-Kazooie is not analysed (its boot is compressed):
+  none of these reached the net.
+- Interpreted code is slow (no decoded-block cache); a learnt segment that
+  overlaps another overlay at the same address is not handled (M5).
+
