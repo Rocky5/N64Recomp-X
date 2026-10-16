@@ -13,6 +13,7 @@ python tools/xbox/test_syms.py          # every committed symbol file against th
 python tools/xbox/test_scan64.py        # the register-width scan on hand-assembled functions (rabbitizer)
 python tools/xbox/test_time.py          # the counter follows the ACPI clock; nothing else reads the TSC
 python tools/xbox/test_asp_hle.py       # the audio HLE: every command vs a reference, SIMD = C, native = word-swapped RDRAM
+python tools/xbox/test_saves.py         # saves: pak CRCs and PIF round trips, the blank format, Rumble, osPfs*, Flash, SRAM by PI DMA
 ```
 
 CI (`.github/workflows/build.yml`) is manual-only, for the maintainer's free
@@ -106,7 +107,11 @@ Auto, Restart), `hd` (A keeps 720p, shots with Widescreen Auto and after a
 change). `tools/xbox/scenarios/menu/autopad.txt`: `[MENU] opened`,
 `[MENU] Widescreen: ...`, `[MENU] closed (settings.ini saved)`, four shots.
 A COM1 `[FBDUMP]` takes seconds in xemu, so scenarios space their shots.
-Timed events follow the ACPI clock.
+Timed events follow the ACPI clock. A `SHOT` due before the game's first
+frame stalls the boot: put shots late. Saves: `pak_menu` (Mario Kart 64:
+START at the title; expect `[SI] port 1: the game's own code reaches its
+pak`, `[SAVE] ...mpk`), `pak_boot` (START held at boot: the game's own
+Controller Pak screen, its pages free).
 
 ## Switches
 
@@ -127,6 +132,9 @@ Timed events follow the ACPI clock.
 | `-DXRC_AUDIO=0` | 1 | audio tasks counted and dropped: silent |
 | `-DXRC_AUDIO_DUMP=<s>` | 0 | test builds: 3 s of the output from second `<s>` as `[AUDDUMP]` lines (`tools/xbox/auddump_to_wav.py serial.log out.wav`: the WAV and its numbers, RMS, L/R correlation, the energy below 4 kHz; the WAV stays outside the tree) |
 | `-DXRC_MENU=0` | 1 | no BACK menu (settings.ini still works) |
+| `-DXRC_SAVE_PAK=0` | 1 | no pak in any port: the PIF's status says none, pak commands get no answer, osPfs* return `PFS_ERR_NOPACK` (the old behaviour) |
+| `-DXRC_SAVE_CART=0` | 1 | no SRAM or FlashRAM: domain 2 reads zeros and drops writes, osFlash* fail |
+| `-DXRC_CONT_MAX_ADDR=<a>` | per build | libultra's `__osMaxControllers`, which the runtime's osContInit sets to 4 (n64rx finds it: `saves.py`); unset, a game's own pak code sees no pak |
 | `-DASP_HLE_WORDSWAP=0` | 1 on the console | `asp_hle` on a native-order RDRAM (Wings64-X's layout; the host tests' first group) |
 
 Wings64-X's platform switches (`XHW_*`, `XGFX_*`) carry over; its

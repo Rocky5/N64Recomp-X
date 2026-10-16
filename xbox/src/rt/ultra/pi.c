@@ -5,7 +5,14 @@
  * once into the word-swapped RDRAM image and sends the request's message;
  * the PI manager thread the game created is never needed for that, but its
  * queue is set up. osPiReadIo returns the big-endian word, as the bus did.
- * Overlay tracking by DMA source is M5 (no relocatable sections yet). */
+ * Overlay tracking by DMA source is M5 (no relocatable sections yet).
+ *
+ * PI domain 2 (0x05000000..0x0FFFFFFF: SRAM, FlashRAM) is the cartridge's
+ * save (savedev.c, under the save lock): the handle family (extra.c) reaches
+ * it through a handle based at 0xA8000000. osPi* and osPiRaw* OR osRomBase
+ * in, as libultra does, so they only ever reach the ROM; their writes to it
+ * are dropped. */
+#include "savedev.h"
 #include "ultra.h"
 
 static const uint8_t* s_rom;
@@ -60,6 +67,46 @@ uint32_t xu_pi_dma(uint32_t dev, uint32_t dram, uint32_t n) {
     return 1;
 }
 
+/* domain 2 by PI bus address: 1 if it was the save (the RDRAM side moved) */
+int xu_pi_save_dma(uint32_t addr, uint32_t dram, uint32_t n, int write);
+int xu_pi_save_dma(uint32_t addr, uint32_t dram, uint32_t n, int write) {
+    uint8_t buf[256];
+    if (!xu_cart_is_save(addr)) return 0;
+    if (!XRC_SAVE_CART) {
+        if (!write)
+            while (n--) wr8(dram++, 0);
+        return 1;
+    }
+    xu_save_lock();
+    while (n) {
+        uint32_t k = n < sizeof buf ? n : (uint32_t)sizeof buf;
+        if (write) {
+            xu_from_rdram(buf, dram, k);
+            xu_cart_write(addr, buf, k);
+        } else {
+            xu_cart_read(addr, buf, k);
+            xu_to_rdram(dram, buf, k);
+        }
+        addr += k, dram += k, n -= k;
+    }
+    xu_save_unlock();
+    return 1;
+}
+
+int xu_pi_save_io(uint32_t addr, uint32_t* word, int write);
+int xu_pi_save_io(uint32_t addr, uint32_t* word, int write) {
+    if (!xu_cart_is_save(addr)) return 0;
+    if (!XRC_SAVE_CART) {
+        if (!write) *word = 0;
+        return 1;
+    }
+    xu_save_lock();
+    if (write) xu_cart_write_word(addr, *word);
+    else *word = xu_cart_read_word(addr);
+    xu_save_unlock();
+    return 1;
+}
+
 /* osPiStartDma(mb, pri, dir, devAddr, vAddr (0x10), nbytes (0x14), mq (0x18)) */
 ULTRA(osPiStartDma) {
     uint32_t mb = ARG(0), dir = ARG(2), dev = ARG(3), dram = ARG(4), n = ARG(5), mq = ARG(6);
@@ -108,6 +155,42 @@ ULTRA(osPiRawReadIo) {
     (void)rdram;
     wr32(ARG(1), read_word(ARG(0)));
     RET(0);
+}
+
+ULTRA(__osPiRawReadIo) {
+    (void)rdram;
+    wr32(ARG(1), read_word(ARG(0)));
+    RET(0);
+}
+
+/* osPiWriteIo, osPiRawWriteIo, __osPiRawWriteIo(devAddr, data): the ROM
+ * takes no writes */
+ULTRA(osPiWriteIo) {
+    (void)rdram;
+    RET(0);
+}
+ULTRA(osPiRawWriteIo) {
+    (void)rdram;
+    RET(0);
+}
+ULTRA(__osPiRawWriteIo) {
+    (void)rdram;
+    RET(0);
+}
+
+/* osPiRawStartDma, __osPiRawStartDma(direction, devAddr, dramAddr, size) */
+static void raw_dma(recomp_context* ctx) {
+    uint32_t dir = ARG(0), dev = ARG(1), dram = ARG(2), n = ARG(3);
+    if (dir == 0) xu_pi_dma(dev, dram, n);
+    RET(0);
+}
+ULTRA(osPiRawStartDma) {
+    (void)rdram;
+    raw_dma(ctx);
+}
+ULTRA(__osPiRawStartDma) {
+    (void)rdram;
+    raw_dma(ctx);
 }
 
 /* osCreatePiManager(pri, cmdQ, cmdBuf, cmdMsgCnt): the queue, for anything

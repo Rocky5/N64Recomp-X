@@ -190,3 +190,35 @@ is 480i only: needs an HD AV pack), a save moved to or from Wings64-X
   fixtures) and `decomp_check.py` are the V track's first files.
 - Decided, to build: the ROM inside the XBE (`$ROM`, PLAN.md §3.5); the
   output folder still holds the ROM next to `default.xbe`.
+
+### Saves: every type (2026-10-16, branch `agent/saves`)
+
+**Verified**
+
+- Host: `test_saves.py` (216 checks): libultra's pak CRCs against a second
+  formulation; the blank pak's format as libultra checks it (ID sums, the
+  inode sum 0x71, the mirror); PIF read/write round trips with CRCs, the
+  bank register, no pak; the Rumble Pak's probe and motor, the AUTO rule;
+  the runtime's osPfs* (init, allocate, write, read, state, find, number of
+  files, free pages, delete, the checker on a broken entry, a zeroed pak
+  repaired, no pak, a Rumble Pak); the Flash's ID, sector and chip erase,
+  page program (NEW_FLASH's second 0xB4), read array, status and its clear,
+  the kind from a command or a file; SRAM by PI DMA, its mirror, words.
+- xemu (slot 13, emulator only), Mario Kart 64 from its ROM alone, test
+  build: the game's own (recompiled) pak code reaches the pak through the
+  PIF (`[SI] port 1: the game's own code reaches its pak`), the blank pak is
+  created and written (`[SAVE] ...nkte.mpk written`); with START held at
+  boot the game's "N64 Controller Pak Data" screen shows the pak: no notes,
+  123 pages free; the next boot reads the 32 KB file back. Its EEPROM
+  (`nkte.eep`) still loads.
+
+**Not verified / gaps**
+
+- No ghost or record written to the pak in a race (MK64 races need F3DEX).
+- SRAM and FlashRAM only on the host: Ocarina of Time, Paper Mario and
+  Pokémon Snap were not booted here (graphics and the analyser come
+  first). The runtime's osFlash* and the domain-2 handle family compile but
+  ran on no game.
+- The Rumble Pak at the PIF level ran on no game; the console not touched.
+- `-DXRC_CONT_MAX_ADDR` needs osContInit named (the analyser names it in
+  every ROM so far); without it a recompiled pak path sees no pak.

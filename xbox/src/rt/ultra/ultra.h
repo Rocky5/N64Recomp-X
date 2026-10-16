@@ -113,7 +113,12 @@ unsigned xu_gfx_tasks(void);
 void xu_pi_set_rom(const uint8_t* rom, uint32_t size);
 const uint8_t* xu_rom_ptr(uint32_t rom_off, uint32_t n);
 
-/* si.c: the save writer's flush (the exit combos call it) */
+/* save.c: the save images and their files; the writer's flush (the exit
+ * combos call it); the one lock every save access holds (recursive) */
 void xu_save_flush(void);
+void xu_save_lock(void);
+void xu_save_unlock(void);
+uint8_t* xu_eep_image(uint32_t* size);   /* under the lock */
+void xu_eep_dirty(void);
 
 #endif
