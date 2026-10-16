@@ -1,0 +1,1097 @@
+# N64Recomp-X: implementation plan
+
+**N64 games on the original Xbox by static recompilation.** The user's own ROM
+goes through [N64Recomp](https://github.com/N64Recomp/N64Recomp) (MIT), which
+turns the game's MIPS code into C; that C is compiled for the Pentium III with
+nxdk and LLVM 21 and linked with an Xbox runtime that replaces libultra, feeds
+the game's display lists to the NV2A and its audio command lists to the AC97.
+Not an emulator: no interpreter, no dynarec, no RDP rasteriser on the CPU. The
+platform layer is the one Melee-X, OpenCrossing-Xbox and Wings64-X run on.
+Target: retail Xbox, stock 64 MB. Deliverable: a `default.xbe` per game, built
+on the user's own machine by one command, plus the runtime, the interpreter and
+the game packs that make that possible.
+
+This file is the plan for the engineer or agent who builds it. It decides the
+approach and the architecture, orders the work into milestones with exit checks,
+and lists the risks and the questions only the maintainer can answer. It was
+written 2026-10-16 from the sibling repos (`Melee-X`, `OpenCrossing-Xbox`,
+`Wings64-X`, `wings64-dc`, `Snap64-X`, all under `github.com/TechProGabe`), from
+shallow clones of N64Recomp, N64ModernRuntime, Zelda64Recomp and nxdk read on
+that day, and from the survey in `docs/research.md`. The repo holds no code yet.
+
+Read in this order: this file; `docs/research.md`; then in the sibling
+checkouts Wings64-X `CLAUDE.md`, `PLAN.md` (D1-D13), `docs/architecture.md`,
+`docs/platform.md`, `docs/toolchain.md`, `docs/testing.md`, `docs/handoff.md`,
+`xbox/src/game/ultra/os_shim.c`, `xbox/src/gfx/f3d_interp.c`,
+`xbox/src/hw/asp_hle.c`, `xbox/CMakeLists.txt`, `tools/xbox/compile_game.py`,
+`tools/xbox/thinlto_link.py`; Melee-X `docs/architecture.md`, `docs/platform.md`
+(the lazy reservation and the crash guard), `docs/renderer.md`,
+`docs/decisions.md`; Snap64-X `docs/PLAN.md` §3.4 (the F3DEX2 interpreter
+design); OpenCrossing-Xbox `docs/traps.md`. In the N64Recomp clone:
+`include/recomp.h` (the whole contract between generated code and runtime),
+`src/symbol_lists.cpp`, `src/config.cpp`, `src/main.cpp`; and in
+Zelda64Recomp: `us.rev1.toml`, `patches.toml`, `patches/Makefile`.
+
+---
+
+## 0. Ground truth
+
+| fact | value | source |
+|---|---|---|
+| Recompiler | `N64Recomp/N64Recomp` @ `ffb39cd` (2026-05-26), MIT (c) 2024 Wiseguy; C++20, CMake; libs rabbitizer, ELFIO, fmt, toml++, sljit | clone, `LICENSE`, `CMakeLists.txt` |
+| Generated code | one C function per MIPS function: `RECOMP_FUNC void f(uint8_t* rdram, recomp_context* ctx)`; registers in `ctx` as `gpr` = `uint64_t`; memory through `MEM_W/H/B` macros on a word-swapped RDRAM image; indirect calls `LOOKUP_FUNC(v)(rdram, ctx)`; overlays through `RELOC_HI16/LO16(section, offset)` and `section_addresses[]`; a branch to itself becomes `pause_self(rdram)`; 50 functions per output file by default (`funcs_N.c`, `funcs.h`, `lookup.cpp`, `recomp_overlays.inl`) | `include/recomp.h`, `src/cgenerator.cpp`, `src/main.cpp` |
+| What the runtime must supply | the macro header (`recomp.h` is MIT and ours to replace), `get_function`, `section_addresses`, `recomp_syscall_handler`, `do_break`, `switch_error`, `cop0_status_read/write`, `pause_self`, `recomp_trigger_event`, and one `<name>_recomp(rdram, ctx)` per libultra function in the recompiler's `reimplemented_funcs` list (threads, queues, events, timers, time, VI, SP, DP, AI, PI, SI, EEPROM, SRAM/Flash, PFS, motor, cache ops); libc/math names in `renamed_funcs` stay recompiled under a renamed symbol | `src/symbol_lists.cpp`, N64ModernRuntime `librecomp/src/ultra_translation.cpp` (133 entry points, read for the surface only) |
+| Reference runtime | `N64Recomp/N64ModernRuntime` @ `cdf5abb` (2026-08-30), **GPL-3.0**: `ultramodern` (threads as host threads with a priority run queue, VI/task/gfx threads, RT64 renderer callbacks) + `librecomp` (overlays by PI-DMA source, PI/saves, RSP for recompiled microcode). **No code is taken from it**; it is read for behaviour and for the list of entry points | clone, `COPYING` |
+| Flagship | `Zelda64Recomp/Zelda64Recomp` @ `b65c482` (2026-09-25), GPL-3.0: Majora's Mask from a symbol file (17,765 functions, 617 relocatable sections), two RSP microcodes recompiled (`aspMain`, `njpgdspMain`), patches written in C compiled to MIPS by clang and recompiled in single-file mode; requires D3D12 SM6 / Vulkan 1.2 / Metal and SSE4.1 | clone, `us.rev1.toml`, `patches.toml`, `patches/Makefile`, `README.md` |
+| Symbols | the recompiler takes an ELF (`elf_path`, `use_mdebug` for IDO symbols) or a TOML of sections and functions (`symbols_file_path`: `[[section]] name/rom/vram/size`, `functions = [{name, vram, size}]`, `relocs` for relocatable sections); `--dump-context` writes that TOML from an ELF | `src/config.cpp`, `src/main.cpp`, Zelda64RecompSyms |
+| Xbox | Pentium III 733 MHz (SSE1, MMX, no SSE2, 16 KB L1I/L1D, 128 KB L2), 64 MB shared, NV2A (vertex programs, 8+1 register combiners, 4 texture units, Z24S8), AC97; the kernel loads XBE sections on demand (`XeLoadSection`/`XeUnloadSection`, ref-counted) and nxdk's `cxbe` marks every section preload | Melee-X `docs/architecture.md`, nxdk `lib/xboxkrnl/xboxkrnl.h`, `tools/cxbe/Xbe.cpp` |
+| N64 | VR4300 93.75 MHz (MIPS III, 64-bit registers, O32 code), RSP 62.5 MHz (8-lane 16-bit vector unit), 4 MB RDRAM (8 with the Expansion Pak), VI 60 Hz, cart reads at a few MB/s | public hardware facts |
+| Platform layer | Wings64-X `xbox/src/hw` (25 C files: boot, splash, video, pad, AC97, clock, RAM lock, crash/hang reporters, profiler, fbdump, autopad, NV2A back end, N64 combiner compiler, `asp_hle.c`), `xbox/src/game/ultra/os_shim.c` (kernel-thread libultra shim), `xbox/src/gfx/f3d_interp.c` (Fast3D on the CPU); Melee-X `xhw_reserve_lazy`/`xhw_commit`/crash-guard commit-on-fault; Snap64-X's F3DEX2 interpreter design | the sibling trees at Melee-X `abdfd0f`, OpenCrossing `e6be908`, Wings64-X `83f1258`, wings64-dc `0c384bd`, Snap64-X `43e3803` |
+| Maintainer requirement (2026-10-16) | **the tool works on Windows, macOS and Linux and is really easy to use** | this session |
+
+---
+
+## 1. Summary
+
+**Approach: N64Recomp's output, our runtime, the siblings' platform layer.**
+Four parts, in the order a user meets them:
+
+1. **`n64rx`, the build tool** (§5.1): one command on Windows, macOS or Linux.
+   `n64rx build <rom>` identifies the game from the ROM (byte order
+   normalised, SHA-1 looked up in the game packs), runs the recompiler on it,
+   compiles the result with the runtime for the Xbox and leaves a folder
+   (`default.xbe`, `default.tbn`, the normalised ROM, a one-page README) that
+   the user copies to the console. It runs inside a published Docker image
+   (the same bytes on every OS) or on a native toolchain it can install;
+   `n64rx doctor` says which is available and what is missing.
+2. **Game packs** (`games/<id>/`, §4.2): everything the recompiler and the
+   runtime need to know about one game, with no game data: the symbol file,
+   the overlay list, stubs and instruction patches, the RSP microcode
+   recipes, the save type, the memory size, the microcode families, the
+   knobs, and the MIPS-C patches that change the game (widescreen culling,
+   crash fixes, an in-game menu later).
+3. **The runtime** (`xbox/src/rt`, §3.3-3.6): a C reimplementation of the
+   libultra surface the recompiler expects (`<name>_recomp` entry points) on
+   Wings64-X's kernel-thread shim design; RDRAM as a physically contiguous
+   window the recompiled code indexes without arithmetic; PI DMA from a
+   RAM-resident ROM or a page cache; overlay tracking and function lookup;
+   saves and settings on E:. Written from the N64 programming manual's
+   semantics and the siblings' shims, never from the GPL runtime.
+4. **HLE for the RCP** (§3.7-3.8): the display lists go through a table-driven
+   interpreter (Wings64-X's Fast3D interpreter extended with the F3DEX,
+   F3DEX2/F3DZEX2 and S2DEX tables Snap64-X designed) into the Melee-X NV2A
+   back end; the audio command lists go through `asp_hle.c` where the game
+   uses the stock `aspMain` ABI, and through RSPRecomp's recompiled microcode
+   over a scalar/MMX vector unit where it does not.
+
+Why this and not the other ways:
+
+- **Decomp-based ports** (Melee-X, Wings64-X, Snap64-X) are faster (native C,
+  no translation overhead) and let the port change the game in its own
+  style. They need a decompilation that compiles as C. Recompilation needs
+  only function boundaries, which every splat-style disassembly has long
+  before any function matches, so it covers games the maintainer will never
+  port by hand, and it is the same pipeline for every game. The two lines
+  coexist: N64Recomp-X does not replace Wings64-X or the Snap64-X plan; it
+  measures itself against Wings64-X (§6 M3) and may take games Snap64-X's
+  plan rejected or games no decomp exists for.
+- **The upstream runtime and renderer** do not fit: RT64 needs a shader-model-6
+  GPU and compute shaders (the NV2A has vertex programs and register
+  combiners); `N64ModernRuntime` is GPL-3.0, C++20 with `std::thread` and
+  semaphores, and shaped around a PC. The recompiler itself is MIT, portable
+  C++20 for the *host*, and emits plain C: it is used unmodified at a pin.
+- **Emulation** on the P3 (Surreal64) is the existence proof of what does not
+  work: the RCP cannot be emulated at speed; HLE of its two jobs is what every
+  working N64 port does.
+
+What it costs, said plainly:
+
+- **No XBE can be published**: the recompiled code is the game's code. Every
+  user builds with their own ROM. The whole product is therefore the build
+  tool plus the runtime, which is why the tool is a first-class deliverable
+  (the maintainer's requirement) and why CI never touches a ROM.
+- **Translation overhead on a 733 MHz CPU.** 64-bit MIPS registers on a
+  32-bit x86 cost two instructions where one would do; the context struct
+  costs loads and stores around every call. The plan's first measurement
+  (M3) puts a number on it with the one game that exists both ways,
+  Pilotwings 64, and the 32-bit-register mode of §3.2 is the first lever.
+- **Memory.** A 64 MB console holds the recompiled code (4-6x the MIPS text),
+  the N64's RAM, the ROM or its cache and the GPU's buffers at once. Games
+  with 4 MB of RAM and ROMs up to 16 MB fit easily; 32-64 MB ROMs need a page
+  cache and games with hundreds of overlays need their code loaded on demand
+  (§3.4); Expansion Pak games are the stretch (§6 M8).
+
+The headline facts that shape everything else:
+
+| fact | consequence |
+|---|---|
+| `recomp.h` is MIT and the only contract between generated code and runtime | we write our own header: register width, memory window, float conversions, 64x64 multiply, rounding modes are ours to implement for the P3 (§3.2) |
+| the recompiler replaces libultra by *name* (`reimplemented_funcs`) and emits `<name>_recomp` calls | the runtime is a fixed list of ~130 C entry points with a known calling convention (args in `ctx->r4..r7`, then `0x10(sp)`; result in `ctx->r2`) (§3.3) |
+| libultra objects (`OSThread`, `OSMesgQueue`, `OSTask`) live in the game's RDRAM and game code reads their fields directly | the runtime keeps those structs in RDRAM in N64 layout and hangs host state (kernel threads, events) off side tables keyed by N64 address, unlike Wings64-X's shim, which shares C structs with the game (§3.3) |
+| overlays are recognised by the ROM address a PI DMA reads from (the upstream idea), function pointers by a vram lookup | the runtime tracks sections by DMA source and keeps a two-level vram table; with on-demand XBE sections the code of an overlay is in RAM only while the game has it loaded (§3.4) |
+| the generated code is compiled by us | the game triple, ThinLTO, `-fno-strict-aliasing`, and a per-section output grouping are build decisions, not recompiler changes; a recompiler fork is only needed for codegen changes that M3 proves worthwhile (§3.2) |
+| the Xbox kernel loads XBE sections on demand and `cxbe` preloads all of them | one post-link bit per section turns an overlay's code into a demand-loaded section; no loader of our own (§3.4) |
+| the tool must be easy on three OSes | Docker image first (identical everywhere, Apple Silicon included through a multi-arch image), native toolchains second, a `doctor` command, per-OS single-file binaries of the CLI, a tri-OS CI matrix (§5.1, §6 M0, M7) |
+
+---
+
+## 2. Research findings
+
+Full detail with file paths: `docs/research.md`. The table says what each
+source gives this project and under what terms.
+
+| source | what it is | what we reuse | licence | use? |
+|---|---|---|---|---|
+| `N64Recomp/N64Recomp` @ `ffb39cd` | MIPS→C static recompiler; RSPRecomp; mod tools; live recompiler (x86-64/ARM64 only) | the recompiler and RSPRecomp **unmodified at the pin**, run on the host at build time; `include/recomp.h` as the specification of the generated code's contract (replaced by ours); the symbol-file format; `--dump-context` | MIT | yes |
+| `N64Recomp/N64ModernRuntime` @ `cdf5abb` | `ultramodern` + `librecomp`: the PC runtime for recompiled games | **knowledge only**: the list of `<name>_recomp` entry points and their argument conventions, the "structs live in RDRAM" rule, overlay tracking by DMA source, the RSP task/DMEM model, the save types | GPL-3.0 | no code |
+| `Zelda64Recomp/Zelda64Recomp` @ `b65c482` | Majora's Mask recomp | knowledge only: how a game is configured (`us.rev1.toml`: symbol file, overlay list, stubs, single-instruction patches such as rewriting a KSEG1 `lui` to KSEG0), how patches are built (clang `-target mips -mips2 -mabi=32 -O2 -G0 -mno-abicalls`, lld `--emit-relocs`, `single_file_output`), that compressed games are recompiled from a decompressed image, which microcodes needed recompiling | GPL-3.0 | no code; the patch *mechanism* is upstream's MIT tooling, the patch *contents* are theirs |
+| `Zelda64Recomp/Zelda64RecompSyms` | MM symbol files generated from the `zeldaret/mm` decomp | the format; a data point on size (81,965 lines, 17,765 functions) | **no licence file** | not committed here; §8 Q7 |
+| Ares (via `librecomp/rsp_vu*.hpp`) | the RSP vector unit, SSE4.1 or scalar | the scalar reference as a test oracle and a model for the MMX/scalar VU of §3.8 | ISC (header) inside a GPL repo | from Ares directly, with attribution |
+| `TechProGabe/Wings64-X` @ `83f1258` | Pilotwings 64 on the Xbox, from the decomp | `xbox/src/hw/*` as is (boot, splash, video, pad, AC97, clock, RAM lock, crash/hang, profiler, fbdump, autopad, `nv2a*.c`, `asp_hle.c`); the libultra shim's design and most of its code (`os_shim.c`: levels, lock, queues, VI thread, synchronous tasks, virtual DAC, EEPROM); `f3d_interp.c` + `texconv.c`; `xhw_rom.c` (find, order, header, SHA-1); `settings*.c`; build (`compile_game.py`, `thinlto_link.py`, CMake, MSYS2 and Docker wrappers); console and xemu tooling; the game as the **A/B reference** | MIT (the maintainer's) | yes |
+| `TechProGabe/Melee-X` @ `abdfd0f` | the origin of the platform layer | `xhw_reserve_lazy`/`xhw_commit`/crash-guard commit-on-fault (the memory window of §3.2), the EFB-copy readback machinery, `settings.c`/`menu.c` semantics, PGO and order-file machinery, `docs/testing.md` method | GPL-3.0-or-later on paper because of melee-pc; the maintainer relicenses the Xbox files as their author (Wings64-X's position) | yes |
+| `TechProGabe/Snap64-X` @ `43e3803` | plan for Pokémon Snap from the decomp | the F3DEX2 interpreter design (§3.4 there), the readback rules, the memory-budget method, the plan shape | the maintainer's | yes, as design |
+| `TechProGabe/OpenCrossing-Xbox` @ `e6be908` | Animal Crossing on the Xbox | `traps.md` (clock, aliasing, rdtsc rewrite), `xbox_ramlock.c`, `xbox_code_repair.c`, the video rules | MIT | yes |
+| `sm64-port` `gfx_pc.c` family, libultraship `src/fast` | CPU Fast3D-family interpreters | the opcode tables for F3DEX/F3DEX2/S2DEX (libultraship's copy is plain MIT) | MIT (libultraship) | yes, as reference |
+| community recomps (Snap64Recomp, Starfox64Recomp, MarioKart64Recomp, BanjoRecomp, DK64, Goemon64Recomp, HarvestMoon64Recomp, the announced Smash 64 recomp) | N64Recomp + N64ModernRuntime + RT64 ports | which games have symbol files and what each needed stubbed or patched (read per game when its pack is made) | GPL-3.0 (N64ModernRuntime forces it) | knowledge only |
+| `gcsmith/Pilotwings64Recomp` | listed by search engines as "static recompilation of Pilotwings 64 (WIP)" | nothing: the repository was not reachable on 2026-10-16 (404; the author's profile lists a Superman 64 decomp instead) | unknown | no |
+| nxdk @ `14d5ee9` | the SDK | `XeLoadSection`/`XeUnloadSection`, `PXBE_SECTION_HEADER`, `cxbe`'s section handling (preload bit set on every section), kernel thread and memory calls | nxdk's | yes (at Melee-X's pin for the build; the clone was read for the API) |
+| Surreal64 CE | emulation on the Xbox | the lesson only | n/a | no |
+
+---
+
+## 3. Architecture
+
+### 3.1 Layering
+
+```
+user's ROM (next to default.xbe on the console; given to n64rx on the PC)
+        |
+games/<id>/              game pack: game.toml (SHA-1s, title ID, save type, RDRAM size, ucode families,
+                         audio path, knobs), <id>.syms.toml (+ datasyms), overlays.txt, recomp.toml,
+                         rsp/*.toml, patches/ (MIPS C + patches.toml), icon.png (original art)
+tools/recomp/            N64Recomp at the pin (submodule) + patches/recomp/ if ever needed
+        |  n64rx: normalise ROM -> SHA-1 -> pack -> N64Recomp (+ RSPRecomp) -> build-xbox/<id>/gen/*.c
+        v
+xbox/include/xrc/recomp.h   OUR header: gpr width (64 or 32), MEM macros on the RDRAM window, FP conversions,
+                            64x64 multiply, rounding, LOOKUP_FUNC, RELOC_*; the generated code includes nothing else
+xbox/src/rt/   (game triple)  the runtime: ultra/ (the <name>_recomp entry points over the shim: threads, queues,
+                              events, timers, time, VI, SP, DP, AI, PI, SI, EEPROM/SRAM/Flash, PFS, motor),
+                              mem.c (window, boot block, fault policy), pi.c (ROM resident or page cache, PI manager),
+                              ovl.c (sections, two-level vram table, XeLoadSection), save.c, vi.c, sp.c, pad.c,
+                              settings.c, settings_menu.c (the port panel), hooks.c (recomp_trigger_event, host hooks)
+xbox/src/gfx/  (game triple)  ucode registry (text hashes -> family), f3d_interp.c (table-driven: F3D, F3DEX, F3DEX2,
+                              F3DZEX2, L3DEX2, S2DEX/S2DEX2), tmem.c, texconv.c, vi_map.c (VI mode -> content rect)
+xbox/include/xhw.h, xgfx.h, xrom.h   the only structs crossing the triples: 32-bit scalars, floats, byte arrays
+xbox/src/hw/   (nxdk triple)  Wings64-X's platform layer as is + nv2a.c, nv2a_cc.c, nv2a_fog.c, asp_hle.c,
+                              rsp_vu.c (scalar/MMX vector unit for recompiled microcode), xhw_section.c (XeLoadSection)
+tools/xbox/                   build (per game), compile_game.py, thinlto_link.py, syms tools, xemu runner, console.py,
+                              host tests, rom_leak_check.py, package_release.py
+tools/n64rx/                  the user-facing CLI (Python; packaged per OS), Docker engine, native engine, doctor
+```
+
+Two compile setups, as in every sibling: the generated code, the runtime and
+the interpreter use Melee-X's **game triple** (`--target=i686-pc-windows-gnu
+-mno-ms-bitfields -march=pentium3 -msse -mfpmath=sse -ffp-contract=off
+-fno-strict-aliasing -fwrapv -fno-auto-import -ffunction-sections`, see
+Wings64-X `docs/toolchain.md` for the whole set and the reasons), compiled by
+`compile_game.py` to objects or ThinLTO bitcode; `xbox/src/hw` uses nxdk's
+`i386-pc-win32`. The generated code needs `-fno-strict-aliasing` (upstream
+compiles it that way: the memory macros type-pun through the RDRAM bytes) and
+single-precision SSE floats (the VR4300 rounds `float` ops to single;
+`-mfpmath=sse` keeps x87 excess precision out); `double` ops go through x87
+at the 53-bit control word Melee-X measured (`027f`), which is IEEE double.
+
+Every port-side departure from the game's behaviour is marked `DIVERGES:
+<reason>`. Every optimisation and risky change has a kill switch and the
+default is the good build. Nothing in the tree is game data or derived from a
+ROM (§4.5).
+
+### 3.2 The generated code on a Pentium III: our `recomp.h`
+
+Upstream's header (`include/recomp.h`, 475 lines) is the specification; ours
+implements the same names for this CPU. The differences, each with its reason:
+
+| upstream | here | why |
+|---|---|---|
+| `typedef uint64_t gpr` | `gpr` is `uint64_t` by default and **`uint32_t` when the game pack says `gpr = 32`** (`-DXRC_GPR32=1`) | the VR4300 is 64-bit but O32 code compiled with IDO `-mips2` never executes a 64-bit-ISA instruction: every 32-bit op sign-extends into the upper half, so a 32-bit register holds the same value. `tools/xbox/recomp_scan64.py` disassembles every recompiled function with rabbitizer and lists `dadd/dsub/dsll/dsrl/dsra*/dmult*/ddiv*/ld/sd/ldl/ldr/sdl/sdr/lld/scd/dmfc1/dmtc1/cvt.*.l/trunc.l/round.l/ceil.l/floor.l/lwu`; **zero hits in game code ⇒ 32-bit registers are exact** and halve the register pressure on a CPU with seven usable GPRs. libultra's own 64-bit code (`__osException`, `osGetTime` math, `bcopy`) is replaced by the runtime and never counted. A game with hits runs 64-bit; a per-function mixed mode is recompiler work and waits for M3's numbers |
+| `MEM_W(off, reg) = *(int32_t*)(rdram + ((reg + off) - 0xFFFFFFFF80000000))` | `*(int32_t*)(rdram + (uint32_t)((reg) + (off)))` with **`rdram` = the window's physical base P** | §3.2.1: the RDRAM buffer is a physically contiguous allocation (Wings64-X's `xhw_rdram_alloc`), which the kernel maps at `0x80000000 + P`; a KSEG0 address `0x80000000 + x` is then host address `P + 0x80000000 + x` = `rdram + addr`. One addressing mode, no subtraction, no mask. The `^2`/`^3` of halfword and byte accesses stay (the RDRAM image is word-swapped, as upstream, so 32-bit accesses, the common case, are native) |
+| `DMULT`/`DMULTU` need `__int128` or MSVC | written out as four 32x32 multiplies | no 128-bit type on i686; emitted only for `dmult`, which `gpr = 32` games never reach |
+| `do_cvt_w_s` via `lrintf`, rounding via `fesetround` | `cvtss2si`/`cvttss2si` for `float` (MXCSR rounding), x87 `fistp`/`fisttp`-free sequences for `double` (control-word rounding); `set_cop1_cs` writes MXCSR and the x87 control word together | nxdk's `lrintf` is a stub that asserts (Wings64-X found it), pdclib has no working `fenv`; the P3 has SSE1 (float) but no SSE2 (double) |
+| `lroundf`/`llround` family emitted for `round.w.*` | own implementations | not in nxdk's libc |
+| `NAN_CHECK` = `assert`, `CHECK_FR` = `assert` | empty in release, a logged fatal in test builds | no `assert` in the game loop |
+| `RECOMP_FUNC` = `extern inline __attribute__((weak,noinline))` | the same by default; `-DXRC_FUNC_PLAIN=1` makes it a plain external function | upstream uses weak symbols so a patch library linked first replaces a function. Weak + noinline forbids ThinLTO from inlining the game's two-line helpers into their callers; a game pack without patches can drop it. Measured in M3 |
+| `recomp_trigger_event`, `recomp_syscall_handler`, `do_break`, `switch_error`, `cop0_status_*`, `pause_self` | runtime functions: hooks, a fatal card with the vram, `__osDisableInt`'s interrupt bit, "block this kernel thread forever" | §3.3 |
+
+Host test `test_recomp_h.py` compiles upstream's header and ours on the host
+(x86-64 and `-m32`) and feeds every macro the same random inputs: results and
+the RDRAM bytes must be identical, and `gpr = 32` must agree with `gpr = 64`
+on sign-extended inputs. This is the one test that makes the header a safe
+place to be clever.
+
+#### 3.2.1 The RDRAM window and the fault policy
+
+- `xhw_rdram_alloc(size)` (Wings64-X): one contiguous, cached allocation of
+  4 MB or 8 MB (the pack's `rdram`), physical base P, host address
+  `0x80000000 + P`. The runtime fills the boot block the IPL3 would have
+  (`osTvType` 0x80000300 = NTSC, `osRomType`, `osRomBase`, `osResetType`,
+  `osCicId`, `osVersion`, `osMemSize` 0x80000318 = 4 or 8 MB, the NMI
+  buffer), copies the boot segment from ROM 0x1000 to the entrypoint (what
+  upstream's `init` does with 1 MB; here the pack's `boot_size`) and calls
+  the entrypoint on the first game thread.
+- **KSEG1** (`0xA0000000 + x`, uncached on the N64, the same bytes) and
+  **physical addresses** handed to the RCP map to host addresses
+  `0xA0000000 + P + x`, which the Xbox leaves unmapped. Policy, in order:
+  (1) the pack's single-instruction patches rewrite the few game sites that
+  build KSEG1 addresses for CPU access, as Zelda64Recomp does for its audio
+  display lists (`us.rev1.toml`); (2) addresses that reach the runtime
+  (`osVirtualToPhysical`, DMA, task pointers) are masked with `0x1FFFFFFF`,
+  as the N64 did; (3) `recomp_scan64.py` also reports `lui` of `0xA0xx` in
+  game code so the sites are known before the first boot; (4) the crash
+  guard turns a fault in that range into a `crash.log` naming the function
+  and the N64 address, not a hang. Kill switch `-DXRC_MEM_MASK=1`: every
+  access masked (`and` + base register), slower, for a game whose KSEG1 use
+  is pervasive. Mapping the alias lazily from the fault handler (page-table
+  writes; the Xbox runs in ring 0) is a recorded option, not a plan.
+- **SP DMEM/IMEM, PIF, cartridge domain reads by the CPU** (`0xB0000000`:
+  some games read the ROM header or anti-piracy words directly): the same
+  fault policy; a pack lists the sites and patches or stubs them (upstream's
+  `CIC6105_Init` stub is the model). TLB-mapped games are out of scope until
+  upstream emits MIPS32 relocations for them (its README lists it as
+  planned).
+- The window is not lazily committed (the game touches all of it); Melee-X's
+  `xhw_reserve_lazy` is used for the ROM page cache (§3.5) instead.
+
+### 3.3 The libultra surface (`xbox/src/rt/ultra/`)
+
+The recompiler renames every function in its `reimplemented_funcs` list to
+`<name>_recomp` and never recompiles it; the runtime provides them. Upstream's
+convention, kept: arguments in `ctx->r4..r7` and `MEM_W(0x10, ctx->r29)`
+onwards, floats in `ctx->f12`/`f14`, results in `ctx->r2` (and `r3` for 64-bit
+values, O32 style). Each entry point is a four-line shim over a C function
+that takes N64 addresses (`int32_t`), as in `ultra_translation.cpp` upstream.
+The functions behind them are Wings64-X's `os_shim.c` re-targeted; what changes
+is the data model:
+
+- **Structs live in RDRAM in N64 layout.** `OSMesgQueue` (`mtqueue`,
+  `fullqueue`, `validCount`, `first`, `msgCount`, `msg`), `OSThread` (`id`,
+  `priority`, `state`...), `OSTask`, `OSIoMesg`, `OSTimer`, `OSViMode` are read
+  and written through `MEM_*` accessors, because game code reads their
+  fields inline (`validCount` checks, `priority`, task headers). Host state
+  (the kernel thread, its wake-up event, the wait object) is in side tables
+  keyed by the struct's N64 address (`thread_of(vram)`, `queue_of(vram)`);
+  Wings64-X's `Thr` records become exactly that.
+- **Threads**: `osCreateThread(t, id, entry, arg, sp, pri)` records entry/arg/sp;
+  `osStartThread` spawns a kernel thread (`xhw_thread_spawn`, 128 KB host
+  stack) at the level `level_of(pri)` gives (Wings64-X: idle 2 ... VI 14,
+  strictly priority-preemptive, which is libultra's order) whose body builds a
+  fresh `recomp_context` (`r4 = arg`, `r29 = sp`, `r31` = a return trap) and
+  calls `get_function(entry)(rdram, &ctx)`. The game's N64 stack is in RDRAM
+  (the recompiled code pushes its frames there itself); the host stack is the
+  kernel thread's. `osSetThreadPri`, `osGetThreadPri`, `osGetThreadId`,
+  `osStopThread`, `osDestroyThread`, `osYieldThread` as in the shim.
+  `pause_self` (emitted for a branch to itself, the idle thread's loop)
+  blocks the kernel thread on its event forever: that is the Xbox idle.
+- **Message queues, events, timers, time**: the shim's ring-under-one-lock
+  with real blocking, the event table, the timer thread, `osGetCount`/
+  `osGetTime` from the ACPI clock scaled to 46.875 MHz (never the TSC), with
+  the queue fields mirrored into RDRAM after every change. `OS_EVENT_AI`
+  is posted by the virtual DAC when a buffer finishes (some games wait on it;
+  the shim never needed it); `OS_EVENT_PI` by the PI manager; `OS_EVENT_SP`
+  and `OS_EVENT_DP` when a task returns; `OS_EVENT_SI` after a controller
+  read; `OS_EVENT_COUNTER` by timers; `OS_EVENT_PRENMI` never (reset is our
+  restart).
+- **Interrupts**: `osSetIntMask`, `__osDisableInt`/`__osRestoreInt` and
+  `cop0_status_write` keep an interrupt-enable bit per thread and take the
+  recursive lock while it is clear (Melee-X's interrupt lock), so a game's
+  critical section excludes the runtime's own queue updates. `__osSetFpcCsr`
+  → `set_cop1_cs`.
+- **PI**: `osCreatePiManager` starts the PI thread (level 12), `osPiStartDma`/
+  `osEPiStartDma`/`osPiRawStartDma` queue an `OSIoMesg` it serves in priority
+  order from the ROM source of §3.5 (the copy swaps bytes into the word-swapped
+  image), then posts the message; `osPiReadIo`/`osEPiReadIo` read one word.
+  A write to the cart domain is SRAM/Flash (§3.6), anything else is logged.
+- **VI**: the VI thread posts the retrace message every `osViSetEvent` count
+  (with the shim's queue-reserve DIVERGES), latches `osViSwapBuffer`, keeps
+  `osViSetMode`'s mode (width, height, interlace, x/y scale) for the
+  interpreter's content rect (§3.7), `osViBlack`, `osViSetSpecialFeatures`,
+  `osViRepeatLine`, `osViGetCurrentFramebuffer/Next`.
+- **SP/DP**: `osSpTaskStartGo` runs the task **synchronously on the calling
+  thread**, as every sibling does: `M_GFXTASK` → the ucode registry picks the
+  interpreter table from the task's `ucode`/`ucode_data` hash and the display
+  list is drawn and presented; `M_AUDTASK` → `asp_hle` or the recompiled
+  microcode (§3.8); then SP and DP done. `osSpTaskYield` is ignored and
+  `osSpTaskYielded` returns 0 (upstream does the same). `osDpSetNextBuffer`,
+  `osDpGetStatus`/`osDpSetStatus` report idle. One CPU means a render thread
+  buys nothing; CPU/GPU overlap is the back end's (`XGFX_OVERLAP`).
+- **SI**: `osContInit`/`osContStartReadData`/`osContGetReadData`/
+  `osContStartQuery`/`osContGetQuery`/`osContSetCh`/`osContReset` over
+  `pad.c` for four ports (§3.9); `osMotorInit/Start/Stop` and
+  `__osMotorAccess` drive the pad's motors (a Rumble Pak is always present
+  when the pack says so); `osPfs*` report no Controller Pak unless the pack
+  asks for a 32 KB image per port.
+- **EEPROM/SRAM/Flash**: §3.6. **Cache ops**: no-ops. **`osVirtualToPhysical`**:
+  `& 0x1FFFFFFF`. **`osGetMemSize`**: the pack's size. **`osInitialize`**:
+  the boot block and the first thread record.
+- **libc/math** in `renamed_funcs` (`memcpy`, `bzero`, `sinf`, `sqrtf`,
+  `sprintf`...) stay recompiled, so the game's own implementations run and no
+  host libc semantics leak in; `-DXRC_NATIVE_LIBC=1` swaps in `xhw_string.c`'s
+  `rep movs` versions where the profiler shows them.
+
+Fallback if priority semantics prove load-bearing for some game: the
+cooperative single-thread shim the siblings keep in reserve, same API.
+
+### 3.4 Function lookup, overlays and code on demand (`ovl.c`, `xhw_section.c`)
+
+- **Lookup**: `get_function(vram)` is a two-level table over the N64 address
+  space at 4-byte granularity: a 4 KB page map (2,048 entries for 8 MB) of
+  pointers to per-page arrays of 1,024 function indices (`uint16_t`, 65,535
+  functions; MM has 17,765), allocated only for pages that contain function
+  starts. O(1), two loads and a bounds check; ~1 MB for 2 MB of resident code.
+  The generated `recomp_overlays.inl` (section table: `rom_addr`, `ram_addr`,
+  `size`, functions with offsets, relocations) is the input; static sections
+  are entered at boot.
+- **Overlays**: the upstream idea, reimplemented: when the PI manager serves a
+  read whose ROM range starts a relocatable section, the section is "loaded"
+  at the destination address: `section_addresses[index]` is set (the
+  `RELOC_HI16/LO16` macros read it) and its functions are entered into the
+  table; a later read into the same RAM range or a load of a section that
+  overlaps it unloads the old one. The game's own relocation of data (jump
+  tables, pointers in `.data`) runs as recompiled code on RDRAM bytes and
+  needs nothing from us.
+- **Code on demand** (`-DXRC_OVL_SECTIONS=1`, default on when a pack's
+  overlay code exceeds 4 MB of x86): the build groups each relocatable
+  section's functions into their own PE section (`.ovl_<n>`; the generator's
+  per-file grouping is by count, so `n64rx` splits the generated files per
+  section before compiling, a text operation on `funcs_N.c` that needs no
+  recompiler change), the post-link XBE pass (`xbe_title_image.py`'s
+  successor, `xbe_sections.py`) clears the preload bit on them, and `ovl.c`
+  calls `XeLoadSection` on first load and `XeUnloadSection` on unload. The
+  kernel reads the bytes from the XBE on D: (HDD) and keeps a reference
+  count; sections are page-aligned by the linker. With it, MM's resident code
+  is the boot/code segments plus the overlays in use, not all 617. Without
+  it (switch off, or a DVD-R user who cannot afford the seek), every section
+  is preloaded and the budget of §3.10 says whether the game fits.
+- A function pointer that misses the table (an overlay the game never
+  DMA'd through PI, hand-rolled loaders, TLB) is a fatal card with the vram
+  and the caller, logged, never a silent jump.
+
+### 3.5 The ROM (`pi.c`, `xhw_rom.c`)
+
+Wings64-X §3.1 generalised: find the ROM next to `default.xbe` (any name,
+`.z64/.n64/.v64/.rom/.bin`), normalise the byte order in place, parse the
+header, SHA-1 the image, look it up in the pack's known table, refuse anything
+else with the hash shown. Then one of two sources:
+
+| source | when | how |
+|---|---|---|
+| **resident** | normalised image ≤ `XRC_ROM_RESIDENT_MB` (16) | the whole file in RAM (Wings64-X D2); PI DMA is a swap-copy |
+| **page cache** | larger ROMs (32-64 MB; decompressed Zelda images) | `xhw_reserve_lazy` of the ROM's size; 64 KB chunks filled from the file on first touch by the PI thread (never from a fault inside the kernel's file system: reads commit first, Melee-X's rule); an LRU over `XRC_ROM_CACHE_MB` (16, 12 at 720p) decommits cold chunks; the pack can pin ranges (`[rom] pin = [...]`: animation and audio tables that are read every frame) and list prefetch hints; `[PI]` counters log hits, misses, stall time per second |
+
+HDD latency (~10 ms a seek) against the N64's microsecond cart latency is the
+risk (§7 R6): per-frame synchronous DMAs of a few KB (Zelda's animation
+frames) must hit the cache, which pins and prefetch provide; measured on the
+console in M5, with the resident path as the comparison where the ROM fits.
+**Compressed games** (Yaz0 in both Zeldas): the recompiler needs the
+decompressed image, so `n64rx` decompresses at build time and writes the
+decompressed, normalised image into the output folder as the ROM the console
+reads; the known table holds the hash of the user's file and of the
+decompressed image; the console's check is on the latter. DVD-R users get the
+same folder on a disc (`n64rx xiso`), slower, with the page cache sized for
+it (`[rom] dvd_cache_mb`).
+
+### 3.6 Saves and settings on E:
+
+Per game a title ID (`4E52 nnnn`, "NR" + the pack's index; §8 Q5) and its
+folder `E:\UDATA\4E52nnnn\`:
+
+- **Save image** by the pack's `save_type`: `eep4k` (512 B), `eep16k` (2 KB),
+  `sram` (32 KB), `flash` (128 KB), `none`; `mempak = true` adds a 32 KB
+  Controller Pak image per port. File names and byte order are the emulators'
+  (`.eep`, `.sra`, `.fla`, `.mpk` as Project64 and Mupen64Plus write them),
+  so saves move both ways. The PI-domain writes that SRAM/Flash games do
+  (`osPiRawStartDma` to `0x08000000`, `osFlash*`) hit the image; a dirty flag
+  and a writer thread flush through `xhw_write_file_atomic` within a second
+  and at scene changes (Wings64-X `eeprom.c`, Snap64-X §3.6).
+- **`settings.ini`** (Melee-X `settings.c`): §5.2's keys, per game.
+- **Logs**: `boot.log`, `boot_prev.log`, `crash.log`, `hang.log`,
+  `lastexit.txt`, `shotNN.bmp` as in every sibling; `[RECOMP]` lines add the
+  pack id, the register width, the code size and the section loads.
+
+### 3.7 Graphics: the RSP on the CPU, the RDP on the NV2A
+
+```
+recompiled game -> OSTask (M_GFXTASK) -> ucode registry: hash(ucode text) -> family table
+  -> xbox/src/gfx/f3d_interp.c   one interpreter, per-family opcode tables (Wings64-X's F3D core; Snap64-X's
+                                 F3DEX2 design: 32-slot vertex cache, F3DEX2 matrix semantics, G_TRI2, G_CULLDL,
+                                 G_BRANCH_Z, G_LOAD_UCODE, G_LINE3D/W3D; F3DEX and F3DZEX2 variants; S2DEX/S2DEX2
+                                 backgrounds, sprites and objects), segment table, lights, texgen, fog, clipping
+  -> xgfx.h (XgfxState: combiner, othermode, blender, tiles, fog, scissor; canonical vertices)
+  -> xbox/src/hw/nv2a.c + nv2a_cc.c + nv2a_fog.c   Melee-X's back end as Wings64-X ships it
+```
+
+- **Registry** (`ucode_registry.c`, generated from `games/*/game.toml`): the
+  task's `ucode`, `ucode_size` and `ucode_data` identify the microcode; the
+  registry maps a hash of the text to a family and its table. An unknown
+  microcode stops with a card and the hash in the log, so a new game starts
+  from a fact. Families planned, in order of need: F3D (Wings64-X, done),
+  F3DEX2 and L3DEX2 (Snap64-X's design), F3DEX (the 1.x opcode numbering),
+  F3DZEX2 (the Zelda variant), S2DEX2 (2D). Custom microcodes (Rare, Factor 5,
+  Boss Game Studios, Acclaim) are out of scope until someone writes their
+  table; libultraship's MIT tables are the reference when they are.
+- **Memory the interpreter reads**: display lists, vertices, matrices,
+  textures and TLUTs are RDRAM bytes in the word-swapped image; the loaders
+  read words natively and halfwords/bytes with the `^2`/`^3` of §3.2, so
+  `texconv.c`'s row readers change accordingly (a host test pins it).
+  Segment addresses and `SETTIMG` pointers go through `& 0x1FFFFFFF`.
+- **Content rect from the VI**: unlike the siblings' fixed 320x240, the N64
+  resolution comes from the current `OSViMode` (320x240, 640x480 interlaced,
+  letterboxed modes, `osViSetXScale/YScale`) and the swapped framebuffer's
+  `SETCIMG` size; the mapping onto 640x480 / 1280x720 / pillarboxed rects is
+  Melee-X's.
+- **Framebuffer effects**, in the order games need them: colour image used
+  as a texture (pause backgrounds, motion blur, the Deku bubble: `SETTIMG`
+  pointing at a known colour image → the render target as texture, Melee-X's
+  EFB-copy path), off-screen colour images (render targets, Snap64-X §3.4),
+  CPU reads of a colour image (`[video] fb_readback = true` in the pack:
+  the frame is copied to RDRAM after the DP task; expensive, per game), CPU
+  writes into a colour image (`fb_cpu_write = true`: the dirty region is
+  uploaded over the frame, Wings64-X's snow). Depth-image reads (lens of
+  truth) are the known hard case: Z24 → the N64's 16-bit encoding on
+  readback, measured when a game needs it.
+- **Widescreen**: `[video] hor_plus = false` by default for every pack. On,
+  perspective projection loads are widened by 3/4 on x (the siblings' trick);
+  because the game's culling is 4:3, a pack turns it on only with its culling
+  patch (Wings64-X 030/050, Snap64Recomp's cull patch as knowledge). Off at
+  16:9 output means a centred 4:3 rect with black bars; a "Stretch" value
+  exists for users who want it.
+- **Frame rate**: the game's own. No interpolation, no decoupling at the
+  framework level; a pack may patch a draw interval the way Snap64-X's plan
+  does, per game.
+- Kill switches: Wings64-X's `XGFX_*` set plus `-DXGFX_UCODE_FORCE=<family>`,
+  `-DXGFX_S2DEX=0`, `-DXGFX_FB_TEX=0`, `-DXGFX_HORPLUS=0`.
+
+### 3.8 Audio
+
+Two paths, chosen per pack (`[rsp] audio = "hle" | "recomp"`):
+
+- **`hle`** (default; Wings64-X's `asp_hle.c`, 914 lines, MMX inner loops,
+  Birdman64's `abi.rs` as oracle): the game's synthesizer is recompiled game
+  code that builds Acmd lists; `asp_hle` runs them for the stock `aspMain` ABI
+  (ADPCM, RESAMPLE, ENVMIXER, MIXER, LOADBUFF/SAVEBUFF, CLEARBUFF, SETBUFF,
+  SETVOL, LOADADPCM, SETLOOP, DMEMMOVE, INTERLEAVE, POLEF, SEGMENT). Addresses
+  in the lists are N64 addresses here (`ASP_HLE_SEGMENTS 1`, the Dreamcast
+  mode, over the window). Microcode *versions* differ in a few opcodes and
+  flags (1.0 `aspMain`, the later `n_aspMain` with `A_ENVMIXER` state changes,
+  the Zelda `naudio`): the registry's hash picks the ABI table; a hash with no
+  table falls through to `recomp` when the pack has it, else stops with a card.
+- **`recomp`** (M4 if G1 needs it, else M8): RSPRecomp turns the game's audio
+  microcode into C (`rsp/<name>.toml` in the pack, as Zelda64Recomp's
+  `aspMain.us.rev1.toml` with its `extra_indirect_branch_targets`); the
+  output needs an RSP context, a 4 KB DMEM with the task at `0xFC0` and the
+  ucode data DMA'd to 0 (upstream's model, reimplemented in `rsp_vu.c`), and
+  the vector unit: 8 lanes of 16 bits with 48-bit accumulators, reciprocal
+  and square-root tables. Upstream's VU is Ares's, SSE4.1 or scalar; ours is
+  scalar C with MMX for the lane-parallel ops (the P3 has no SSE2; LLVM's MMX
+  intrinsics are gone, so inline assembly as `asp_hle.c` does), tested on the
+  host against Ares's scalar implementation (ISC, attributed) per
+  instruction. Exact by construction, dearer than HLE: budget 5-10 % of the
+  CPU at 32 kHz, measured.
+
+Output: `osAiSetNextBuffer` → the virtual DAC (paces the game's audio clock
+in wall time, posts `OS_EVENT_AI`, `osAiGetLength` = the playing buffer only)
+→ `xhw_audio_write` → Melee-X's 48 kHz AC97 pump (polled, APU voice under
+xemu). `osAiSetFrequency` sets the pump's resampler. Kill switch `-DXRC_AUDIO=0`.
+
+### 3.9 Input
+
+Four ports through `xhw_pad.c`; player N is physical port N (the Xbox has
+four, like the N64; Smash and Mario Kart need all four). Wings64-X's default
+layout by position (left stick → stick with the radial dead-zone row; A → A,
+X → B, Y/B/White/Black and the right stick → C buttons, triggers → Z and R,
+L unbound), remappable per port in `settings.ini` and in the panel's Buttons
+page; rumble through the Rumble Pak emulation; `L + R + BACK + BLACK` quits,
+`L + R + BACK + WHITE` restarts, in every state (the VI thread checks when
+the game stops reading). BACK opens the port panel (§5.2). A pack can ship
+its own default layout (`[input] layout = ...`) for games whose buttons mean
+something else.
+
+### 3.10 Memory budget (64 MB, enforced)
+
+Three classes of game; the first is where the project starts.
+
+| item | A: 4 MB RDRAM, ROM ≤ 16 MB (PW64, Smash, SF64, MK64, Snap) | B: 4 MB RDRAM, 32-64 MB ROM (OoT, Paper Mario, Kirby 64) | C: 8 MB RDRAM, 32-64 MB ROM (MM, DK64) |
+|---|---|---|---|
+| XBE: platform + runtime + interpreter | ~3 MB | ~3 MB | ~3 MB |
+| recompiled code resident (x86 ≈ 4-6x the MIPS text; overlays on demand in B/C) | 4-8 MB (all) | 8-12 MB | 10-14 MB |
+| function tables, section tables | ~1 MB | ~2 MB | ~2 MB |
+| RDRAM window | 4 MB | 4 MB | 8 MB |
+| ROM: resident / page cache | 8-16 MB | 12-16 MB cache | 10-12 MB cache |
+| framebuffers + depth (480: 640x480x32 + Z24S8; 720p: R5G6B5 x3 + Z24S8) | 4.8 / 9.1 MB | 4.8 / 9.1 MB | 4.8 / 9.1 MB |
+| texture pool | 8 / 6 MB | 8 / 6 MB | 6 / 4 MB |
+| pushbuffer 1 MB + vertex ring 1.5 MB | 2.5 MB | 2.5 MB | 2.5 MB |
+| audio ring, DMEM models, save images | < 1 MB | < 1 MB | < 1 MB |
+| kernel, nxdk heap, 16 thread stacks, logs | ~4 MB | ~4 MB | ~4 MB |
+| **total, 480 / 720p** | **40-52 / 42-54 MB** | **48-54 / 50-56 MB** | **51-57 / 53-59 MB** |
+
+Class A fits with room at both modes. Class B fits at 480 and at 720p with
+the cache at its floor. Class C is 480 first and 720p only if `[MEMB]` on the
+console shows it; it is the stretch milestone for that reason, not only for
+CPU time. `xhw_ramlock.c` holds everything above 64 MB on a 128 MB console
+(kill switch `-DXHW_RAM_LOCK64=0`); `xhw_mem_free_kb()` gates 720p (32 MB
+free rule) before `pb_init`; 1080i stays off by default (Wings64-X's console
+run 15: it works and the frame-rate cost is too high).
+
+### 3.11 Performance model (a hypothesis until M3)
+
+The VR4300 retires about one instruction per cycle at 93.75 MHz. Recompiled
+MIPS costs 3-6 x86 instructions per MIPS instruction with 64-bit registers
+(sign-extension pairs, the context loads and stores around calls, the
+addressing of §3.2) and 2-3 with 32-bit ones; the P3 sustains 1-1.5 x86
+instructions per cycle at 733 MHz. That is 1.5-4x the N64's CPU at 64 bits
+and 2.5-6x at 32, before the RSP's geometry work (now on the CPU, cheap for
+N64 triangle counts), the audio (3-10 %) and the back end (Melee-X's numbers:
+a draw costs ~31 µs, hence the batching). A 20-30 fps CPU-bound N64 game
+should hold its rate; 60 fps games and the Zeldas' heaviest scenes are the
+question. **The number that settles it is the translation factor T measured
+in M3**: the per-frame CPU time of recompiled Pilotwings 64 over Wings64-X's
+native build at the same scenes on the console, at 64 and at 32 bits, with
+ThinLTO on and off and `RECOMP_FUNC` weak and plain. T decides the game ladder
+(§5.3) and whether the recompiler fork of §3.2 (per-function register
+caching, a mixed-width mode) is worth doing (§6 M9).
+
+### 3.12 Threading summary
+
+| thread | from | level | does |
+|---|---|---|---|
+| game threads (idle, main, scheduler, audio, PI manager, VI manager as the game creates them) | runtime (`osCreateThread`) | `level_of(pri)`: 2 ... 14 | run recompiled code; the scheduler thread runs the interpreter and the audio path inside `osSpTaskStartGo` |
+| VI thread | runtime | 14 | retrace: swap latch, retrace message, pad watch |
+| PI thread | runtime (`osCreatePiManager`) | 12 | serves DMA requests from the ROM source, posts `OS_EVENT_PI` / the request's queue |
+| timer thread | runtime | 14 | `osSetTimer` deadlines |
+| AC97 pump | platform | 14 | 48 kHz resample, descriptors |
+| save writer | runtime | low | flushes dirty save images |
+| ROM prefetch | runtime (page-cache games) | low | fills chunks named by the pack's hints |
+| watchdog | platform | 15 | `[BEAT]`, `hang.log`, log flush, retrace-rate check |
+| profiler | platform (test builds) | time-critical | samples the game threads' EIP |
+
+Locks block in the kernel, never spin; the one recursive lock of the shim
+stands for libultra's interrupt mask.
+
+---
+
+## 4. Build system and the game packs
+
+### 4.1 Toolchain
+
+nxdk at Melee-X's pin `58427c078b4ccb0121f359b6b6c536b3b2914976` built with
+LLVM 21.1.8, CMake + Ninja with nxdk's toolchain file; N64Recomp at `ffb39cd`
+(a submodule under `tools/recomp/`, built with the host's clang or MSVC-free
+toolchain; it needs only CMake and a C++20 compiler); Python ≥ 3.11 with
+`rabbitizer` (for `recomp_scan64.py`) and Pillow (icons). `tools/xbox/setup.sh`
+installs the native toolchain on Debian/Ubuntu, macOS (Homebrew) and Windows
+(MSYS2, Wings64-X's recipe); `tools/xbox/docker/Dockerfile` builds the SDK
+image `ghcr.io/techprogabe/n64recomp-x-sdk:<pin>` for **amd64 and arm64**
+(Apple Silicon runs the arm64 image natively; nxdk and N64Recomp are
+cross-tools and build on both). The image holds the toolchain and the
+recompiler, never a game or a ROM. CI builds and pushes it when the pins
+change.
+
+Per game: `n64rx build` → `build-xbox/<id>/` (generated C, objects or bitcode,
+`default.xbe`, `n64recomp_x_<id>.map`). `XBOX_CFLAGS` is reset on every run
+(OpenCrossing's trap); `XBOX_LTO=1` is the default and releases refuse a
+non-LTO build (`package_release.py`, Wings64-X's rule); `XBOX_LTO=0` is the
+diagnosis switch.
+
+### 4.2 Game packs (`games/<id>/`)
+
+```
+games/pw64/
+  game.toml          the pack (below)
+  pw64.us.syms.toml  sections and functions (from the decomp's ELF via N64Recomp --dump-context)
+  overlays.txt       relocatable section names (empty for PW64)
+  recomp.toml        the N64Recomp config: entrypoint, paths (filled in by n64rx), stubs, ignored,
+                     [[patches.instruction]] single-word patches with the reason as a comment
+  rsp/               RSPRecomp configs when audio = "recomp" (text offset, size, address, branch targets)
+  patches/           MIPS C patches + patches.toml + Makefile (clang -target mips, as upstream), optional
+  icon.png           original art for the dashboard (never game art)
+  README.md          what the pack supports, known issues, the knobs
+```
+
+`game.toml`:
+
+```toml
+[game]
+id = "pw64"                    # folder, output folder, title-ID suffix
+title = "Pilotwings 64"
+code = "NPWE"                  # header game code; region byte checked too
+title_id = 0x4E520001
+sha1 = ["ec771aedf54ee1b214c25404fb4ec51cfd43191a"]   # the user's file (normalised); plus the decompressed image for Yaz0 games
+rom_size = 8388608
+[rom]
+compressed = "none"            # none | yaz0-oot | yaz0-mm: n64rx decompresses at build time
+resident = "auto"              # auto | always | never (page cache)
+pin = []                       # ROM ranges kept in the cache
+[cpu]
+entrypoint = 0x80000400
+boot_size = 0x100000
+rdram_mb = 4                   # 8 for Expansion Pak games
+gpr = "auto"                   # auto (recomp_scan64 decides) | 32 | 64
+[rsp]
+gfx = ["F3D"]                  # families the registry must know; hashes are added by the first run's log
+audio = "hle"                  # hle | recomp
+[save]
+type = "eep4k"                 # eep4k | eep16k | sram | flash | none
+mempak = false
+[video]
+hor_plus = false
+fb_readback = false
+fb_cpu_write = false
+[input]
+layout = "default"
+[status]
+stage = "planned"              # planned | boots | playable | complete; shown by n64rx games
+```
+
+A pack holds addresses, names, sizes and hashes: facts about the ROM and
+names from a decomp. It holds no bytes of the ROM, no extracted asset, no
+screenshot. Symbol files from an **MIT decomp** (PW64) are committed; symbol
+files derived from an unlicensed decomp are generated on the user's machine
+by `n64rx` from a pinned decomp checkout or taken from a public symbol repo
+the user fetches, per §8 Q7.
+
+### 4.3 The pipeline, step by step (what `n64rx build` runs)
+
+1. **ROM**: read, normalise byte order (`80 37 12 40` / `37 80 40 12` /
+   `40 12 37 80`), parse the header, SHA-1, match a pack (or say which game it
+   is and that no pack exists). Yaz0 games: decompress (the Zelda table
+   formats, in Python) and hash again.
+2. **Recompile**: write `recomp.toml` with the paths filled in, run
+   `N64Recomp` (and `RSPRecomp` per `rsp/*.toml`), under a cache keyed by
+   (ROM SHA-1, pack hash, recompiler pin) so a rebuild with the same inputs
+   skips the step; run `recomp_scan64.py` → the register width (`auto`) and
+   the KSEG1 report into the build log.
+3. **Split by section** (`XRC_OVL_SECTIONS`): regroup `funcs_N.c` into
+   `sec_<n>.c` per relocatable section with a `section(".ovl_<n>")` attribute
+   wrapper, static sections untouched.
+4. **Compile**: `compile_game.py` over the generated C + `xbox/src/rt` +
+   `xbox/src/gfx` with the game triple (bitcode under LTO); CMake builds
+   `xbox/src/hw` and pbkit (patched by `patch_pbkit.py`) with nxdk's triple;
+   `thinlto_link.py` links; `cxbe`; `xbe_sections.py` sets the title ID, the
+   icon, clears the preload bit on `.ovl_*`; `default.tbn`.
+5. **Output**: `out/<Title>/default.xbe`, `default.tbn`, the normalised (and
+   decompressed) ROM under the pack's name, `README.txt` (copy this folder to
+   `E:\Games\<Title>\` or `F:\...`, controls, the BACK panel, the safe-video
+   hold), the link map kept under `out/<Title>/debug/` for `sym.py`.
+
+Steps 2-4 run in the SDK container by default (the ROM and the output folder
+are the only mounts) or natively when `n64rx` finds the toolchain.
+
+### 4.4 LTO
+
+Melee-X's machinery through Wings64-X verbatim: `XBOX_LTO=1` → game-triple
+bitcode, `thinlto_link.py` (`-thinlto-index-only`, backends per module with the
+game triple's codegen flags, native objects linked as usual),
+`-import-instr-limit=10`, `-opt:noicf` (the game compares function pointers,
+and `get_function` tables must not fold), `-stack:1048576`, the map file.
+Rules kept: never LTO the two triples together; `-fno-strict-aliasing
+-fwrapv` stay under LTO; no `-ffast-math`; the same float flags in the
+backends as at compile time. New here: the generated code is tens of
+thousands of small functions; `RECOMP_FUNC`'s weak+noinline blocks the inlining
+ThinLTO is for (§3.2), so M3 measures plain vs weak and the game packs pick.
+PGO (`XBOX_PGO`) rides on the same path and is per game (M9).
+
+### 4.5 Nothing derived from a ROM in the tree
+
+`tools/xbox/rom_leak_check.py` (CI) fails on: any file containing an N64 ROM
+header word, any `.z64/.n64/.v64/.rom/.eep/.sra/.fla/.mpk/.xbe/.xiso/.iso/.bmp`,
+anything under `build-xbox/`, `out/`, `external/`, `gen/`, `RecompiledFuncs/`,
+`rsp/*.c`, and any C file containing `recomp_context* ctx` outside
+`xbox/src/rt` and `tests/` (the generated code is ROM-derived and must never
+be committed). `.gitignore` carries the same list. Screenshots of game frames
+stay out of the tree (Wings64-X's rule).
+
+### 4.6 Host tests (no ROM, CI on three OSes)
+
+| test | checks |
+|---|---|
+| `test_recomp_h.py` | our `recomp.h` vs upstream's: every macro on random inputs, both register widths, the RDRAM byte layout, rounding modes, `DMULT` vs `__int128` on the host |
+| `test_rom_check.py` | byte orders, header parsing, the known table, verdicts and messages; Yaz0 decompression on a synthetic table |
+| `test_syms.py` | a syms TOML parses, sections and functions do not overlap, the two-level table built from it finds every function and nothing else |
+| `test_scan64.py` | `recomp_scan64.py` on hand-assembled functions: 64-bit ISA hits, KSEG1 `lui` report |
+| `test_ucode_hash.py` | the registry: known hashes map to families; a synthetic unknown is reported |
+| `test_f3d.py` | the interpreter on synthetic display lists per family: vertex cache sizes, matrix semantics, `G_TRI2`, `G_LOAD_UCODE`, S2DEX rectangles, the word-swapped readers |
+| `test_cc.py`, `test_texconv.py`, `test_asp_hle.py` | Wings64-X's, with the word-swapped memory model |
+| `test_vu.py` | the scalar/MMX vector unit vs Ares's scalar reference per instruction (M4/M8) |
+| `test_settings.py` | `settings.ini` round trip per game |
+| `test_n64rx.py` | the CLI on a synthetic ROM and a fake pack: detection, messages, cache keys, output folder layout, `doctor` on a machine without Docker |
+| `rom_leak_check.py` | the tree |
+
+CI (`.github/workflows/build.yml`, matrix `ubuntu-latest`, `macos-latest`,
+`windows-latest`): the native toolchain from `setup.sh` (cached), N64Recomp
+built, the platform code and runtime compiled without a game, the host tests,
+and a **ROM-free end-to-end run**: a tiny libdragon-built test ROM (MIT; it
+does not use libultra, so it exercises the recompiler, the header, the window
+and the build, not the OS layer) goes through `n64rx build` to a linking XBE.
+A fourth job builds and pushes the multi-arch SDK image. No job ever has a
+game ROM.
+
+---
+
+## 5. Feature specs
+
+### 5.1 `n64rx`: one command on Windows, macOS and Linux
+
+The maintainer's requirement of 2026-10-16. What "really easy" means here:
+
+- **Three steps for a user**: install Docker Desktop (or let `n64rx doctor`
+  install the native toolchain), run `n64rx build "Pilotwings 64 (USA).z64"`,
+  copy the folder to the Xbox. No flags, no editing, no decomp, no IDO.
+  `n64rx` is shipped as a single file per OS (`n64rx.exe`, `n64rx` for macOS
+  universal and Linux x86-64/arm64; PyInstaller from `tools/n64rx/`) and as
+  the Python source for people who have Python.
+- **Commands**: `build <rom> [--out DIR] [--engine docker|native|auto]
+  [--video auto|480|720] [--fast]`; `doctor` (what is installed, what is
+  missing, the one command that fixes it per OS); `games` (packs and their
+  status); `deploy <folder> --ftp HOST [--user xbox --pass xbox]` (the
+  console tooling: `E:\Games\<Title>\` or the drive the user names, logs
+  pulled first); `xiso <folder>` (a DVD-R image with the folder, via
+  extract-xiso); `clean`; `log` (shows the last build's log and, after a
+  deploy, pulls `boot.log` and `crash.log` symbolised with the kept map).
+  Dropping a ROM onto `n64rx.exe` is `build` (argv[1]); macOS ships a
+  `.command` wrapper for the same.
+- **Engines**: Docker first (identical results on every OS; the image is
+  pulled once; multi-arch so Apple Silicon is native speed), native second
+  (`setup.sh`'s toolchain on Debian/Ubuntu, Homebrew, MSYS2); `auto` prefers
+  what is present and says which it used. Windows without WSL2 and without
+  MSYS2 gets the exact instructions from `doctor`, not a stack trace.
+- **Feedback**: a progress line per step with times (recompiling N functions,
+  compiling N files, linking), the expected duration for the game ("about
+  5 minutes" for class A, "15-40 minutes" for MM on a laptop), `--fast`
+  (`-O1`, no LTO) for a first look, the cache making a rebuild of the same
+  inputs seconds. Errors say what to do: wrong ROM ("this is Pilotwings 64
+  (Europe); the pack supports the US release, SHA-1 ..."), unsupported game
+  (the game's name from the header and a pointer to `games/README.md` on how
+  a pack is made), disk space, Docker not running.
+- **Nothing leaves the machine**: the ROM is read from where it is, the
+  output folder is the user's, the cache is local (`~/.n64rx/` or
+  `%LOCALAPPDATA%\n64rx\`), and the tool never uploads anything. The README
+  says so.
+- A GUI (a window with a drop target and a log) is §8 Q4; the CLI's functions
+  are a library so one can be added without touching the pipeline.
+
+### 5.2 The port panel and `settings.ini`
+
+The siblings put their settings in the game's own menus; a framework cannot,
+until a pack brings a MIPS-C patch for it (Zelda64Recomp's menu is likewise
+the port's, not the game's). So, by default, **the port panel**: opened with
+BACK at any time, drawn by the platform over the frozen frame in the splash's
+dress (navy, unscii-16 at 2x, Melee-X's menu semantics: `*` rows need a
+restart, "480p -> 480i" when the dashboard disallows, held-direction repeat
+by retrace count, A keeps, B cancels). While it is open the VI thread stops
+posting retrace messages, so the game waits where it would wait for the
+retrace, and the audio ring drains to silence (`DIVERGES`: a pause the N64
+did not have; packs whose game does not block on the retrace list
+`pause = "none"`). Rows:
+
+| row | values | applies | key |
+|---|---|---|---|
+| Video output | Auto, 480i, 480p, 720p (1080i when built with it) | `*` | `[video] output`, `progressive` |
+| Widescreen | Off, On (hor+, where the pack allows), Stretch; shown with the dashboard's flag | at once | `[video] widescreen` |
+| Texture filter | N64 (bilinear), Sharp | at once | `[video] texture_filter` |
+| FPS counter | On, Off | at once | `[video] fps` |
+| Volume | 0-100 | at once | `[audio] volume` |
+| Stick dead zone | 0-60 % in fives, live readout, per port | at once | `[portN] stick_deadzone` |
+| Buttons | sub-page per port, capture-the-next-button, Y = default | at once | `[portN] a = A ...` |
+| Rumble | On, Off | at once | `[input] rumble` |
+| Save slot | 1-4 (the image file swapped at boot) | `*` | `[save] slot` |
+| Screenshots (BACK+WHITE) | On, Off; test builds | at once | `[system] screenshots` |
+| Save and restart / Return | | | |
+
+Stored per game in `E:\UDATA\<title id>\settings.ini` (Melee-X `settings.c`:
+defaults written on first boot, atomic replace, unknown keys dropped). BACK
+held at boot = safe video (480i 4:3, saved). A pack that ships a game-style
+menu (M-later, per game) sets `panel = "game"` and the platform panel stays
+reachable with BACK+START for the rows the game menu lacks.
+
+### 5.3 The game ladder
+
+Which games, in what order, and why (facts and "verify" marks in
+`docs/research.md` §6):
+
+| rung | game | class | why it is where it is |
+|---|---|---|---|
+| **G0** | Pilotwings 64 (US `NPWE`) | A | the A/B: Wings64-X runs it natively on the same platform layer, so every difference is the recompiler's; Fast3D and `asp_hle` already exist; 8 MB ROM, 4 MB RAM, EEPROM; the decomp is MIT so its symbol file is committed; the decomp's ELF comes from its own IDO build, done once by the maintainer in Docker |
+| **G1** (maintainer's pick, §8 Q1; default **Super Smash Bros.** `NALE`) | the first game that only exists here | A | 16 MB ROM, 4 MB, four players (the Xbox's four ports), a complete decomp for the symbol file (ssb-decomp-re; status and licence to verify), a recomp announced in October 2026 whose stubs and patches will be public knowledge; thematically next to Melee-X. Alternates: Star Fox 64 (`NFXE`, 12 MB, F3DEX, custom audio microcode likely), Mario Kart 64 (`NKTE`, 12 MB, F3DEX, four players) |
+| **G2** | Ocarina of Time (US 1.0/1.2) | B | the big-ROM machinery: Yaz0 decompression, the page cache with pins, hundreds of overlays as on-demand sections, F3DZEX2, SRAM; 4 MB RAM keeps the budget sane; a complete decomp and the upstream syms format; Zelda64Recomp's OoT work as knowledge |
+| **G3** (stretch) | Majora's Mask (`NZSE`) | C | 8 MB RAM, 17,765 functions, 617 sections, two RSP microcodes (`naudio` + the JPEG decoder) → the `recomp` audio path and the vector unit; the memory budget's edge |
+| open | Pokémon Snap | A | Snap64-X plans it from the decomp; §8 Q2 asks whether Snap moves here instead (F3DEX2 + L3DEX2 and the readbacks are the same work either way; recomp costs speed, decomp costs the asset pipeline and a licence-free vendoring) |
+| later | Banjo-Kazooie, DK64, Kirby 64, Paper Mario, Goemon, Harvest Moon 64 | A/B/C | each has a recomp or a decomp; custom microcodes (Rare) need interpreter tables and the `recomp` audio path |
+
+---
+
+## 6. Milestones
+
+Each milestone ends with a `default.xbe` that boots on the console (from
+M1), the host tests green on the three OSes, a `docs/handoff.md` entry
+(what was verified, how; "xemu" results say so) and a commit on `dev`.
+"console" is the maintainer's hardware (red: HDTV pack; gold: 480i only)
+through `console.py`/`n64rx deploy`, logs pulled before every relaunch.
+
+### M0: skeleton, toolchain on three OSes, the tool's shape
+- **Goal**: Wings64-X's platform layer copied (Melee parts already gone), an
+  XBE that boots to the "TechProGabe Presents..." splash and a "no game
+  built in" card; N64Recomp as a submodule building on Linux, macOS and
+  Windows; `n64rx doctor/build/games` scaffolded with both engines; the SDK
+  image building for amd64 and arm64; CI matrix green with the libdragon
+  test ROM through the recompiler and a linking XBE.
+- **Files**: `xbox/src/hw/*` (from Wings64-X `83f1258`), `xbox/include/xhw.h`,
+  `xbox/CMakeLists.txt`, `xbox/build.sh`, `tools/xbox/{setup.sh,docker/,msys/,
+  compile_game.py,thinlto_link.py,patch_pbkit.py,xemu_run.sh,fbdump_to_png.py,
+  console.py,sym.py,rom_leak_check.py,xbe_sections.py,make_logo.py}`,
+  `tools/recomp/` (submodule at `ffb39cd`), `tools/n64rx/` (CLI, engines,
+  doctor, packaging spec), `games/README.md` (how a pack is made),
+  `.github/workflows/build.yml`, `docs/` skeleton (`README.md`, `handoff.md`,
+  `decisions.md`, `testing.md`, `toolchain.md`, `architecture.md`).
+- **Done when**: `n64rx doctor` gives the right verdict on a clean Windows,
+  macOS and Linux machine (one with Docker, one without); `n64rx build
+  test.z64` (the libdragon ROM) produces an XBE on each through the Docker
+  engine and the native one; xemu boots the card; CI is green; the image is
+  on GHCR.
+
+### M1: the runtime core on Pilotwings 64: first frame
+- **Goal**: the PW64 pack (`pw64.us.syms.toml` from the decomp ELF via
+  `--dump-context`, committed; `recomp.toml` with the stubs the first runs
+  need); the generated code compiles under the game triple with our
+  `recomp.h` at both widths (`recomp_scan64.py` says which applies to PW64);
+  the window, the boot block, threads, queues, events, timers, time, PI from
+  the resident ROM, VI, SP dispatch; the game reaches its first graphics task
+  and Wings64-X's interpreter draws the first frame in xemu.
+- **Files**: `xbox/include/xrc/recomp.h`, `xbox/src/rt/{mem.c,pi.c,ovl.c,vi.c,
+  sp.c,hooks.c,ultra/*.c}`, `xbox/src/gfx/{f3d_interp.c,texconv.c,tmem.c,
+  vi_map.c,ucode_registry.c}` (word-swapped readers), `tools/xbox/
+  {recomp_scan64.py,syms_tools.py,gen_registry.py}`, `tests/xbox/
+  test_recomp_h.c`, `test_syms.py`, `test_scan64.py`, `test_f3d.py`.
+- **Done when**: `[RECOMP]` logs the pack, width and code size; `[OS]` shows
+  the threads at their levels; the title's first frame matches Wings64-X's
+  `[FBDUMP]` of the same frame by eye; `test_recomp_h.py` passes on the host
+  at both widths; no `crash.log` through the intro.
+
+### M2: Pilotwings 64 complete on the recompiled path
+- **Goal**: title, menus, every vehicle, results, the album, EEPROM saves
+  moving both ways with Wings64-X's `.eep`, audio through `asp_hle`,
+  controllers and combos, the port panel's file-only settings; 480 and 720p;
+  the console boots it.
+- **Files**: `xbox/src/rt/{save.c,pad.c,settings.c}`, the AI path, the
+  `ASP_HLE_SEGMENTS 1` mode of `asp_hle.c`, `xhw_rom.c`'s known table from
+  the pack, `games/pw64/README.md`; the first `[[patches.instruction]]`
+  entries with reasons.
+- **Done when**: Wings64-X's xemu scenarios (`title`, `rb_a`, the attract
+  demos) run on this build with the same shots; console: the maintainer flies
+  a mission with sound; a 30-minute soak logs no underrun, crash or hang.
+
+### M3: the measurement gate (A/B against Wings64-X)
+- **Goal**: the translation factor T (§3.11) on the console, per `[PERF]`
+  bucket (game, interpreter, back end, audio, waits) at the same scenes, for
+  gpr 64 vs 32, ThinLTO on vs off, `RECOMP_FUNC` weak vs plain; code size
+  and `[MEMB]` per variant; a decision on the recompiler fork (register
+  caching, mixed width) and on the ladder written into `docs/perf.md` and
+  `docs/decisions.md`.
+- **Files**: `xhw_perf.c` buckets for the runtime, `prof_report.py`
+  symbolising recompiled names, `tools/xbox/ab_report.py` (two logs → one
+  table), `docs/perf.md`.
+- **Done when**: the table exists with console numbers, repeated runs within
+  3 %; the plan's §3.11 hypothesis is replaced by measurements; the maintainer
+  has chosen G1 with the numbers in hand.
+
+### M4: the first game that only exists here (G1)
+- **Goal**: the maintainer's G1 pack from boot to a complete game: the F3DEX
+  (or F3DEX2) and S2DEX tables, the ucode registry's first non-F3D hashes,
+  four players, rumble, the game's audio path (`hle` with its ABI table, or
+  `recomp` with the vector unit if the microcode is custom), the pack's
+  patches for what breaks, hor+ with a culling patch if cheap.
+- **Files**: `f3d_interp.c` tables, `s2dex.c`, `ucode_registry.c`,
+  `rsp_vu.c` + `test_vu.py` if needed, `games/<g1>/*`, `pad.c` four ports.
+- **Done when**: a completion checklist in the pack's README ticked on the
+  console at 480 and 720p; four pads in a match; `[PERF]` at the game's
+  native rate with no missed retrace in its heaviest scene, or the deficit
+  named; a 2-hour burn-in clean.
+
+### M5: big ROMs and code on demand (G2: Ocarina of Time)
+- **Goal**: Yaz0 decompression in `n64rx`, the page cache with pins and
+  prefetch, the PI thread, overlay tracking by DMA source, `XRC_OVL_SECTIONS`
+  with `XeLoadSection`, F3DZEX2, SRAM; OoT from the title to Kokiri Forest
+  and the Deku Tree with `[PI]` and `[OVL]` counters on the console.
+- **Files**: `pi.c` (cache), `ovl.c` (sections), `xhw_section.c`,
+  `xbe_sections.py`, `tools/n64rx/yaz0.py`, `games/oot/*`.
+- **Done when**: stall time per second from `[PI]` under 1 ms in the field
+  and in Hyrule Field's loads; `[MEMB]` shows resident code following the
+  overlays in use; the preloaded variant (`XRC_OVL_SECTIONS=0`) is measured
+  for comparison; a DVD-R boot of the folder is tried once and its stall
+  numbers recorded.
+
+### M6: video, widescreen, the panel, hardening
+- **Goal**: 480i/480p/720p rules with confirm-or-revert (Wings64-X's net),
+  the port panel complete (§5.2) with per-port buttons and dead zones, hor+
+  where packs allow it, the save-slot swap, `[MEMB]` flat over two hours on
+  every pack, 128 MB consoles as 64, CPU-upgraded consoles (`[CLOCK]`).
+- **Files**: `settings_menu.c`, `xhw_video.c` as Wings64-X's, `widescreen.c`,
+  `docs/platform.md`, `docs/testing.md` switch table.
+- **Done when**: the Wings64-X video scenarios pass per pack in xemu and on
+  red; gold shows "720p -> 480i"; two burn-ins per pack clean.
+
+### M7: the tool, packaging, release
+- **Goal**: `n64rx` as shipped: single-file binaries for Windows, macOS
+  (universal) and Linux from CI, the SDK image tagged, `deploy`/`xiso`/`log`,
+  the README in Melee-X's voice (three steps, the ROM requirement, what is
+  supported, controls, the panel, troubleshooting), `LICENSE.md` (MIT for the
+  port; N64Recomp MIT; Ares ISC for the VU reference; libultraship MIT
+  tables; no GPL code; the Melee-X note), `docs/` complete.
+- **Done when**: a person who has never seen the repo follows the README on
+  each OS from a fresh machine to a mission on the console (the maintainer or
+  a tester per OS), and the time from download to XBE is recorded per OS in
+  `docs/handoff.md`.
+
+### M8 (stretch): Expansion Pak games and the recompiled audio path
+- **Goal**: Majora's Mask: 8 MB RDRAM at 480, `naudio` + `njpgdsp` through
+  RSPRecomp and the vector unit, Flash saves, the budget of §3.10 class C
+  measured; DK64 as the second data point.
+- **Done when**: Clock Town playable at the game's rate or the deficit named
+  with `[PERF]`; `[MEMB]` under 60 MB at 480 for an hour.
+
+### M9 (by M3's numbers only): the recompiler fork and PGO
+- **Goal**: if T says so, `patches/recomp/` (or a fork under TechProGabe):
+  per-function register caching in locals, a mixed-width mode for games with
+  a few 64-bit functions, a per-section output option upstream might take;
+  PGO per pack with Melee-X's machinery; order files.
+- **Done when**: the A/B table of M3 re-run with the gain recorded and every
+  change behind a switch.
+
+---
+
+## 7. Risks and hard problems (ranked)
+
+| # | risk | likelihood | impact | mitigation |
+|---|---|---|---|---|
+| R1 | **Translation overhead**: CPU-bound N64 games do not hold their rate on the P3 | medium | high (the approach's ceiling) | M3 measures before any second game; gpr 32; plain `RECOMP_FUNC`; ThinLTO/PGO; the fork's register caching; the ladder favours 20-30 fps titles first |
+| R2 | **Memory**: recompiled code size, 8 MB games, ROM caches at 720p | medium | high for class B/C | on-demand XBE sections; page cache with pins; 480 first for class C; `[MEMB]` gates every pack's 720p |
+| R3 | **Memory-model corners**: KSEG1 CPU access, direct ROM reads, TLB, self-modifying code, `osViGetCurrentFramebuffer` reads of VI registers | medium | medium (per game) | the fault policy of §3.2.1 (patch, mask, report), `recomp_scan64.py`'s KSEG1 report, upstream's stub list per game as knowledge, `XRC_MEM_MASK` |
+| R4 | **HDD latency** for streamed ROMs (per-frame small DMAs) | medium | high for class B/C | pins, prefetch, the PI thread; the resident path where the ROM fits; measured in M5 |
+| R5 | **Microcode coverage**: F3DEX vs F3DEX2 opcode tables, S2DEX, custom ucodes, VI modes | high | medium | registry with a hard stop on unknowns; libultraship tables as reference; per-pack family list; VI-mode content rect |
+| R6 | **Legal**: GPL contamination from the runtime or the recomp projects; symbol files from unlicensed decomps; the XBE is game code | certain to need care | the maintainer's call | no code from N64ModernRuntime/Zelda64Recomp/community recomps (read, don't copy, named in `LICENSE.md`); packs hold facts, not bytes; syms policy per §8 Q7; no XBE ever published; CI without ROMs; `rom_leak_check.py` |
+| R7 | **Thread semantics**: games that depend on exact libultra preemption, message ordering or `osYieldThread` spins | medium | medium | the shim's strict levels and queue reserve; the cooperative fallback; the stall watch in test builds |
+| R8 | **Build time and compile memory** for 17k-function games on a laptop; ThinLTO over tens of thousands of functions | medium | medium (ease of use) | the cache, `--fast`, per-section files, progress and estimates in `n64rx`; MM is M8 |
+| R9 | **Float determinism**: x87 doubles, rounding-mode changes (`set_cop1_cs`), denormals (the VR4300 flushes with FS set) | low | medium | `-mfpmath=sse` floats, `027f` control word, MXCSR+CW set together, `XRC_FTZ` knob; `test_recomp_h.py`'s rounding cases |
+| R10 | **Docker on Windows** needs WSL2 and admin; Apple Silicon users on an amd64 image would be slow | medium | high (ease of use) | native engine via `doctor`; multi-arch image; the README's three steps tested per OS in M7 |
+| R11 | **Upstream drift**: N64Recomp changes its output or header | low | low | the pin; `test_recomp_h.py` against the pinned header; move the pin deliberately |
+| R12 | **Scope overlap** with Snap64-X and Wings64-X | certain | low | §8 Q2; the A/B makes Wings64-X the reference, not a competitor |
+| R13 | **xemu hides hardware behaviour** (PFIFO timing, AC97, HDD latency, `XeLoadSection`) | high | medium | console at every milestone; `[PI]`, `[OVL]`, `[PERF]` read from the console only |
+| R14 | **Upgraded CPUs, 128 MB consoles, patched `rdtsc`** | medium | high for those users | ACPI time, vblank pacing, `xhw_code_repair.c`, `xhw_ramlock.c` (all in M0) |
+
+Hard problems named as such, so nobody is surprised by them:
+
+| # | problem | plan |
+|---|---|---|
+| H1 | the register width and the P3's seven GPRs | gpr 32 by scan; M3's numbers; the fork if needed |
+| H2 | libultra structs in RDRAM with host state beside them | side tables keyed by vram; the shim's logic unchanged |
+| H3 | overlays as demand-loaded XBE sections through the kernel | one preload bit per section; `XeLoadSection`; the preloaded fallback |
+| H4 | a ROM too big for RAM behind a game that expects microsecond DMA | page cache, pins, prefetch, the PI thread, console numbers |
+| H5 | the RSP vector unit on a CPU with MMX only | scalar C + MMX asm, Ares's scalar as oracle, HLE first wherever the ABI is stock |
+| H6 | three operating systems and "really easy" | Docker image + native toolchains + `doctor` + per-OS binaries + the tri-OS CI + M7's fresh-machine test |
+
+---
+
+## 8. Open questions for the maintainer
+
+1. **G1**: Super Smash Bros. (the default), Star Fox 64, Mario Kart 64, or
+   another? The choice fixes which interpreter table and audio path M4
+   builds first.
+2. **Pokémon Snap**: stay with the decomp plan (Snap64-X) or move here as a
+   pack? The two plans share the F3DEX2 interpreter and the readback work;
+   they differ in speed (native wins), in the menu (game-style needs the
+   decomp or a MIPS-C patch) and in distribution (identical: neither ships a
+   binary).
+3. **Distribution**: confirm that no XBE is ever published and the product
+   is the tool plus the packs. (Zelda64Recomp ships binaries containing
+   recompiled code; this plan does not follow it.)
+4. **The tool's shape**: CLI with per-OS single-file binaries (the plan), or
+   also a small GUI (drop a ROM, watch the log)? And the name `n64rx`.
+5. **Title IDs** `4E52nnnn` ("NR", one per pack) and original icons per pack:
+   fine, or another scheme?
+6. **Licence** of the port code: MIT, Melee-X-derived files relicensed by
+   their author (Wings64-X's position); no GPL code. Confirm.
+7. **Symbol files from unlicensed decomps** (OoT, MM, Smash if its decomp
+   has no licence): (a) generate on the user's machine from a pinned decomp
+   checkout (slow, needs the decomp's tools), (b) fetch a public symbol repo
+   at build time (Zelda64RecompSyms has no licence file), (c) commit them as
+   facts about the ROM. The plan's default is (b) where a public repo exists
+   and (a) otherwise; nothing is committed from an unlicensed source.
+8. **The recompiler fork**: patches under `patches/recomp/` applied to the
+   submodule (the plan's default) or a fork repo `TechProGabe/N64Recomp`?
+   Upstream's CONTRIBUTING should be read before anything is sent back.
+9. **The port panel** as the default settings UI (§5.2), with game-style
+   menus per pack later: acceptable, given the siblings' rule?
+10. **1080i**: stays off (Wings64-X's finding) or offered per pack?
+11. **Test hardware**: red and gold as for the siblings; is a 128 MB or a
+    CPU-upgraded console available for R14; is there a DVD-R user to test the
+    disc path?
+12. **Controller Pak**: emulate a 32 KB pak per port by default (ghost data in
+    MK64, some saves) or only where a pack asks?
+
+---
+
+## 9. Seed prompt for the executing agent
+
+Paste this to start the build, and again after every context reset.
+
+> You are executing N64Recomp-X: N64 games on the original Xbox by static
+> recompilation. The user's ROM goes through N64Recomp (MIT, pinned at
+> `ffb39cd`, a submodule under `tools/recomp/`), the generated C is compiled
+> with nxdk `58427c07` and LLVM 21.1.8 for the Pentium III, and it links with
+> our own MIT runtime on the Wings64-X platform layer. The repo is
+> `TechProGabe/N64Recomp-X`; work on `dev`, `main` is for releases. Read
+> `CLAUDE.md`, then `docs/PLAN.md` in full: it is binding on the approach
+> (§1), the architecture (§3), the build, packs and tests (§4), the feature
+> specs (§5), the milestone order with its "done when" checks (§6) and the
+> open questions (§8), whose defaults apply unless the maintainer has
+> answered. Then read `docs/research.md`. Clone `TechProGabe/Wings64-X`,
+> `TechProGabe/Melee-X`, `TechProGabe/Snap64-X` and `TechProGabe/OpenCrossing-Xbox`
+> next to this repo and read the files `docs/PLAN.md`'s preamble lists; copy
+> from them rather than rewriting; `xhw_splash.c` and `xbox/src/hw` come over
+> as they are. Read N64Recomp's `include/recomp.h` before writing ours.
+>
+> Work milestone by milestone starting at M0. Each milestone ends with a
+> `default.xbe` that boots, the host tests green on Linux, macOS and Windows
+> (CI), a `docs/handoff.md` entry (what was verified, how, on xemu or on the
+> console) and a commit on `dev`; ask before pushing to `main`. Within a
+> milestone, finish the "done when" list before moving on; if an item cannot
+> be met, say which and why rather than narrowing it silently. M3 is a
+> measurement, not a feature: do not start M4 without its table.
+>
+> Hard rules: never commit ROM material or anything derived from it: the
+> ROM, decompressed images, recompiled C (`RecompiledFuncs`, `gen/`,
+> `rsp/*.c`), built XBEs, save images, screenshots of game frames;
+> `tools/xbox/rom_leak_check.py` must pass. Game packs hold addresses, names,
+> sizes and hashes, never bytes; symbol files from unlicensed decomps are not
+> committed (PLAN §8 Q7). Copy no code from N64ModernRuntime, Zelda64Recomp
+> or any community recomp (all GPL-3.0): read them for behaviour, name them
+> in `LICENSE.md`, write our own. Never edit `tools/recomp/` in place; changes
+> go to `patches/recomp/` with a `.md` each. Every port-side departure from
+> the game is marked `DIVERGES: <reason>`. Every optimisation and risky
+> change has a kill switch and the default is the good build. The game
+> triple is Melee-X's (`i686-pc-windows-gnu -mno-ms-bitfields -march=pentium3
+> -msse -mfpmath=sse -ffp-contract=off -fno-strict-aliasing -fwrapv`); the
+> platform code uses nxdk's triple; the two share only plain-scalar structs.
+> Releases build with `XBOX_LTO=1` through `thinlto_link.py`. 64 MB is
+> enforced. Time comes from the vblank and the ACPI timer, never an assumed
+> CPU clock. Nothing runs on a ROM that has not passed the SHA-1 check.
+> The tool (`n64rx`) must work on Windows, macOS and Linux with one command
+> and be really easy to use: every error message says what to do next, the
+> Docker engine gives identical results everywhere, `doctor` installs or
+> explains the native toolchain, and the README's three steps are tested on a
+> fresh machine per OS before a release. Port code is MIT.
+>
+> xemu is for crashes and pictures only; timing, audio, memory headroom,
+> HDD latency and GPU ordering are judged on a real Xbox, and you say when a
+> result is emulator-only. Report what you verified and how, not what you
+> intended. When a decision is the maintainer's (§8), state the default you
+> are applying and carry on; stop only where proceeding under any assumption
+> would waste the milestone.

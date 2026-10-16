@@ -1,0 +1,46 @@
+# Never commit ROM material or anything derived from it (CLAUDE.md hard rule).
+*.z64
+*.n64
+*.v64
+*.rom
+*.eep
+*.sra
+*.fla
+*.mpk
+baserom*
+*_uncompressed*
+rom/
+roms/
+
+# recompiler output and anything generated from a ROM
+RecompiledFuncs/
+RecompiledPatches/
+gen/
+rsp/*.c
+rsp/*.cpp
+*.syms.generated.toml
+
+# build output, releases, caches
+/build/
+/build-xbox*/
+/out/
+/dist/
+/.n64rx/
+__pycache__/
+*.pyc
+*.profraw
+
+# built images, saves, console dumps, emulator firmware
+*.xbe
+*.xiso
+*.iso
+*.img
+*.qcow2
+*.bmp
+
+# fetched trees (submodules live in tools/recomp; anything else fetched goes here)
+/external/
+
+# agent worktrees, editors
+/.claude/
+.DS_Store
