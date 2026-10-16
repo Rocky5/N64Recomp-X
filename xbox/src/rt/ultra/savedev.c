@@ -109,26 +109,157 @@ uint8_t xu_pak_inode_sum(const uint8_t* page, int start_page) {
     return (uint8_t)sum;
 }
 
-void xu_pak_format(uint8_t* img) {
+void xu_pak_format(uint8_t* img) { xu_pak_format_id(img, 0x4E525821u); }   /* "NRX!" */
+
+void xu_pak_format_id(uint8_t* img, uint32_t random) {
     static const int ids[4] = {1, 3, 4, 6};
     uint8_t* inode = img + 256;
     int i;
     memset(img, 0, XU_PAK_SIZE);
-    xu_pak_make_id(img + 32, 0x4E525821u);   /* "NRX!" */
+    xu_pak_make_id(img + 32, random);
     for (i = 1; i < 4; i++) memcpy(img + 32 * ids[i], img + 32, 32);
     for (i = 5; i < 128; i++) put16(inode + 2 * i, 3);   /* every data page free (PFS_PAGE_NOT_USED) */
     inode[1] = xu_pak_inode_sum(inode, 5);
     memcpy(img + 512, inode, 256);                       /* the mirror in page 2 */
 }
 
+/* ---- the notes, for the BACK menu's Paks page (settings_menu.c) ----
+ * A directory entry (32 bytes at block 24 + n): game code +0 (4), company
+ * +4 (2), first page +6 (inode unit), status +8, ext name +12 (4), note
+ * name +16 (16), both in the pak's character set. Used: a game code and a
+ * company (libultra's test). */
+char xu_pak_char(uint8_t c) {
+    static const char sym[] = "!\"#'*+,-./:=?@";
+    if (c == 0x0F) return ' ';
+    if (c >= 0x10 && c <= 0x19) return (char)('0' + c - 0x10);
+    if (c >= 0x1A && c <= 0x33) return (char)('A' + c - 0x1A);
+    if (c >= 0x34 && c <= 0x41) return sym[c - 0x34];
+    return c ? '?' : 0;   /* kana and the rest */
+}
+
+static int dir_used(const uint8_t* d) { return (d[0] | d[1] | d[2] | d[3]) && be16(d + 4); }
+
+/* a note's pages, following its inode chain; -1 if the chain is broken */
+static int note_chain(const uint8_t* img, uint16_t p, uint8_t* pages) {
+    int n = 0;
+    while (p != 1) {
+        if ((p >> 8) || p < 5 || p >= 128 || n >= 123) return -1;
+        if (pages) pages[n] = (uint8_t)p;
+        n++;
+        p = be16(img + 256 + 2 * p);
+    }
+    return n;
+}
+
+static void printable(char* out, const uint8_t* in, int n) {
+    int i;
+    for (i = 0; i < n; i++) out[i] = in[i] >= 0x20 && in[i] < 0x7F ? (char)in[i] : '?';
+    out[n] = 0;
+}
+
+int xu_pak_notes(const uint8_t* img, xu_pak_note* out, int* free_pages) {
+    int j, i, n = 0;
+    if (free_pages) {
+        *free_pages = 0;
+        for (i = 5; i < 128; i++)
+            if (be16(img + 256 + 2 * i) == 3) ++*free_pages;
+    }
+    for (j = 0; j < 16; j++) {
+        const uint8_t* d = img + 32 * (24 + j);
+        xu_pak_note* o = out + n;
+        int k = 0, c;
+        if (!dir_used(d)) continue;
+        o->slot = (uint8_t)j;
+        o->company = be16(d + 4);
+        o->game = ((uint32_t)d[0] << 24) | ((uint32_t)d[1] << 16) | ((uint32_t)d[2] << 8) | d[3];
+        c = note_chain(img, be16(d + 6), NULL);
+        o->pages = (int16_t)c;
+        printable(o->code, d, 4);
+        printable(o->code + 4, d + 4, 2);
+        for (i = 0; i < 16 && (c = xu_pak_char(d[16 + i])) != 0; i++) o->name[k++] = (char)c;
+        while (k > 0 && o->name[k - 1] == ' ') k--;
+        if (d[12]) {
+            o->name[k++] = '.';
+            for (i = 0; i < 4 && (c = xu_pak_char(d[12 + i])) != 0; i++) o->name[k++] = (char)c;
+        }
+        o->name[k] = 0;
+        n++;
+    }
+    return n;
+}
+
+int xu_pak_note_delete(uint8_t* img, int slot) {
+    uint8_t pages[128], *d, *in = img + 256;
+    int n, i;
+    if (slot < 0 || slot >= 16) return -1;
+    d = img + 32 * (24 + slot);
+    if (!dir_used(d)) return -1;
+    n = note_chain(img, be16(d + 6), pages);
+    for (i = 0; i < n; i++) put16(in + 2 * pages[i], 3);   /* a broken chain frees nothing: the checker's job */
+    in[0] = 0;
+    in[1] = xu_pak_inode_sum(in, 5);
+    memcpy(img + 512, in, 256);
+    memset(d, 0, 32);
+    return 0;
+}
+
+int xu_pak_note_copy(const uint8_t* src, int slot, uint8_t* dst) {
+    uint8_t pages[128], *in = dst + 256, *d = NULL;
+    const uint8_t* s;
+    int n, i, j, k, prev = -1, free_pages = 0;
+    if (slot < 0 || slot >= 16) return -1;
+    s = src + 32 * (24 + slot);
+    if (!dir_used(s) || (n = note_chain(src, be16(s + 6), pages)) <= 0) return -1;
+    for (j = 0; j < 16; j++) {   /* the same note there already (libultra's names: game, company, ext, name) */
+        const uint8_t* e = dst + 32 * (24 + j);
+        if (dir_used(e) && !memcmp(e, s, 6) && !memcmp(e + 12, s + 12, 20)) return -2;
+        if (!d && !dir_used(e)) d = dst + 32 * (24 + j);
+    }
+    for (i = 5; i < 128; i++)
+        if (be16(in + 2 * i) == 3) free_pages++;
+    if (!d || free_pages < n) return -3;
+    memcpy(d, s, 32);
+    for (i = 5, k = 0; i < 128 && k < n; i++) {   /* osPfsAllocateFile's order: the lowest free pages */
+        if (be16(in + 2 * i) != 3) continue;
+        if (prev < 0) put16(d + 6, (uint16_t)i);
+        else put16(in + 2 * prev, (uint16_t)i);
+        put16(in + 2 * i, 1);
+        memcpy(dst + 256 * i, src + 256 * pages[k++], 256);
+        prev = i;
+    }
+    in[0] = 0;
+    in[1] = xu_pak_inode_sum(in, 5);
+    memcpy(dst + 512, in, 256);
+    return 0;
+}
+
 /* ---- the pak's address space ---- */
 static int s_kind[4] = {XU_PAK_AUTO, XU_PAK_AUTO, XU_PAK_AUTO, XU_PAK_AUTO};
 static uint8_t s_fs_read[4];   /* AUTO: the game has read the file system */
+static uint8_t s_pulled[4];    /* swapped since the game last asked the status */
 
 void xu_pak_set_kind(int port, int kind) {
     if (port < 0 || port > 3) return;
     s_kind[port] = kind;
     s_fs_read[port] = 0;
+}
+
+void xu_pak_pull(int port) {
+    if (port < 0 || port > 3) return;
+    s_pulled[port] = 1;
+    s_fs_read[port] = 0;
+}
+
+/* CONT_CARD_ON (0x01), and CONT_CARD_PULL (0x02) once after a swap: the
+ * pad's own flag, which libultra's __osPfsGetStatus turns into
+ * PFS_ERR_NEW_PACK. It stays up while the port is empty and goes with the
+ * first status that reports a pak. */
+uint8_t xu_pak_status(int port) {
+    uint8_t st;
+    if (xu_pak_kind(port) == XU_PAK_NONE) return 0;
+    st = (uint8_t)(s_pulled[port & 3] ? 0x03 : 0x01);
+    s_pulled[port & 3] = 0;
+    return st;
 }
 
 int xu_pak_kind(int port) {

@@ -475,3 +475,42 @@ microcode was never logged and its resampler table never searched.
 - Overlays sharing a vram (Paper Mario's maps and partners), GCC-built
   libultra rules (Paper Mario: osContInit, osSetEventMesg, osEPiStartDma,
   Flash, Pfs); compressed code (Dr. Mario 64's main segment).
+
+### The BACK menu's Paks page (2026-10-16, branch `agent/pakmenu`)
+
+**Verified**
+
+- Host: `test_saves.py` (245 checks): the note table read from an image
+  (names in the pak's character set, extensions, the code and company,
+  pages from the inode chain, free pages), a delete as osPfsDeleteFile does
+  (pages free, the inode sum and mirror; libultra's checker then finds
+  nothing to fix; osPfsFreeBlocks agrees), an unused entry refused, the
+  status's pull bit once (and kept while the port is empty),
+  `__osPfsGetStatus`'s `PFS_ERR_NEW_PACK` once, a format with a new ID
+  making the old OSPfs stale (`PFS_ERR_NEW_PACK`) until osPfsInitPak; a
+  note copied to another pak (its pages' bytes in order, the target's sum
+  and mirror; already there: -2; a full pak: -3).
+  `test_settings.py` (19): `[portN] pak`, `pak_file` round trips, a lower
+  case letter, a pak in two ports falling back to A-D. `test_splash.py`
+  (40): the 11-row card, the Paks page's rows, info and note fit; previews
+  `docs/look/menu-card-host.png` (updated), `docs/look/paks-page-host.png`.
+- xemu (slot 13, emulator only), Mario Kart 64 from its ROM alone
+  (`--fast`, `-DXHW_AUTOPAD=1`), `tools/xbox/scenarios/pak_page`: the menu
+  opens over the title menus, "Controller Pak" opens the Paks page (Pak A,
+  no notes, 123 pages free), Pak B and back (`[SAVE] port 1: Pak B, port 2:
+  Pak A`, the files loaded in turn), Format pak with its confirm, the file
+  written by the save writer, the menu closes. Then `pak_boot`: the game's
+  own "N64 Controller Pak Data" screen shows the formatted pak (no notes,
+  123 pages free).
+
+**Not verified / gaps**
+
+- Delete and copy on a real note in a game: MK64 makes its note only for a ghost in
+  Time Trials (a race); the host test covers delete. No game was watched
+  re-reading after a mid-game swap (the pull bit and ID check are tested on
+  the host only).
+- The Rumble Pak / Nothing choices ran in xemu only as rows; no game that
+  probes rumble was booted.
+- Not on the console. `[MEM]`: +2 KB static (the note table, the page's
+  state); `[CLOCK]`: unchanged.
+- A pak shared across games (stretch) is not built.

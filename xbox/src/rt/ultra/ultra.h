@@ -118,6 +118,12 @@ const uint8_t* xu_rom_ptr(uint32_t rom_off, uint32_t n);   /* resident only: NUL
 /* save.c: the save images and their files; the writer's flush (the exit
  * combos call it); the one lock every save access holds (recursive) */
 void xu_save_flush(void);
+/* the BACK menu's Paks page (save.c): port `port` holds XU_PAK_* `kind`
+ * and pak `letter` (0..3, A..D; the port that held it takes this one's);
+ * hot: as a swap the game sees (savedev.c xu_pak_pull) */
+void xu_pak_insert(int port, int kind, int letter, int hot);
+int xu_pak_letter(int port);
+void xu_pak_apply_settings(int hot);   /* g_xrc_settings' pak and pak_file */
 void xu_save_lock(void);
 void xu_save_unlock(void);
 uint8_t* xu_eep_image(uint32_t* size);   /* under the lock */

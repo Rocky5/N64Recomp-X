@@ -980,6 +980,7 @@ something else. Rows:
 | FPS counter | On, Off | at once | `[video] fps` |
 | Volume | 0-100 | at once | `[audio] volume` |
 | Stick dead zone | 0-60 % in fives, live readout, per port | at once | `[portN] stick_deadzone` |
+| Controller Pak | per port; A opens the **Paks page**: what is in the port (Auto, Controller Pak, Rumble Pak, Nothing), which of the game's four paks (A-D; taking another port's pak swaps the two), the pak's notes (name, pages; A deletes one, X copies one to another of the game's paks, after a confirm), Format pak (after a confirm), Back. A change is a hot-swap the game sees (the status's pull bit, a new pak ID) | at once | `[portN] pak`, `pak_file` |
 | Buttons | sub-page per port, capture-the-next-button, Y = default | at once | `[portN] a = A ...` |
 | Rumble | On, Off | at once | `[input] rumble` |
 | Save slot | 1-4 (the image file swapped at boot) | `*` | `[save] slot` |

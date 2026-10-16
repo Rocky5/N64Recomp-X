@@ -14,6 +14,8 @@
  *   [audio]   volume = 0..100
  *   [input]   rumble = 0|1
  *   [port1]..[port4]  stick_deadzone = 0..60 (percent, fives)
+ *             pak = auto|controller|rumble|none   pak_file = A..D (each pak
+ *             in one port: a set that isn't goes back to A..D in order)
  *   [save]    slot = 1..4
  *   [system]  screenshots = 0|1
  *
@@ -40,9 +42,11 @@ XrcSettings g_xrc_settings;
 static const char* const k_out[] = { "auto", "480i", "480p", "720p", "1080i" };
 static const char* const k_ws[] = { "off", "on", "auto", "stretch" };
 static const char* const k_filter[] = { "n64", "sharp" };
+static const char* const k_pak[] = { "auto", "controller", "rumble", "none" };
 
 const char* xrc_settings_output_name(int o) { return o >= 0 && o < 5 ? k_out[o] : "auto"; }
 const char* xrc_settings_widescreen_name(int w) { return w >= 0 && w < 4 ? k_ws[w] : "auto"; }
+const char* xrc_settings_pak_name(int p) { return p >= 0 && p < 4 ? k_pak[p] : "auto"; }
 
 void xrc_settings_defaults(XrcSettings* s) {
     int i;
@@ -56,7 +60,7 @@ void xrc_settings_defaults(XrcSettings* s) {
     s->rumble = 1;
     s->save_slot = 1;
     s->screenshots = 0;
-    for (i = 0; i < XRC_PORTS; i++) s->stick_deadzone[i] = 20;
+    for (i = 0; i < XRC_PORTS; i++) s->stick_deadzone[i] = 20, s->pak_file[i] = i;
 }
 
 static char* trim(char* s) {
@@ -111,7 +115,11 @@ int xrc_settings_parse(XrcSettings* s, char* text) {
                 if (!strcmp(k, "rumble")) s->rumble = atoi(v) != 0;
             } else if (!strncmp(section, "port", 4) && section[4] >= '1' && section[4] <= '0' + XRC_PORTS &&
                        !section[5]) {
-                if (!strcmp(k, "stick_deadzone")) s->stick_deadzone[section[4] - '1'] = clampi(atoi(v), 0, 60) / 5 * 5;
+                int port = section[4] - '1';
+                if (!strcmp(k, "stick_deadzone")) s->stick_deadzone[port] = clampi(atoi(v), 0, 60) / 5 * 5;
+                else if (!strcmp(k, "pak")) s->pak[port] = pick(v, k_pak, 4, XRC_PAK_AUTO);
+                else if (!strcmp(k, "pak_file") && ((v[0] >= 'A' && v[0] <= 'D') || (v[0] >= 'a' && v[0] <= 'd')) && !v[1])
+                    s->pak_file[port] = (v[0] | 0x20) - 'a';
             } else if (!strcmp(section, "save")) {
                 if (!strcmp(k, "slot")) s->save_slot = clampi(atoi(v), 1, 4);
             } else if (!strcmp(section, "system")) {
@@ -119,6 +127,12 @@ int xrc_settings_parse(XrcSettings* s, char* text) {
             }
         }
         line = nl ? nl + 1 : NULL;
+    }
+    {   /* every pak in one port */
+        int seen = 0, i;
+        for (i = 0; i < XRC_PORTS; i++) seen |= 1 << s->pak_file[i];
+        if (seen != (1 << XRC_PORTS) - 1)
+            for (i = 0; i < XRC_PORTS; i++) s->pak_file[i] = i;
     }
     return whole;
 }
@@ -139,7 +153,9 @@ size_t xrc_settings_format(const XrcSettings* s, char* out, size_t cap) {
         k_filter[s->texture_filter ? 1 : 0], s->fps, s->video_confirmed);
     PUT("[audio]\r\nvolume = %d\r\n", s->volume);
     PUT("[input]\r\nrumble = %d\r\n", s->rumble);
-    for (i = 0; i < XRC_PORTS; i++) PUT("[port%d]\r\nstick_deadzone = %d\r\n", i + 1, s->stick_deadzone[i]);
+    for (i = 0; i < XRC_PORTS; i++)
+        PUT("[port%d]\r\nstick_deadzone = %d\r\npak = %s\r\npak_file = %c\r\n", i + 1, s->stick_deadzone[i],
+            xrc_settings_pak_name(s->pak[i]), 'A' + (s->pak_file[i] & 3));
     PUT("[save]\r\nslot = %d\r\n", s->save_slot);
     PUT("[system]\r\nscreenshots = %d\r\n", s->screenshots);
     PUT(END_MARK "\r\n");
@@ -148,6 +164,8 @@ size_t xrc_settings_format(const XrcSettings* s, char* out, size_t cap) {
 }
 
 #ifndef XRC_SETTINGS_HOST
+void xu_pak_apply_settings(int hot);   /* ultra/save.c */
+
 static void path(char* p, size_t n) { snprintf(p, n, "%ssettings.ini", xhw_save_dir()); }
 
 int xrc_settings_save(void) {
@@ -165,10 +183,11 @@ int xrc_settings_save(void) {
 static void log_settings(void) {
     const XrcSettings* s = &g_xrc_settings;
     xhw_logf("[SETTINGS] output %s, progressive %d, widescreen %s, filter %s, fps %d, volume %d, rumble %d, slot %d, "
-             "dead zone %d/%d/%d/%d%%, confirmed %s",
+             "dead zone %d/%d/%d/%d%%, paks %c%c%c%c, confirmed %s",
              xrc_settings_output_name(s->output), s->progressive, xrc_settings_widescreen_name(s->widescreen),
              k_filter[s->texture_filter ? 1 : 0], s->fps, s->volume, s->rumble, s->save_slot, s->stick_deadzone[0],
-             s->stick_deadzone[1], s->stick_deadzone[2], s->stick_deadzone[3],
+             s->stick_deadzone[1], s->stick_deadzone[2], s->stick_deadzone[3], "ACRN"[s->pak[0] & 3] + 0, "ACRN"[s->pak[1] & 3] + 0,
+             "ACRN"[s->pak[2] & 3] + 0, "ACRN"[s->pak[3] & 3] + 0,
              s->video_confirmed[0] ? s->video_confirmed : "none");
 }
 
@@ -196,6 +215,7 @@ void xrc_settings_load(void) {
     }
     log_settings();
     if (write) xrc_settings_save();
+    xu_pak_apply_settings(0);
 }
 
 void xrc_settings_apply_hold(int hold) {
@@ -203,6 +223,7 @@ void xrc_settings_apply_hold(int hold) {
     if (hold == XHW_HOLD_NONE) return;
     if (hold >= XHW_HOLD_SAFE_RESET) {
         xrc_settings_defaults(s);
+        xu_pak_apply_settings(0);
         xhw_log("[SETTINGS] reset at boot (BACK + START): defaults");
     }
     s->output = XHW_OUT_480I;

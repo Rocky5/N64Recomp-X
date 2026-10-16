@@ -1,0 +1,31 @@
+# The BACK menu's Paks page (test builds), Mario Kart 64: into the game's
+# menus (it reads its pak), BACK, down to "Controller Pak", A: the page with
+# Pak A's notes. Pak B and back to A (two hot-swaps: "[SAVE] port 1: Pak B,
+# port 2: Pak A"), then Format pak, A to confirm ("[MENU] Pak A formatted"),
+# B, B: the menu closes ("settings.ini saved"), the game runs on. Shots are
+# spaced: a COM1 [FBDUMP] takes seconds.
+t11000 START for 300
+t15000 START for 300
+t22000 BACK for 200
+t23000 DOWN for 100
+t23400 DOWN for 100
+t23800 DOWN for 100
+t24200 DOWN for 100
+t24600 DOWN for 100
+t25000 DOWN for 100
+t25400 DOWN for 100
+t26200 A for 100
+t27500 SHOT
+t34000 DOWN for 100
+t34400 DOWN for 100
+t35000 RIGHT for 100
+t36000 LEFT for 100
+t37000 DOWN for 100
+t37400 DOWN for 100
+t38000 A for 100
+t38800 SHOT
+t45000 A for 100
+t46000 SHOT
+t53000 B for 100
+t54000 B for 100
+t60000 SHOT

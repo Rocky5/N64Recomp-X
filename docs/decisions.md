@@ -331,9 +331,8 @@ a Controller Pak until the game writes the Rumble Pak probe (0xFE or 0x80
 to 0x8000) before it ever read the pak's file system; then it is a Rumble
 Pak until a restart. Games that keep saves on the pak and probe for rumble
 later keep their saves (a save matters more than a motor); rumble through
-the replaced osMotor* works whatever the port holds. No BACK-menu row yet:
-the menu's rows are another task's file, and AUTO needs no choice; a
-`[portN] pak` setting is the next step if a game needs a swap.
+the replaced osMotor* works whatever the port holds. The BACK menu's Paks
+page (below) sets it per port: `[portN] pak = auto|controller|rumble|none`.
 
 **One `.mpk` per port** (`<id>.mpk` for port 1, `<id>-2.mpk`..`<id>-4.mpk`),
 32 KB in the pak's order, so port 1's file trades with emulators' single-pak
@@ -354,6 +353,39 @@ constant 4 in the game's own osContInit (the pack's symbols, the ROM's
 code) and passes its address as `-DXRC_CONT_MAX_ADDR`; it is derived per
 build, never kept. The save writer holds the lock while it writes a file
 (no 128 KB copy; a game that saves again meanwhile waits for the disk).
+
+## The BACK menu's Paks page (2026-10-16, PLAN.md 5.2)
+
+**Four paks per game, and the files they already had.** The maintainer
+asked for the pak to be managed from the BACK menu after testing Mario Kart
+64. Paks A-D are `<id>.mpk`, `<id>-2.mpk`, `-3`, `-4`: the per-port files
+the saves already used, so a save made before the page is Pak A in port 1,
+untouched. **Each pak is always in exactly one port** (a real pak is in one
+controller): choosing a pak another port holds swaps the two, so the four
+port images stay four distinct files with no shared buffer, and nothing has
+to decide what a pak in two ports means. A set in settings.ini that has a
+pak twice reads as A-D in order. Copying a note to another of the game's
+paks is built (it lands in the target's lowest free pages, as
+osPfsAllocateFile would put it); a pak shared by every game (moving a real
+pak between games) is not.
+
+**A change is a hot-swap, not a reboot.** The game is frozen while the menu
+is open, so the swap lands between two of its pak accesses, as a hand would.
+Two signals, both the hardware's: the controller's status byte has
+CONT_CARD_PULL (0x02) once after the swap (libultra's `__osPfsGetStatus`
+says `PFS_ERR_NEW_PACK`), and the pak's ID area is another pak's (a format
+from the menu writes a new random ID), which the runtime's osPfs* check
+against the OSPfs's copy as libultra's `__osCheckId` does. A delete also
+raises the pull bit: the pak was "out" while it was edited, and a game that
+re-reads it sees the new directory. Neither signal reaches a game that does
+not ask; nothing is forced on it.
+
+**The VI thread asks, the menu's thread acts.** The pad handling runs on the
+VI thread, which must never wait on the disk; deletes, formats and swaps
+take the save lock (the writer may be writing a file), so they run on the
+menu's own thread between frames, which also re-reads the note table every
+frame (16 entries: microseconds). Deletes and formats ask first (A again,
+anything else keeps), on the card's warm note line.
 
 ## The renderer's microcode families (2026-10-16, PLAN.md 3.7, `docs/renderer.md`)
 

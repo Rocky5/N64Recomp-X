@@ -106,9 +106,10 @@ static void read_pads(void) {
     xhw_combo_act();
 }
 
-/* the status byte's CONT_CARD_ON: a pak is in (savedev.c; XRC_SAVE_PAK=0: none) */
+/* the status byte: CONT_CARD_ON, a pak is in; CONT_CARD_PULL once after
+ * the BACK menu swapped it (savedev.c; XRC_SAVE_PAK=0: none) */
 static uint8_t pak_status(int port) {
-    return XRC_SAVE_PAK && xu_pak_kind(port) != XU_PAK_NONE ? 0x01 : 0x00;
+    return XRC_SAVE_PAK ? xu_pak_status(port) : 0x00;
 }
 
 static void write_status(uint32_t status) {

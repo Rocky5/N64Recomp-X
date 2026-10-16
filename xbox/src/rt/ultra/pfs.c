@@ -21,8 +21,8 @@
 #include "ultra.h"
 
 enum {
-    PFS_ERR_NOPACK = 1, PFS_ERR_INCONSISTENT = 3, PFS_ERR_INVALID = 5, PFS_DATA_FULL = 7, PFS_DIR_FULL = 8,
-    PFS_ERR_EXIST = 9, PFS_ERR_DEVICE = 11,
+    PFS_ERR_NOPACK = 1, PFS_ERR_NEW_PACK = 2, PFS_ERR_INCONSISTENT = 3, PFS_ERR_INVALID = 5, PFS_DATA_FULL = 7,
+    PFS_DIR_FULL = 8, PFS_ERR_EXIST = 9, PFS_ERR_DEVICE = 11,
 };
 enum { PFS_INITIALIZED = 1, PFS_CORRUPTED = 2 };
 #define START 5    /* the first file page */
@@ -41,6 +41,20 @@ static int port_of(uint32_t pfs) { return (int)(rd32(pfs + 8) & 3); }
 static int pak_err(int port) {
     int k = XRC_SAVE_PAK ? xu_pak_kind(port) : XU_PAK_NONE;
     return k == XU_PAK_NONE ? PFS_ERR_NOPACK : k == XU_PAK_RUMBLE ? PFS_ERR_DEVICE : 0;
+}
+
+/* libultra's __osCheckId: the pak in the port is the one osPfsInitPak saw
+ * (the BACK menu's Paks page can swap it, or format it with a new ID);
+ * else PFS_ERR_NEW_PACK and the game initialises it again */
+static int pak_err_id(int port, uint32_t pfs) {
+    uint8_t id[32];
+    int r = pak_err(port), same;
+    if (r) return r;
+    xu_from_rdram(id, pfs + 12, 32);
+    xu_save_lock();
+    same = !memcmp(id, xu_pak_image(port) + 32, 32);
+    xu_save_unlock();
+    return same ? 0 : PFS_ERR_NEW_PACK;
 }
 
 /* the ID: block 1, else a good copy, else a new one (libultra's repair) */
@@ -243,7 +257,7 @@ ULTRA(osPfsIsPlug) {
 ULTRA(osPfsNumFiles) {
     int port = port_of(ARG(0)), r, j, used = 0;
     (void)rdram;
-    if ((r = pak_err(port)) != 0) {
+    if ((r = pak_err_id(port, ARG(0))) != 0) {
         RET(r);
         return;
     }
@@ -260,7 +274,7 @@ ULTRA(osPfsNumFiles) {
 ULTRA(osPfsFreeBlocks) {
     int port = port_of(ARG(0)), r;
     (void)rdram;
-    if ((r = pak_err(port)) != 0) {
+    if ((r = pak_err_id(port, ARG(0))) != 0) {
         RET(r);
         return;
     }
@@ -275,7 +289,7 @@ ULTRA(osPfsFreeBlocks) {
 ULTRA(osPfsFindFile) {
     int port = port_of(ARG(0)), r, j;
     (void)rdram;
-    if ((r = pak_err(port)) != 0) {
+    if ((r = pak_err_id(port, ARG(0))) != 0) {
         RET(r);
         return;
     }
@@ -293,7 +307,7 @@ ULTRA(osPfsAllocateFile) {
     int port = port_of(ARG(0)), r, j, need, i, prev = -1, slot = -1;
     uint8_t* img;
     (void)rdram;
-    if ((r = pak_err(port)) != 0) {
+    if ((r = pak_err_id(port, ARG(0))) != 0) {
         RET(r);
         return;
     }
@@ -344,7 +358,7 @@ ULTRA(osPfsDeleteFile) {
     int port = port_of(ARG(0)), r, j, n, i;
     uint8_t pages[128], *img;
     (void)rdram;
-    if ((r = pak_err(port)) != 0) {
+    if ((r = pak_err_id(port, ARG(0))) != 0) {
         RET(r);
         return;
     }
@@ -373,7 +387,7 @@ ULTRA(osPfsReadWriteFile) {
     uint32_t buf = ARG(5);
     uint8_t pages[128], *img, *d;
     (void)rdram;
-    if ((r = pak_err(port)) != 0) {
+    if ((r = pak_err_id(port, ARG(0))) != 0) {
         RET(r);
         return;
     }
@@ -409,7 +423,7 @@ ULTRA(osPfsFileState) {
     uint32_t st = ARG(2);
     uint8_t pages[128], *img, *d;
     (void)rdram;
-    if ((r = pak_err(port)) != 0) {
+    if ((r = pak_err_id(port, ARG(0))) != 0) {
         RET(r);
         return;
     }
@@ -439,7 +453,7 @@ ULTRA(osPfsGetLabel) {
     int port = port_of(ARG(0)), r, n;
     uint8_t label[32];
     (void)rdram;
-    if ((r = pak_err(port)) != 0) {
+    if ((r = pak_err_id(port, ARG(0))) != 0) {
         RET(r);
         return;
     }
@@ -497,8 +511,10 @@ ULTRA(__osContDataCrc) {
     RET(xu_pak_data_crc(b));
 }
 
-/* __osPfsGetStatus(mq, channel): 0 with a pak in, PFS_ERR_NOPACK without */
+/* __osPfsGetStatus(mq, channel): 0 with a pak in, PFS_ERR_NOPACK without,
+ * PFS_ERR_NEW_PACK once after the BACK menu swapped it */
 ULTRA(__osPfsGetStatus) {
+    uint8_t st = XRC_SAVE_PAK ? xu_pak_status((int)(ARG(1) & 3)) : 0;
     (void)rdram;
-    RET(XRC_SAVE_PAK && xu_pak_kind((int)(ARG(1) & 3)) != XU_PAK_NONE ? 0 : PFS_ERR_NOPACK);
+    RET(!(st & 1) ? PFS_ERR_NOPACK : (st & 2) ? PFS_ERR_NEW_PACK : 0);
 }

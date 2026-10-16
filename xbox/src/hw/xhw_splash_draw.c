@@ -405,6 +405,8 @@ void xhw_splash_render(uint32_t* fb, int pitch, const xhw_splash_state* s) {
 #define P_SUB_Y (P_LINE_Y + 10)
 #define P_ROWS_Y (P_SUB_Y + 28)
 #define P_ROW_H 22
+#define P_ROW_H_TIGHT 20        /* more than P_ROWS_ROOMY rows: closer together */
+#define P_ROWS_ROOMY 10
 #define P_ACTION_GAP 8
 #define P_X0 (PG + 24)          /* text margins */
 #define P_X1 (PW - PG - 24)
@@ -504,9 +506,11 @@ static void shadowed(uint32_t* img, int pitch, const char* s, int x, int y, int 
     glyphs(img, pitch, s, x, y, zoom, col, 0, 0);
 }
 
+static int row_h(const xhw_panel* p) { return p->rows > P_ROWS_ROOMY ? P_ROW_H_TIGHT : P_ROW_H; }
+
 /* a row's top: the actions sit a little apart from the settings */
 static int row_y(const xhw_panel* p, int r) {
-    int y = P_ROWS_Y + r * P_ROW_H, i;
+    int y = P_ROWS_Y + r * row_h(p), i;
     for (i = 0; i < r && i + 1 < p->rows; i++)
         if (p->kind[i] != XHW_PANEL_ACTION && p->kind[i + 1] == XHW_PANEL_ACTION) y += P_ACTION_GAP;
     return y;
@@ -582,9 +586,10 @@ void xhw_panel_render(uint32_t* img, int pitch, const xhw_panel* p) {
         }
         shadowed(img, pitch, p->label[r], P_X0 + (sel ? 6 : 0), ry, 1, lc);
         if (p->value[r][0]) {
-            int vw = xhw_splash_text_width(p->value[r], 1), vx = P_X1 - vw - (sel ? 16 : 0) - (p->star[r] ? 16 : 0);
+            int arrows = sel && p->kind[r] == XHW_PANEL_SETTING;
+            int vw = xhw_splash_text_width(p->value[r], 1), vx = P_X1 - vw - (arrows ? 16 : 0) - (p->star[r] ? 16 : 0);
             shadowed(img, pitch, p->value[r], vx, ry, 1, sel ? rgb(250, 250, 255) : rgb(150, 165, 190));
-            if (sel) {
+            if (arrows) {
                 int pulse = (sinq((int)(t / 2u)) * 3) >> 14;
                 shadowed(img, pitch, "<", vx - 16 - pulse, ry, 1, rgb(150, 220, 140));
                 shadowed(img, pitch, ">", P_X1 - 8 - (p->star[r] ? 16 : 0) + pulse, ry, 1, rgb(150, 220, 140));
@@ -593,7 +598,7 @@ void xhw_panel_render(uint32_t* img, int pitch, const xhw_panel* p) {
         }
     }
     {
-        int iy = row_y(p, rows - 1) + P_ROW_H + 10;
+        int iy = row_y(p, rows - 1) + row_h(p) + 10;
         if (p->info[0]) shadowed(img, pitch, p->info, P_X0, iy, 1, rgb(150, 165, 190));
         if (p->note[0]) shadowed(img, pitch, p->note, P_X0, iy + 20, 1, rgb(255, 214, 120));
         if (p->footer[0])
