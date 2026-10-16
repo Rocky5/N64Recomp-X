@@ -327,6 +327,23 @@ This folder contains your game's code: keep it to yourself.
 '''
 
 
+def _inflate(rom, prog):
+    """a Yaz0-compressed ROM rebuilt as the game runs it: every file of its
+    DMA table at its vrom, inflated, the table saying "not compressed"
+    (PLAN.md 3.5; yaz0.py). The SHA-1 the console checks is the new image's
+    ($ROM holds it). N64RX_YAZ0=0 leaves the ROM as it is."""
+    import dataclasses
+    import hashlib
+    from . import yaz0
+    out = yaz0.inflate_rom(rom.data)
+    if not out:
+        return rom
+    img, at, n = out
+    prog.note(f'Yaz0: {n} compressed files inflated (the DMA table at 0x{at:X}): {len(rom.data) >> 20} MB -> '
+              f'{len(img) >> 20} MB')
+    return dataclasses.replace(rom, data=img, sha1=hashlib.sha1(img).hexdigest())
+
+
 def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None, echo=None, eng=None,
           analyze=False, rom_beside=False, learn=()):
     echo = echo or (lambda s: print(s, flush=True))
@@ -337,6 +354,8 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
         pack = packs.match(rom, packs.all_packs())
     except N64rxError:
         pack = None   # no pack: the ROM alone (PLAN.md 3.14)
+    if pack is None and os.environ.get('N64RX_YAZ0', '1') != '0':
+        rom = _inflate(rom, prog)   # Yaz0 games (the Zeldas): the image they run from (yaz0.py)
     eng = eng or engines.pick(engine)
     out_root = pathlib.Path(out) if out else pathlib.Path.cwd() / 'out'
     if eng.name == 'docker':

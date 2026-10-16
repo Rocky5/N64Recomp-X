@@ -202,8 +202,12 @@ Pilotwings 64, Mario Kart 64 (frames presented, not judged playable).
 - The net's interpreter is slow (each instruction decoded every time); a
   hot function it runs costs frame time until the rebuild.
 - Loads described by plain words in the ROM are found statically (Super
-  Mario 64's goddard). Compressed code (Dr. Mario 64's gzip main segment)
-  is not.
+  Mario 64's goddard). Yaz0 games (the Zeldas) are inflated before the
+  analysis (`n64rx_lib/yaz0.py`: the DMA table found by behaviour, every
+  file at its vrom, the table rewritten to "not compressed"; Ocarina of
+  Time 1.2: 1456 files, 32 -> 53 MB; Majora's Mask: 1513, 32 -> 47 MB);
+  the console checks the inflated image's SHA-1. Other compressed code
+  (Dr. Mario 64's gzip main segment, Rare's) is not handled.
 - Overlays that share a vram (Paper Mario's maps, battles, partners; Pokémon
   Snap's levels): names collide (`func_<vram>`) and the function table maps
   a vram to one function; tracking which overlay is loaded (PLAN.md §3.4,

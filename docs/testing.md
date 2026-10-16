@@ -19,6 +19,7 @@ python tools/xbox/test_romcache.py      # the ROM page cache's core: chunk spans
 python tools/xbox/test_saves.py         # saves: pak CRCs and PIF round trips, the blank format, Rumble, osPfs*, Flash, SRAM by PI DMA
 python tools/xbox/test_f3dex.py         # the display-list interpreter on a fake back end: Fast3D, F3DEX (old and new), F3DEX2, the ucode switch, CI textures
 python tools/xbox/test_fbfx.py          # framebuffer readback's bookkeeping: colour-image slots, stale/hot marks, the RGBA5551/8888 conversion
+python tools/xbox/test_yaz0.py          # Yaz0 ROMs on a synthetic ROM: the decoder's every code path, the DMA table found by behaviour, files at their vrom, the table rewritten
 python tools/xbox/test_analyze.py       # the analyser against every decomp + ROM pair present (skips without ROMs: CI); N64RX_ROMS=<folder>
 ```
 
@@ -223,6 +224,7 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DASP_HLE_WORDSWAP=0` | 1 on the console | `asp_hle` on a native-order RDRAM (Wings64-X's layout; the host tests' first group) |
 | `-DASP_HLE_NEAD=0` | 1 | the nead audio microcodes (Mario Kart 64, SM64 EU, Zelda) read as unknown: silent |
 | `-DASP_HLE_NAUDIO=0` | 1 | `n_aspMain` (Paper Mario, Smash Bros.) reads as unknown: silent |
+| `N64RX_YAZ0=0` (env, n64rx) | 1 | a ROM-only build of a Yaz0 game (the Zeldas) uses the ROM as it is instead of the inflated image |
 | `-DXGFX_HOLD_EVICT=0` | 1 | the BACK menu never drops the game's texture cache when its held frame or card finds the texture pool full (Mario Kart 64 on red: the card was missing) |
 | `-DXGFX_UCODE_F3DEX=0` | 1 | F3DEX 0.9x/1.x microcodes (and F3DLX, F3DLP, L3DEX, .NoN/.Rej) read as Fast3D, the build before the registry (`docs/renderer.md`) |
 | `-DXGFX_UCODE_F3DEX2=0` | 1 | F3DEX2 microcodes (F3DZEX, F3DLX2, .NoN/.Rej) read as Fast3D |

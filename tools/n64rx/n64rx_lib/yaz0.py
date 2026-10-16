@@ -15,6 +15,7 @@ entries whose vrom ranges ascend without overlap, whose compressed entries
 point at "Yaz0" headers that inflate to exactly their vrom size, and one of
 which describes the table itself. Nothing here holds a game's addresses.
 """
+import re
 import struct
 
 MAGIC = b'Yaz0'
@@ -69,7 +70,9 @@ def _plausible(rom, at):
             break
         if ve < vs or vs < last_end or ve - vs > 0x1000000:
             break
-        if pe:
+        if ps == pe == 0xFFFFFFFF:
+            pass   # a file this ROM leaves out (Majora's Mask)
+        elif pe:
             if pe <= ps or pe > n or rom[ps:ps + 4] != MAGIC:
                 break
         elif ps != 0xFFFFFFFF and (ps + (ve - vs) > n):
@@ -82,27 +85,29 @@ def _plausible(rom, at):
 
 def find_table(rom):
     """(offset, entries) of the DMA table, or None. The first entry of the
-    Zelda engine's table is the boot area itself (vrom 0, prom 0); one entry
-    is the table, so a candidate must contain its own offset."""
+    Zelda engine's table is the boot area itself (vrom 0, prom 0, stored
+    as is, some KB long); one entry is the table, so a candidate must
+    contain its own offset."""
     if MAGIC not in rom:
         return None
     best = None
-    first = struct.pack('>IIII', 0, 0, 0, 0)[:4]
-    at = 0
-    while True:
-        at = rom.find(first, at)   # an entry starting at vrom 0: the table's first
-        if at < 0 or at > len(rom) - ENTRY * 3:
-            break
-        if at % ENTRY == 0 or at % 4 == 0:
-            vs, ve, ps, pe = _entry(rom, at)
-            if vs == 0 and ps == 0 and pe == 0 and 0x1000 <= ve <= 0x200000:
-                ents = _plausible(rom, at)
-                packed = sum(1 for e in ents if e[3])
-                self_ref = any(e[0] <= at < e[1] and not e[3] for e in ents)
-                if len(ents) >= 16 and packed >= 4 and self_ref and (best is None or len(ents) > len(best[1])):
-                    best = (at, ents)
-        at += 4
+    # (0, end, 0, 0) with 0x1000 <= end < 0x200000, 16-byte aligned
+    for m in _FIRST.finditer(rom):
+        at = m.start()
+        if at % ENTRY:
+            continue
+        ve = struct.unpack_from('>I', rom, at + 4)[0]
+        if not 0x1000 <= ve <= 0x200000:
+            continue
+        ents = _plausible(rom, at)
+        packed = sum(1 for e in ents if e[3] and e[2] != 0xFFFFFFFF)
+        self_ref = any(e[0] <= at < e[1] and not e[3] for e in ents)
+        if len(ents) >= 16 and packed >= 4 and self_ref and (best is None or len(ents) > len(best[1])):
+            best = (at, ents)
     return best
+
+
+_FIRST = re.compile(rb'(?=\x00{5}[\x00-\x1f][\x00-\xff]{2}\x00{8})(?!\x00{8})', re.S)   # zero width: every place, not just after the last match
 
 
 def inflate_rom(rom):
@@ -119,7 +124,7 @@ def inflate_rom(rom):
     for vs, ve, ps, pe in ents:
         if ps == 0xFFFFFFFF:   # a file not in this ROM
             continue
-        if pe:
+        if pe:   # (absent files were skipped above)
             data = decompress(rom, ps)
             if len(data) != ve - vs:
                 raise ValueError(f'a Yaz0 file inflates to {len(data)} bytes, its table entry says {ve - vs}')
