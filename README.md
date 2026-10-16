@@ -12,14 +12,17 @@ runs [Melee-X](https://github.com/TechProGabe/Melee-X),
 [OpenCrossing-Xbox](https://github.com/TechProGabe/OpenCrossing-Xbox) and
 [Wings64-X](https://github.com/TechProGabe/Wings64-X).
 
-**Status: milestone M0.** The tool, the toolchain, the platform layer and
-the loading screen exist; no game runs yet (that is M1, Pilotwings 64). A
-ROM-free test program already goes the whole way: `n64rx build` recompiles
-it, builds the XBE, and the Xbox (xemu so far) runs the recompiled code and
-reports its checks. The plan is [`docs/PLAN.md`](docs/PLAN.md); what was
-verified, and how, is [`docs/handoff.md`](docs/handoff.md).
+**Status: in development, not released.** `n64rx` takes your ROM and
+builds an XBE **from the ROM alone**: it finds the game's code, its
+segments and its libultra functions itself, with no decompilation and no
+per-game file needed. Pilotwings 64 runs on a real Xbox (sound, saves, the
+settings menu, 720p and widescreen in xemu); Mario Kart 64, built from its
+ROM with nothing else, reaches its title screen. Many games will not work
+yet: the graphics microcodes beyond Fast3D, more audio microcodes and the
+Controller Pak are still to come. The plan is [`docs/PLAN.md`](docs/PLAN.md);
+what was verified, and how, is [`docs/handoff.md`](docs/handoff.md).
 
-## Three steps (once games are supported)
+## Three steps
 
 1. Install Docker Desktop, or run `n64rx doctor --install` for a native
    toolchain (Windows, macOS, Linux). `n64rx doctor` says what is there and
@@ -47,7 +50,8 @@ python tools/xbox/make_test_rom.py build-host/test/test.z64
 |---|---|
 | hold BACK while it loads | safe video: this boot runs 480i 4:3, and it is saved |
 | hold BACK + START | safe video and the default settings |
-| BACK | the port's settings menu (from M2) |
+| BACK (a tap) | the port's settings menu, over the paused game |
+| BACK + WHITE | a screenshot (test builds, or with screenshots on) |
 | L + R + BACK + BLACK | back to the dashboard, anywhere |
 | L + R + BACK + WHITE | restart, anywhere |
 

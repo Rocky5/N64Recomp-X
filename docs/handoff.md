@@ -155,3 +155,36 @@ dashboard (AV pack 1, no HD flags), one Duke on port 1.
 **Not verified yet**: 720p and widescreen on the console (red's dashboard
 is 480i only: needs an HD AV pack), a save moved to or from Wings64-X
 (same byte order by construction), the 30-minute soak.
+
+### ROM-only builds (2026-10-16, commits `8928df4`, `38e479c`)
+
+**Verified**
+
+- Pilotwings 64 with `--analyze` (its pack's patches mapped on top): the
+  analyser finds 1952 of the decomp's 1956 functions (the 4 missing are
+  libultra's exception handler, which the runtime replaces), the app
+  segment exactly (ROM `0x51E30` at `802CA900`, `0x8C8F0` bytes), all 54
+  replaced libultra functions named, none wrong; 32-bit registers. xemu:
+  the Wings64-X menus scenario (title, file select, vehicle and class,
+  pilot, briefing, flight, results) shot for shot the same as the
+  decomp-symbol build; the EEPROM written and read; sound. One miss on the
+  way (a jump table whose `lui` sat in a delay slot) crashed with "No
+  function at this address" and was fixed in the analyser.
+- Mario Kart 64 with no pack (US, `579c48e2...`): 3203 functions in the
+  boot segment and both race segments, 71 libultra functions named, one
+  hand-written routine interpreted (`80040C54`), 32-bit registers. xemu:
+  the title screen drawn correctly. Deployed to the console (red) as
+  `vmk1`; not yet reported.
+- Runtime additions for ROM-only builds: the interpreter, the PIF, the
+  `osEPi*` family, rumble, the remaining reimplemented names; `__ll_rem`
+  corrected to libultra's unsigned remainder.
+
+**Not verified / gaps**
+
+- Mario Kart 64 past its title: races use F3DEX (the interpreter is Fast3D
+  only: M4); its audio microcode is not identified (silent); no Controller
+  Pak; the console run.
+- The learning loop for code loaded with computed addresses (PLAN.md 3.14
+  step 5) is not built.
+- The analyser has no host test yet: `test_analyze.py` (synthetic MIPS
+  fixtures) and `decomp_check.py` are the V track's first files.

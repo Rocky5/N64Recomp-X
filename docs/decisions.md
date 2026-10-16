@@ -199,3 +199,51 @@ could not keep a mode). A on any port, at the game's reads or from the VI
 thread every 8 retraces, keeps the mode and saves `video_confirmed`; that A
 does not reach the game until let go. The timeout restarts into 480i from
 the VI thread.
+
+## The ROM-only path (2026-10-16, PLAN.md 3.14)
+
+**The end goal is a working XBE from the ROM alone; packs are optional.**
+The maintainer: "someone downloads this toolkit, provides the ROM, and it
+spits out an XBE". The decomp-based symbol file of M1 became the answer key
+the analyser is checked against.
+
+**libultra is recognised by behaviour, never by fingerprints.** A list of
+instruction hashes taken from ROMs would be ROM-derived data in the tree;
+rules on behaviour (COP0, hardware registers, struct offsets, the call
+graph) hold no ROM material and carry across libultra versions. Pilotwings
+64: all 54 replaced functions named, none wrong; Mario Kart 64 (another
+libultra version): 71 named on the first run.
+
+**Segments are found from constant DMA arguments, proved by the calls into
+them.** No libultra name is needed: any call whose arguments evaluate to a
+ROM offset, a RAM address and a size is a candidate; it becomes a segment
+only when the known code calls into it and the bytes there look like
+function starts. Pilotwings' app segment came out exact; Mario Kart's two
+race segments too.
+
+**Dead code is not recompiled.** Liveness from the entry, main and every
+function address in data or code, with the edges out of replaced functions
+cut: libultra's internals (exception handler, the VI and PI managers'
+threads) only the replaced functions reach drop out, and with them the
+calls to internals the runtime has no reason to provide.
+
+**Hand-written code runs in an interpreter, not a hand port.** Mario Kart
+64's decoders return through `s3` after `bal` into another function's
+body; no recompiler expresses that. A decomp-based recomp ports such code
+by hand; a ROM-only tool cannot, so the runtime interprets it (and any live
+function N64Recomp refuses) from RDRAM on the same context.
+
+**The PIF is emulated for the game's own SI code.** A ROM-only build runs
+libultra code the rules did not name (the Controller Pak driver, a game's
+own pad reader); they build PIF command blocks themselves, so
+`__osSiRawStartDma` answers them as the PIF would.
+
+**Without a pack, the title ID is `0x4E52` + a 16-bit hash of the game
+code** (0x0100 and up; below is kept for packs), the title is the header's,
+the save type comes from a facts table of 16 Kbit games (else 4 Kbit when
+the game probes an EEPROM).
+
+**The decomps are answer keys, read and never built or shipped** (the V
+track). The maintainer: "between all the decomps that are there, we should
+be able to get it working pretty stable". Their lists stay in `build-host/`;
+the rules keep only what generalises.

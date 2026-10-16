@@ -1,9 +1,15 @@
 # Game packs
 
-A pack is everything N64Recomp and the runtime need to know about one game,
-with no game data in it (PLAN.md 4.2). `n64rx build <rom>` hashes the ROM
-and picks the pack whose `game.toml` lists that SHA-1; `n64rx games` lists
-the packs.
+**Packs are optional.** A ROM with no pack is analysed from the ROM alone
+(`docs/analyzer.md`, PLAN.md 3.14): `n64rx` finds the functions, segments
+and libultra itself and writes a generated pack into `build-xbox/<id>/pack/`
+(never committed). A pack in this folder adds what analysis cannot know:
+fixes (instruction patches, stubs), the culling patch for widescreen, the
+title and icon, the save type when the game's probe is not enough, and
+symbol names for the report. `n64rx build <rom>` hashes the ROM and picks
+the pack whose `game.toml` lists that SHA-1 (`--analyze` analyses anyway
+and puts the pack's patches on top, mapped by address); `n64rx games`
+lists the packs.
 
 ```
 games/<id>/
@@ -72,7 +78,10 @@ at ROM 0x1000.
 
 ## Making one
 
-1. `n64rx build` on the ROM: with no pack it names the game and its SHA-1.
+A pack starts from the analysis: build the ROM with no pack, read
+`build-xbox/<id>/analysis.txt`, and add only what the game needs.
+
+1. `n64rx build` on the ROM: with no pack it analyses it and names the game and its SHA-1.
 2. Make `games/<id>/` with `game.toml` (that SHA-1), the symbol file and
    `recomp.toml`; copy `games/test` for the shape.
 3. Build; the first boot's log names an unknown microcode by its hash

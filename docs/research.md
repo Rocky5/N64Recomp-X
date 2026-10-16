@@ -390,3 +390,25 @@ and bring the big-ROM machinery for it.
   qualitative claims).
 - How `__udivdi3` and friends resolve under the game triple in Wings64-X's
   link (it links; the provider was not traced).
+
+## Decomps as answer keys for the ROM-only path (PLAN.md §6 "V")
+
+Read, compared against, never built or shipped; status and licence to
+check before each is used ("verify"). What the V harness needs from each:
+the splat config (segments: ROM, vram, size) and the symbol lists
+(function names and addresses).
+
+| game | decomp (verify) | why it is on the list |
+|---|---|---|
+| Pilotwings 64 (US) | n64decomp/pw64 (MIT; used, M1) | done: the first answer key |
+| Super Mario 64 (US, JP) | n64decomp/sm64 (complete; no licence) | IDO, libultra 2.0D, Fast3D: the baseline shape |
+| Mario Kart 64 (US) | n64decomp/mk64 (near complete; no licence) | F3DEX, hand-written decoders, race segments |
+| Paper Mario (US) | pmret/papermario | GCC-compiled, F3DEX2, many overlays |
+| Ocarina of Time / Majora's Mask | zeldaret/oot, zeldaret/mm | Yaz0, hundreds of overlays, F3DZEX2 |
+| Banjo-Kazooie | n64decomp/banjo-kazooie | Rare: compressed code, custom microcodes |
+| Super Smash Bros. | ssb-decomp-re | G1's candidate (PLAN.md 5.3) |
+| Star Fox 64 | sonicdcer/sf64 | F3DEX, custom audio |
+| Kirby 64 | farisawan-2000/kirby64 | |
+| Dr. Mario 64 | AngheloAlf/drmario64 | small, later libultra |
+| Pokémon Snap | ethteck/pokemonsnap | F3DEX2 + L3DEX2, readbacks |
+| Perfect Dark, GoldenEye | fgsfdsfgs/perfect_dark, kholdfuzion/goldeneye_src | Rare, 64-bit code paths |

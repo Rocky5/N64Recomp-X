@@ -1190,6 +1190,45 @@ through `console.py`/`n64rx deploy`, logs pulled before every relaunch.
   console: the maintainer flies a mission with sound at 720p; a 30-minute
   soak logs no underrun, crash or hang.
 
+### V: the ROM-only validation track (maintainer, 2026-10-16: the end goal)
+
+**Someone provides a ROM, `n64rx` puts out a working XBE.** The analyser
+(§3.14, `docs/analyzer.md`) is checked game by game against the decomps:
+each one is an answer key for where the functions are, which segments the
+game loads and which functions are libultra. The decomps are read, never
+built and never shipped: what the comparison uses (their function lists,
+splat segment tables, symbol names) stays in `build-host/`, and the
+analyser's rules carry only what generalises (behaviour, offsets, shapes),
+never a game's addresses.
+
+- **Order**: games whose decomps are complete or near it, across compilers,
+  libultra versions and microcodes, so every rule meets every shape: Super
+  Mario 64 (US/JP, IDO, libultra 2.0D, Fast3D), Mario Kart 64 (F3DEX,
+  hand-written decoders), Pilotwings 64 (done: G0), Paper Mario (GCC,
+  F3DEX2), Ocarina of Time and Majora's Mask (Yaz0, overlays), Banjo-Kazooie
+  (Rare, compressed code), Super Smash Bros. (G1's candidate), Star Fox 64,
+  Kirby 64, Dr. Mario 64, Pokémon Snap, Perfect Dark, GoldenEye (verify the
+  status and licence of each before use: `docs/research.md`).
+- **The harness** (`tools/xbox/decomp_check.py`, V's first file): given the
+  user's ROM and a decomp checkout, it reads the decomp's splat config and
+  symbol lists, runs the analyser, and reports functions missed, extra and
+  mis-sized, segments missed, libultra names right / wrong / missing, and
+  the live set's difference; with `--run` it builds the XBE and runs xemu's
+  attract-mode scenario. A host test runs it on every decomp present in
+  `build-host/decomps/` (none on CI: no ROM there).
+- **Per game, done when**: every function the decomp has that the game can
+  reach is found with its exact bounds, every segment the game loads with a
+  constant address is found, every replaced libultra function is named with
+  none wrong, and the XBE built from the ROM alone reaches the game's first
+  gameplay in xemu. What only a run can find goes to the learning loop.
+- **What it drives**: the analyser's rules, the interpreter for
+  hand-written code, the learning loop (§3.14 step 5), the microcode
+  registry (F3DEX/F3DEX2/S2DEX, the audio ABIs), saves (SRAM, Flash, the
+  Controller Pak). The game ladder (§5.3) still sets which games get packs
+  and console polish; V makes every rung start from the ROM alone.
+- **Runs alongside M2-M6**; each handoff entry records V's table
+  (`docs/analyzer.md` "How well it does").
+
 ### M3: the measurement gate (A/B against Wings64-X)
 - **Goal**: the translation factor T (§3.11) on the console, per `[PERF]`
   bucket (game, interpreter, back end, audio, waits) at the same scenes, for

@@ -38,6 +38,22 @@ python tools/n64rx/n64rx.py build build-host/test/test.z64       # -> out/N64Rec
 On the console or in xemu it must end on **"Test ROM: passed"** with 34
 checks and none failed. `--gpr 64` (hidden) builds it with 64-bit registers.
 
+## ROM-only builds (`docs/analyzer.md`)
+
+```sh
+n64rx build <rom>                     # no pack: from the ROM alone
+n64rx build <rom> --analyze           # even with a pack (Pilotwings 64: the check against its decomp)
+cat build-xbox/<id>/analysis.txt      # segments, functions, the libultra names and their rules
+```
+
+The check against a decomp is `tools/xbox/decomp_check.py` (the V track,
+PLAN.md §6; first file of V): functions, segments and libultra names
+against the decomp's lists, then the XBE in xemu. A crash card that says
+"No function at this address" names a function the analysis missed; the
+card's second number is the host return address (`tools/xbox/sym.py --map
+<folder>/debug/n64recomp_x.map 0x...` names the recompiled caller).
+`[INTERP]` lines name the hand-written routines that run interpreted.
+
 ## xemu (`tools/xbox/xemu_run.sh`)
 
 ```sh
@@ -58,7 +74,12 @@ MX_XBE="out/N64Recomp-X test/default.xbe" tools/xbox/xemu_run.sh 40 'card:'
 | `MX_SHOTS` | stop after this many complete `[FBDUMP]`s |
 
 The run's output is COM1 (`serial.log`); `tools/xbox/fbdump_to_png.py
-serial.log out` turns `[FBDUMP]` lines into PNGs. xemu is not hardware.
+serial.log out` turns `[FBDUMP]` lines into PNGs. xemu is not hardware. A
+screenshot over COM1 stalls the game for seconds (a 720p one ~10 s):
+scripted presses keep the ACPI clock's time meanwhile, so scenarios space
+their shots. Stray processes left by an interrupted run (a `grep` on a
+pipe) can slow xemu to a crawl: check the task list when the frame rate
+drops for no reason.
 
 ## Scripted input (test builds: `-DXHW_AUTOPAD=1`)
 

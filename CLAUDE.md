@@ -8,8 +8,17 @@ platform layer (NV2A back end, AC97, USB pads, the splash, the console
 tooling). Target: retail Xbox, stock 64 MB. The user-facing tool, `n64rx`,
 runs on Windows, macOS and Linux with one command.
 
-**Status: M1 done on `dev`: Pilotwings 64 recompiled, booting and drawing
-in xemu (Windows verified; the console not yet: `docs/handoff.md`). CI is
+**The end goal (maintainer, 2026-10-16): someone gives `n64rx` a ROM and
+gets a working XBE, with no decomp and no game pack.** `n64rx` analyses the
+ROM itself (`docs/analyzer.md`, PLAN.md §3.14); packs only add fixes on top.
+The decomps are the answer keys that make the ROM-only path stable
+(PLAN.md §6 "V"): read, compared against, never shipped.
+
+**Status (`docs/handoff.md`): M1 done; M2 mostly done (Pilotwings 64 on the
+console: sound, saves, the BACK menu, the combos; 720p and hor+ in xemu).
+ROM-only builds work: Pilotwings 64 from its ROM alone matches the
+decomp-symbol build; Mario Kart 64 from its ROM alone reaches its title
+screen. Next: the V track (decomp-checked ROM-only analysis). CI is
 manual-only (free minutes).** `docs/PLAN.md` is binding on
 the approach (§1), the architecture (§3), the build, game packs and tests
 (§4), the feature specs (§5), the milestone order and exit checks (§6).
@@ -26,7 +35,9 @@ the approach (§1), the architecture (§3), the build, game packs and tests
   console checks its SHA-1 before anything runs.
 - **Game packs hold facts, not bytes**: addresses, names, sizes, hashes,
   knobs, patches as MIPS C. Symbol files from unlicensed decomps are not
-  committed (`docs/PLAN.md` §8 Q7).
+  committed (`docs/PLAN.md` §8 Q7). The analyser's rules hold behaviour and
+  libultra's struct shapes, never a game's addresses or a fingerprint of
+  any ROM; what it derives stays in the user's build folder.
 - **No code from GPL recomp projects.** N64ModernRuntime, Zelda64Recomp and
   the community recomps are read for behaviour and named in `LICENSE.md`;
   the runtime is written here. Port code is MIT.
@@ -81,12 +92,13 @@ the approach (§1), the architecture (§3), the build, game packs and tests
 |---|---|
 | `docs/PLAN.md` | the implementation plan: approach, architecture, the generated-code contract on the P3, runtime, overlays and code on demand, ROM sources, graphics and audio HLE, memory budget, build and game packs, `n64rx`, the game ladder, milestones, risks, open questions, seed prompt |
 | `docs/research.md` | the evidence: N64Recomp and its header, the GPL runtime's surface (read only), Zelda64Recomp's structure, the Xbox section-loading and memory facts, what each sibling gives, candidate games with "verify" marks |
-| `docs/architecture.md` | what exists: the tree, the boot, the generated code's world, the exit combos |
+| `docs/architecture.md` | what exists: the tree, the boot, the runtime's pieces, the generated code's world, the BACK menu, the exit combos |
+| `docs/analyzer.md` | the ROM-only path as built: the analyser's steps, the interpreter, the PIF, how well it does per game, gaps |
 | `docs/toolchain.md` | the two triples, setup per OS, Docker, N64Recomp, LTO |
 | `docs/testing.md` | host tests, the xemu runner, scripted input (`t<ms>` events), the switch table |
 | `docs/decisions.md` | decisions made while building and why (incl. the plan's departures) |
 | `docs/handoff.md` | per milestone: verified how, not verified, gaps carried on |
-| `docs/look/` | the loading screen's baseline shots (xemu, STILL) |
+| `docs/look/` | the loading screen's baseline shots (xemu, STILL); the BACK menu card's host preview |
 | `games/README.md` | how a game pack is made |
 | `LICENSE.md` | MIT; what came from where; what was only read |
 
