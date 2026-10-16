@@ -70,8 +70,12 @@ Four parts, in the order a user meets them:
    the user copies to the console. It runs inside a published Docker image
    (the same bytes on every OS) or on a native toolchain it can install;
    `n64rx doctor` says which is available and what is missing.
-2. **Game packs** (`games/<id>/`, §4.2): everything the recompiler and the
-   runtime need to know about one game, with no game data: the symbol file,
+2. **The ROM analyser** (§3.14, maintainer 2026-10-16): **any ROM in, an XBE
+   out, with no decomp and no pack.** `n64rx` finds the game's code, its
+   segments and its libultra functions from the ROM itself, and learns the
+   code a run loads that the analysis missed.
+   **Game packs** (`games/<id>/`, §4.2) are optional: hints and fixes on top
+   of the analysis, with no game data: a symbol file where one helps,
    the overlay list, stubs and instruction patches, the RSP microcode
    recipes, the save type, the memory size, the microcode families, the
    knobs, and the MIPS-C patches that change the game (widescreen culling,
@@ -655,6 +659,66 @@ against a stock console. Host test `test_time.py` (M1) feeds the time
 functions a fake ACPI clock at several TSC rates and checks that nothing
 moves.
 
+### 3.14 From the ROM alone: the analyser and the learning loop
+
+Maintainer decision (2026-10-16): **someone downloads the toolkit, gives it
+their ROM, and gets an XBE of a native game; no decomp.** N64Recomp needs
+three things a decomp used to give: where the functions are, which code is
+loaded where (segments and overlays), and which functions are libultra (the
+runtime replaces those by name, §3.3). `n64rx` derives all three from the
+ROM (`tools/n64rx/n64rx_lib/analyze/`), deterministically, on the user's
+machine; nothing it derives is committed.
+
+1. **The boot image.** IPL3 copies 1 MB from ROM 0x1000 to the header's
+   entrypoint; that is the first segment.
+2. **Functions** (`funcs.py`): recursive descent from the entrypoint over
+   `jal` targets, each function walked through its branches to its last
+   reachable instruction (`jr ra`, tail `j`, jump tables read from their
+   `lui`/`lw`/`jr` pattern and bounded by the `sltiu` before them); then
+   every word in the data that points at a plausible function start in the
+   code (thread entries, callbacks, function tables), then the gaps between
+   functions that hold code. Boundaries are exactly what N64Recomp needs:
+   contiguous, non-overlapping, sizes to the last instruction.
+3. **libultra by behaviour** (`libultra.py`), no fingerprints: anchors that
+   only libultra has (the COP0 interrupt mask: `__osDisableInt`,
+   `__osRestoreInt`; `osGetCount`; `__osSetSR`/`__osGetSR`; the cache ops of
+   `osInvalDCache`/`osWritebackDCache`; the hardware registers each function
+   touches: VI `0xA440xxxx`, PI `0xA460xxxx`, SI `0xA480xxxx`, AI
+   `0xA450xxxx`, SP `0xA404xxxx`, MI `0xA430xxxx`), then names spread along
+   the call graph by shape (`osSendMesg` and `osRecvMesg` are the two
+   callers of `__osEnqueueAndYield` with the queue's validCount at offset 8;
+   `osCreateThread` stores the priority at 4 and the entry point in the
+   context; ...). Every name carries the rule that gave it in the report.
+   A function the runtime must replace and the rules cannot name stops the
+   build with what was found, not a silent wrong port; a pack may name it.
+4. **Segments** (`segments.py`): constant propagation over the identified
+   PI DMA calls (`osPiStartDma`, `osEPiStartDma`, `osPiRawStartDma`) and over
+   data tables of `{rom start, rom end, vram}` triples gives the segments
+   loaded with constant addresses (most games' main code and overlay
+   tables); each is analysed as in 2.
+5. **The learning loop.** What static analysis cannot see (a segment whose
+   address is computed) shows up at run time: the runtime logs every PI DMA
+   into RDRAM (`[PI] dma`) and every jump to an address with no function
+   (`[RECOMP] miss vram X`, then the card names it); `n64rx learn <log>`
+   pairs a miss with the DMA that brought its bytes, adds that ROM range at
+   that vram to the ROM's analysis cache (the user's build folder), and the
+   next build includes it. Test builds can run the loop in xemu by
+   themselves (`n64rx build --learn`): build, run the attract mode, learn,
+   rebuild, until no miss.
+6. **Packs on top.** A pack, when one exists, adds what analysis cannot
+   know: names for the report, stubs, instruction patches, the culling
+   patch, the save type when the game's own probe is not enough. Pilotwings
+   64's committed symbol file (MIT decomp) is the analyser's test oracle:
+   `test_analyze.py` compares the analysis of the user's own PW64 ROM with
+   it when the ROM is there, and synthetic MIPS fixtures (assembled in the
+   test, as `make_test_rom.py`) cover every rule on CI with no ROM.
+
+Without a pack the game's title is the header's name, the title ID is
+`0x4E52` + a hash of the game code (never `0x0001`-`0x00FF`, kept for packs),
+the save type comes from what the game probes (`osEepromProbe` answers 16K
+when the ROM never calls the 4K path; SRAM and Flash from the PI domain-2
+accesses the analysis sees), and the icon is the family's.
+
 ---
 
 ## 4. Build system and the game packs
@@ -732,9 +796,10 @@ layout = "default"
 stage = "planned"              # planned | boots | playable | complete; shown by n64rx games
 ```
 
-A pack holds addresses, names, sizes and hashes: facts about the ROM and
-names from a decomp. It holds no bytes of the ROM, no extracted asset, no
-screenshot. Symbol files from an **MIT decomp** (PW64) are committed; symbol
+Since §3.14 a pack is optional: the analyser makes everything above but the
+patches, so a pack holds only hints and fixes. A pack holds addresses,
+names, sizes and hashes: facts about the ROM and names from a decomp. It
+holds no bytes of the ROM, no extracted asset, no screenshot. Symbol files from an **MIT decomp** (PW64) are committed; symbol
 files derived from an unlicensed decomp are generated on the user's machine
 by `n64rx` from a pinned decomp checkout or taken from a public symbol repo
 the user fetches, per §8 Q7.

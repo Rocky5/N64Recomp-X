@@ -22,7 +22,7 @@ from . import ROOT, VERSION, N64rxError, doctor, engines, packs, pipeline, rom a
 
 
 def cmd_build(a):
-    pipeline.build(a.rom, out=a.out, engine=a.engine, video=a.video, fast=a.fast, gpr=a.gpr)
+    pipeline.build(a.rom, out=a.out, engine=a.engine, video=a.video, fast=a.fast, gpr=a.gpr, analyze=a.analyze)
     return 0
 
 
@@ -158,6 +158,7 @@ def parser():
     b.add_argument('--engine', choices=('auto', 'docker', 'native'), default='auto')
     b.add_argument('--video', choices=('auto', '480', '720'), default='auto', help='the default video mode')
     b.add_argument('--fast', action='store_true', help='-O1, no LTO: a quicker first look')
+    b.add_argument('--analyze', action='store_true', help='analyse the ROM even when a game pack knows it (PLAN.md 3.14)')
     b.add_argument('--gpr', choices=('32', '64'), help=argparse.SUPPRESS)
     b.set_defaults(fn=cmd_build)
     d = sub.add_parser('doctor', help='what is installed, what is missing')

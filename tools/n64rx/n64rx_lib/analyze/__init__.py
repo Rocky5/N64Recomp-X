@@ -1,0 +1,62 @@
+"""The ROM analyser (PLAN.md 3.14): any ROM in, what N64Recomp needs out,
+with no decomp. analyze(rom) finds the segments and their functions; the
+libultra rules (libultra.py) name the functions the runtime replaces; emit.py
+writes the symbol file. Everything is derived on the user's machine from
+their ROM; nothing of it is committed."""
+from dataclasses import dataclass, field
+
+from . import funcs as F
+from . import segments as S
+
+
+class AnalysisError(Exception):
+    pass
+
+
+@dataclass
+class Analysis:
+    entry: int
+    main: int
+    bss: int
+    img: F.Image
+    funcs: dict = field(default_factory=dict)      # segment name -> {start: Func}
+    notes: list = field(default_factory=list)
+
+    def all_funcs(self):
+        return {a: f for fs in self.funcs.values() for a, f in fs.items()}
+
+
+def analyze(rom, extra_segments=()):
+    """rom: the whole ROM in z64 order. extra_segments: Segments learnt from
+    earlier runs (the learning loop)."""
+    entry = int.from_bytes(rom[8:12], 'big')
+    e = F.parse_entry(rom, entry)
+    if not e:
+        raise AnalysisError(f'the entry code at {entry:08X} is not the SDK\'s (no BSS clear and jump to main)')
+    bss, bss_size, main = e
+    img = F.Image(rom)
+    boot = F.Segment('boot', 0x1000, entry, bss - entry)
+    if not 0 < boot.size <= 0x100000:
+        raise AnalysisError(f'the boot segment would be {boot.size:#x} bytes (BSS at {bss:08X})')
+    img.segments.append(boot)
+    a = Analysis(entry, main, bss, img)
+    a.funcs['boot'] = F.discover(img, boot, [entry, main])
+    a.notes.append(f'boot: ROM 0x1000 at {entry:08X}, {boot.size:#x} bytes (BSS {bss:08X} +{bss_size:#x}), '
+                   f'main {main:08X}, {len(a.funcs["boot"])} functions')
+    for seg in extra_segments:
+        _add(a, seg, [seg.vram])
+    while True:
+        new = S.find(img, list(a.funcs.values()), len(rom))
+        if not new:
+            break
+        for seg, inside, pc in new:
+            _add(a, seg, inside)
+            a.notes.append(f'{seg.name}: ROM {seg.rom:#x} at {seg.vram:08X}, {seg.size:#x} bytes (the DMA at '
+                           f'{pc:08X}; called at {", ".join(f"{t:08X}" for t in inside[:3])}), '
+                           f'{len(a.funcs[seg.name])} functions')
+    return a
+
+
+def _add(a, seg, roots):
+    a.img.segments.append(seg)
+    a.funcs[seg.name] = F.discover(a.img, seg, list(roots))

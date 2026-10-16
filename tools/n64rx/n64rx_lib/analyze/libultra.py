@@ -1,0 +1,493 @@
+"""libultra by behaviour (PLAN.md 3.14, step 3): the functions the runtime
+replaces, named from what they do, with no fingerprint of any ROM.
+
+Anchors first, things only libultra does: the COP0 interrupt mask
+(__osDisableInt / __osRestoreInt), Count and Compare, the cache loops, the
+TLB probe, and the hardware registers (VI, AI, PI, SI, SP, DP, MI). Then the
+names spread along the call graph and the struct offsets libultra's types
+fix (OSMesgQueue: validCount at 8, first at 12, msgCount at 16; OSThread:
+priority at 4, state at 16; OSIoMesg; the VI context behind __osViNext).
+Rules run until nothing changes; every name keeps the rule that gave it, for
+the report. A rule names a function only when exactly one candidate fits.
+
+Version notes: rules lean on what is stable from libultra 2.0D to 2.0L
+(field offsets, which registers a function writes, which helpers it calls);
+where versions differ (osPiStartDma through osEPiStartDma, __osInitialize_
+common behind osInitialize) the rule covers both shapes."""
+from .features import features
+
+AI, PI, SI, SP, VI, MI, DP = 0x04500000, 0x04600000, 0x04800000, 0x04040000, 0x04400000, 0x04300000, 0x04100000
+
+
+class Namer:
+    def __init__(self, img, funcs):
+        self.funcs = funcs
+        self.f = {a: features(img, fn) for a, fn in funcs.items()}
+        self.name = {}      # addr -> name
+        self.addr = {}      # name -> addr
+        self.why = {}       # addr -> rule
+        self.callers = {}
+        for a, ft in self.f.items():
+            for c in ft.calls:
+                self.callers.setdefault(c, set()).add(a)
+        self.changed = False
+
+    def set(self, a, name, why):
+        if a in self.name or name in self.addr or a not in self.f:
+            return
+        self.name[a], self.addr[name], self.why[a] = name, a, why
+        self.changed = True
+
+    def one(self, cands, name, why):
+        cands = [c for c in set(cands) if c not in self.name]
+        if len(cands) == 1 and name not in self.addr:
+            self.set(cands[0], name, why)
+
+    def has(self, name):
+        return name in self.addr
+
+    def a_(self, name):
+        return self.addr.get(name)
+
+    def called(self, a):
+        """names of what a calls"""
+        return [self.name.get(c, '?') for c in self.f[a].calls]
+
+    def calls_all(self, a, *names):
+        cs = set(self.called(a))
+        return all(n in cs for n in names)
+
+    def hw(self, a, base, off=None, rw=None):
+        for k, v in self.f[a].hw.items():
+            if (k & 0xFFFF0000) == base and (off is None or k == base + off) and (rw is None or rw in v):
+                return True
+        return False
+
+    def only_hw(self, a, *pairs):
+        return set(self.f[a].hw) == {b + o for b, o in pairs}
+
+    def arg_w(self, a, n, off):
+        return any(k[0] == n and k[1] == off and 'w' in v for k, v in self.f[a].arg.items())
+
+    def arg_r(self, a, n, off):
+        return any(k[0] == n and k[1] == off and 'r' in v for k, v in self.f[a].arg.items())
+
+
+def _anchors(N):
+    for a, ft in N.f.items():
+        c0, leaf, sz = ft.cop0, ft.leaf, ft.size
+        if leaf and c0 == {('mf', 12), ('mt', 12)} and not ft.hw:
+            if ft.returns_value and 0 not in ft.args_used:
+                N.one([a], '__osDisableInt', 'mfc0/mtc0 Status, clears IE, returns the old IE')
+            elif 0 in ft.args_used and not ft.returns_value:
+                N.one([a], '__osRestoreInt', 'mfc0/mtc0 Status, ors in its argument')
+        if c0 == {('mf', 12), ('mt', 12)} and N.hw(a, MI, 0xC):
+            N.one([a], 'osSetIntMask', 'Status and MI_INTR_MASK')
+        if leaf and c0 == {('mf', 9)} and sz <= 0x10:
+            N.one([a], 'osGetCount', 'mfc0 Count, returns it')
+        if leaf and c0 == {('mt', 9)} and sz <= 0x10:
+            N.one([a], 'osSetCount', 'mtc0 Count')
+        if leaf and c0 == {('mt', 11)} and sz <= 0x10:
+            N.one([a], '__osSetCompare', 'mtc0 Compare')
+        if leaf and c0 == {('mf', 12)} and sz <= 0x10 and not ft.hw:
+            N.one([a], '__osGetSR', 'mfc0 Status only')
+        if leaf and c0 == {('mt', 12)} and sz <= 0x14:
+            N.one([a], '__osSetSR', 'mtc0 Status only')
+        if leaf and c0 == {('mf', 13)} and sz <= 0x10:
+            N.one([a], '__osGetCause', 'mfc0 Cause only')
+        if leaf and not c0 and ft.fcr == {('cf', 31), ('ct', 31)} and sz <= 0x14:
+            N.one([a], '__osSetFpcCsr', 'cfc1/ctc1 $31, returns the old one')
+        if leaf and ft.cache:
+            if ft.cache == {1} and not ft.args_used:
+                N.one([a], 'osWritebackDCacheAll', 'index writeback-invalidate over the whole D-cache')
+            elif ft.cache == {1, 25}:
+                N.one([a], 'osWritebackDCache', 'hit writeback over a range (index over all when large)')
+            elif 17 in ft.cache or 21 in ft.cache:
+                N.one([a], 'osInvalDCache', 'hit invalidate D-cache over a range')
+            elif 16 in ft.cache:
+                N.one([a], 'osInvalICache', 'hit invalidate I-cache over a range')
+        if 'tlbp' in ft.special and 'tlbwi' not in ft.special:
+            N.one([a], '__osProbeTLB', 'tlbp')
+    _ll_helpers(N)
+
+
+# libultra's ll.c, compiled by IDO: (a0:a1, a2:a3) joined with dsll32, one
+# 64-bit operation, the result split back into v0:v1. __ll_rem and
+# __ull_rem compile to the same ddivu; the runtime gives both the same
+# meaning, so either name is right for either copy.
+LL = {('ddivu', 'lo'): ['__ull_div'], ('ddivu', 'hi'): ['__ull_rem', '__ll_rem'], ('ddiv', 'lo'): ['__ll_div'],
+      ('dmultu', 'lo'): ['__ll_mul'], ('dmult', 'lo'): ['__ll_mul']}
+
+
+def _ll_helpers(N):
+    for a, ft in sorted(N.f.items()):
+        if a in N.name or not ft.leaf or ft.size > 0x80 or ft.calls or ft.globals_:
+            continue
+        if len(ft.divs) == 1:
+            kind, part = next(iter(ft.divs))
+            if kind == 'ddiv' and part == 'hi' and ft.branches:
+                N.one([a], '__ll_mod', 'ddiv, the remainder made to follow the sign of the divisor')
+                continue
+            for name in LL.get((kind, part), []):
+                if not N.has(name):
+                    N.one([a], name, f'one {kind}, the {part} half returned as a register pair')
+                    break
+        elif not ft.divs and len(ft.shifts64) == 1 and ft.size <= 0x40:
+            name = {'dsllv': '__ll_lshift', 'dsrlv': '__ull_rshift', 'dsrav': '__ll_rshift'}[next(iter(ft.shifts64))]
+            N.one([a], name, f'one {next(iter(ft.shifts64))} on a register pair')
+        elif not ft.divs and ft.cvt_l and ft.size <= 0x80:
+            kind = next(iter(ft.cvt_l))
+            name = ('__ull_to_' if ft.branches else '__ll_to_') + ('d' if kind == 'd' else 'f')
+            N.one([a], name, f'cvt.{kind}.l of a register pair' + (', with the unsigned correction' if ft.branches else ''))
+
+
+def _hardware(N):
+    for a, ft in N.f.items():
+        sz = ft.size
+        if ft.leaf and N.only_hw(a, (AI, 4)) and sz <= 0x14:
+            N.one([a], 'osAiGetLength', 'reads AI_LEN')
+        if ft.leaf and N.only_hw(a, (AI, 0xC)) and sz <= 0x10:
+            N.one([a], 'osAiGetStatus', 'reads AI_STATUS')
+        if N.hw(a, AI, 0x10, 'w') and N.hw(a, AI, 0x14, 'w'):
+            N.one([a], 'osAiSetFrequency', 'writes AI_DACRATE and AI_BITRATE')
+        if N.hw(a, AI, 0, 'w') and N.hw(a, AI, 4, 'w'):
+            N.one([a], 'osAiSetNextBuffer', 'writes AI_DRAM_ADDR and AI_LEN')
+        if N.hw(a, DP, 0, 'w') and N.hw(a, DP, 4, 'w'):
+            N.one([a], 'osDpSetNextBuffer', 'writes DPC_START and DPC_END')
+        if N.hw(a, SP, 0x10) and N.hw(a, 0x04080000, 0, 'w'):
+            N.one([a], '__osSpSetPc', 'writes SP_PC')
+        if ft.leaf and N.only_hw(a, (SP, 0x10)) and 'w' in ft.hw.get(SP + 0x10, '') and sz <= 0x14:
+            N.one([a], '__osSpSetStatus', 'writes SP_STATUS only')
+        if ft.leaf and N.only_hw(a, (SP, 0x10)) and ft.hw.get(SP + 0x10) == 'r':
+            N.one([a] if sz <= 0x10 else [], '__osSpGetStatus', 'reads SP_STATUS only')
+        if N.hw(a, SP, 0, 'w') and N.hw(a, SP, 4, 'w') and N.hw(a, SP, 8, 'w'):
+            N.one([a], '__osSpRawStartDma', 'writes SP_MEM_ADDR, SP_DRAM_ADDR, SP_RD/WR_LEN')
+        if N.hw(a, PI, 0, 'w') and N.hw(a, PI, 4, 'w') and (N.hw(a, PI, 8, 'w') or N.hw(a, PI, 0xC, 'w')):
+            # the first argument is a direction in osPiRawStartDma, a handle in osEPiRawStartDma
+            if any(k[0] == 0 for k in ft.arg):
+                N.one([a], 'osEPiRawStartDma', 'PI DMA registers, the handle\'s fields read')
+            else:
+                N.one([a], 'osPiRawStartDma', 'PI DMA registers')
+        if N.hw(a, SI, 0, 'w') and N.hw(a, SI, 0x10, 'w') or N.hw(a, SI, 0, 'w') and N.hw(a, SI, 4, 'w'):
+            N.one([a], '__osSiRawStartDma', 'SI DMA registers')
+        if ft.leaf and N.only_hw(a, (SI, 0x18)):
+            N.one([a], '__osSiDeviceBusy', 'reads SI_STATUS')
+        if N.hw(a, VI) and sum(1 for k in ft.hw if k & 0xFFFF0000 == VI and 'w' in ft.hw[k]) >= 8:
+            N.one([a], '__osViSwapContext', 'writes most VI registers')
+        if ft.leaf and N.only_hw(a, (PI, 0x10)) and N.arg_w(a, 1, 0):
+            N.one([a], 'osPiRawReadIo', 'polls PI_STATUS, stores the word to *arg1')
+
+
+def _structure(N):
+    f = N.f
+    di, ri = N.a_('__osDisableInt'), N.a_('__osRestoreInt')
+    for a, ft in f.items():
+        if a in N.name:
+            continue
+        # OSMesgQueue init: six stores at arg0 +0..+20, nothing else
+        if ft.leaf and ft.args_used >= {0, 1, 2} and all(N.arg_w(a, 0, o) for o in (0, 4, 8, 12, 16, 20)) and \
+                not ft.hw and not ft.cop0 and ft.size <= 0x40:
+            N.one([a], 'osCreateMesgQueue', 'stores the six fields of an OSMesgQueue at arg0')
+        # IDO's long helpers that never divide: shifts and multiplies on register pairs (64-bit, leaf, tiny)
+    if di and ri:
+        mesg = [a for a, ft in f.items() if di in ft.calls and ri in ft.calls and 'div' in ft.special
+                and N.arg_r(a, 0, 8) and N.arg_r(a, 0, 16)]
+        for a in mesg:
+            if N.arg_w(a, 1, 0) or any(k[0] == 1 and 'w' in v for k, v in f[a].arg.items()):
+                N.one([a], 'osRecvMesg', 'queue at arg0: validCount, msgCount, first; stores the message at *arg1')
+            elif N.arg_w(a, 0, 12):
+                N.one([a], 'osJamMesg', 'queue at arg0: moves `first` back and puts the message there')
+            else:
+                N.one([a], 'osSendMesg', 'queue at arg0: validCount < msgCount, appends')
+        for a, ft in f.items():
+            if a in N.name or di not in ft.calls or ri not in ft.calls:
+                continue
+            # OSThread: arg0 + 16 is the state (u16), + 20 the id, a big register context
+            if N.arg_w(a, 0, 16) and N.arg_w(a, 0, 20) and any(k[0] == 0 and k[1] >= 0x100 for k in ft.arg):
+                N.one([a], 'osCreateThread', 'fills an OSThread at arg0: state, id, the context')
+    # the thread helpers the queue functions share
+    for nm in ('osSendMesg', 'osRecvMesg', 'osJamMesg'):
+        a = N.a_(nm)
+        if not a:
+            continue
+        for c in f[a].calls:
+            fc = f.get(c)
+            if fc and c not in N.name and ('64' in fc.special or fc.fcr) and ('mf', 12) in fc.cop0:
+                N.one([c], '__osEnqueueAndYield', 'saves the running thread\'s context (Status, sd, FPU csr)')
+    eay = N.a_('__osEnqueueAndYield')
+    st = N.a_('osStartThread')
+    for a, ft in f.items():
+        if a in N.name or not di or di not in ft.calls:
+            continue
+        if 'eret' in ft.special:
+            continue
+        if ft.args_used == {0} and N.arg_r(a, 0, 8) and N.arg_w(a, 0, 16) and eay and eay in ft.calls and \
+                sum(1 for c in ft.calls if c not in (di, ri, eay)) >= 2:
+            N.one([a], 'osStartThread', 'reads the thread\'s queue (+8), sets its state (+16), dispatches')
+    st = N.a_('osStartThread')
+    # osDestroyThread(t): dequeues it and, when it is the running one, dispatches the next (the eret)
+    disp = [a for a, ft in f.items() if 'eret' in ft.special and a not in N.name]
+    if di and disp:
+        cands = [a for a, ft in f.items() if a not in N.name and di in ft.calls and ft.args_used == {0} and
+                 any(d in ft.calls for d in disp) and not (eay and eay in ft.calls)]
+        N.one(cands, 'osDestroyThread', 'dequeues the thread and dispatches the next one')
+    # osStopThread(t): reads the state (+16), dequeues, yields when it stops itself
+    if di and eay:
+        cands = [a for a, ft in f.items() if a not in N.name and di in ft.calls and eay in ft.calls and
+                 ft.args_used == {0} and N.arg_r(a, 0, 16) and N.arg_w(a, 0, 16) and a != st and
+                 not N.arg_r(a, 0, 8)]
+        N.one(cands, 'osStopThread', 'reads the thread state (+16), stops it, yields when it is the caller')
+    # osSetThreadPri: dequeue + enqueue + yield, two args, writes priority via a pointer
+    if eay:
+        cands = [a for a, ft in f.items() if a not in N.name and di in ft.calls and eay in ft.calls and
+                 ft.args_used >= {0, 1} and not ft.special and len(set(ft.calls)) >= 4 and a != st and
+                 not N.arg_r(a, 0, 8) and not N.arg_r(a, 0, 16)]
+        N.one(cands, 'osSetThreadPri', 'dequeues and re-enqueues the thread with a new priority, then yields')
+    # osGetThreadPri(t): a leaf that returns t->priority (or the running thread's)
+    cands = [a for a, ft in f.items() if a not in N.name and ft.leaf and ft.size <= 0x20 and ft.args_used == {0}
+             and ft.returns_value and (N.arg_r(a, 0, 4) or len(ft.globals_) == 1)]
+    users = set()
+    for m in ('osCreatePiManager', 'osCreateViManager'):
+        pass
+    if cands:
+        # among leaf getters, the one osSetThreadPri's callers pair it with
+        stp = N.a_('osSetThreadPri')
+        if stp:
+            pairs = [c for c in cands if any(stp in f[x].calls and c in f[x].calls for x in N.callers.get(c, ()))]
+            N.one(pairs, 'osGetThreadPri', 'returns arg0->priority; called next to osSetThreadPri')
+    # managers: create a queue, a thread, start it, set an event
+    ct = N.a_('osCreateThread')
+    cq = N.a_('osCreateMesgQueue')
+    if ct and st:
+        mgrs = [a for a, ft in f.items() if a not in N.name and ct in ft.calls and st in ft.calls]
+        sw = N.a_('__osViSwapContext')
+        for a in mgrs:
+            callees = set(f[a].calls)
+            vi = any(sw and sw in f[c].calls for c in callees if c in f)
+            if vi:
+                N.one([a], 'osCreateViManager', 'starts the VI thread and calls the VI init (writes the VI registers)')
+            elif cq and list(f[a].calls).count(cq) >= 2 or any(f.get(c) and cq in f[c].calls for c in callees if c != cq):
+                N.one([a] if len(f[a].args_used) >= 3 else [], 'osCreatePiManager',
+                      'starts the PI device manager thread with its queues')
+        for a in [m for m in mgrs if m not in N.name]:
+            pass
+    # osSetEventMesg(event, mq, msg): disable, two stores into a table indexed by arg0, restore
+    if di and ri:
+        cands = [a for a, ft in f.items() if a not in N.name and set(ft.calls) == {di, ri} and
+                 ft.args_used >= {0, 1, 2} and ft.size <= 0x90 and not ft.gptr]
+        vim = N.a_('osCreateViManager')
+        if vim:
+            cands = [c for c in cands if c in f[vim].calls]
+        N.one(cands, 'osSetEventMesg', 'stores (queue, message) in the event table at arg0, interrupts off')
+
+
+def _vi(N):
+    """The VI calls all go through the context __osViNext points at (struct
+    __OSViContext: state +0 u16, retraceCount +2, framep +4, modep +8,
+    control +12, msgq +16, msg +20, x.factor +24, y.factor +36)."""
+    f = N.f
+    sw = N.a_('__osViSwapContext')
+    if not sw:
+        return
+    ctx = [g for g, v in f[sw].globals_.items() if 'r' in v and 'w' in v]
+    di, ri = N.a_('__osDisableInt'), N.a_('__osRestoreInt')
+    if len(ctx) < 2 or not di:
+        return
+    # __osViCurr and __osViNext: next is the one osViSwapBuffer & co write through
+    users = [a for a, ft in f.items() if a not in N.name and di in ft.calls and ri in ft.calls and
+             any(g in ft.globals_ for g in ctx)]
+    for a in users:
+        ft = f[a]
+        stores = {(g, o) for (g, o, s), v in ft.gptr.items() if 'w' in v and g in ctx}
+        loads_g = {g for g in ctx if g in ft.globals_}
+        src = ft.gptr_src
+        offs = {o for _g, o in stores}
+        if not ft.args_used and ft.returns_value and not stores:
+            # the current or the next framebuffer: which global decides, settled below
+            continue
+        if 8 in offs and 12 in offs:
+            N.one([a], 'osViSetMode', 'stores arg0 as the next context\'s mode (+8) and its control word (+12)')
+        elif 16 in offs and 20 in offs:
+            N.one([a], 'osViSetEvent', 'stores (queue, message, retrace count) in the next context')
+        elif 4 in offs and ft.args_used == {0}:
+            N.one([a], 'osViSwapBuffer', 'stores arg0 as the next context\'s framebuffer (+4)')
+        elif 24 in offs and ft.float_args:
+            N.one([a], 'osViSetXScale', 'stores a float as the x scale (+24)')
+        elif 36 in offs and ft.float_args:
+            N.one([a], 'osViSetYScale', 'stores a float as the y scale (+36)')
+        elif 12 in offs and ft.args_used == {0} and ft.size > 0x100:
+            N.one([a], 'osViSetSpecialFeatures', 'rewrites the next context\'s control word (+12) bit by bit')
+        elif offs == {0} and ft.args_used == {0}:
+            N.one([a], 'osViBlack', 'sets or clears the blank bit in the next context\'s state (+0)')
+    # the framebuffer getters: return context->framep; the one reading the global osViSwapBuffer writes through is "next"
+    swb = N.a_('osViSwapBuffer')
+    nxt = None
+    if swb:
+        g = [g for (g, o, s), v in f[swb].gptr.items() if o == 4 and 'w' in v]
+        nxt = g[0] if g else None
+    getters = [a for a, ft in f.items() if a not in N.name and di in ft.calls and ri in ft.calls and
+               not ft.args_used and ft.returns_value and len([g for g in ctx if g in ft.globals_]) == 1 and
+               any(o == 4 for (_g, o, _s) in ft.gptr)]
+    for a in getters:
+        g = [g for g in ctx if g in f[a].globals_][0]
+        if nxt is not None:
+            N.one([a], 'osViGetNextFramebuffer' if g == nxt else 'osViGetCurrentFramebuffer',
+                  'returns the ' + ('next' if g == nxt else 'current') + ' context\'s framebuffer (+4)')
+
+
+def _io(N):
+    f = N.f
+    rs, ss = N.a_('osRecvMesg'), N.a_('osSendMesg')
+    jm = N.a_('osJamMesg')
+    # osPiStartDma / osEPiStartDma: fill an OSIoMesg (u16 type +0, u8 pri +2, retQueue +4, dram +8, dev +12,
+    # size +16) and send it (osJamMesg for high priority)
+    if ss and jm:
+        for a, ft in f.items():
+            if a in N.name or ss not in ft.calls or jm not in ft.calls:
+                continue
+            io = 1 if any(k[0] == 1 and k[1] in (8, 12, 16) for k in ft.arg) else 0
+            if all(N.arg_w(a, io, o) for o in (4, 8, 12, 16)):
+                N.one([a], 'osEPiStartDma' if io == 1 else 'osPiStartDma',
+                      'fills the OSIoMesg at arg%d and sends or jams it to the PI manager' % io)
+    # the SI and PI access queues: get = recv on a global queue, rel = send to it
+    for kind in ('Si', 'Pi'):
+        pass
+    sid = N.a_('__osSiRawStartDma')
+    if sid and rs and ss:
+        users = [a for a, ft in f.items() if sid in ft.calls]
+        # every SI transaction is wrapped in get / release access
+        get = {}
+        rel = {}
+        for u in users:
+            for c in f[u].calls:
+                fc = f.get(c)
+                if not fc or c in N.name:
+                    continue
+                if rs in fc.calls and len(fc.calls) <= 3 and not fc.args_used and fc.size <= 0x60:
+                    get[c] = get.get(c, 0) + 1
+                if fc.calls == [ss] and not fc.args_used and fc.size <= 0x40:
+                    rel[c] = rel.get(c, 0) + 1
+        if get:
+            N.one([max(get, key=get.get)], '__osSiGetAccess', 'receives from the SI access queue around SI DMAs')
+        if rel:
+            N.one([max(rel, key=rel.get)], '__osSiRelAccess', 'sends to the SI access queue after SI DMAs')
+    sga, sra = N.a_('__osSiGetAccess'), N.a_('__osSiRelAccess')
+    st_ = N.a_('osSetTimer')
+    ctq = N.a_('osCreateMesgQueue')
+    # osSetTimer(t, countdown, interval, mq, msg): fills an OSTimer at arg0 (+0..+28) and arms it
+    for a, ft in f.items():
+        if a in N.name:
+            continue
+        if sum(1 for o in (0, 4, 8, 12, 16, 20, 24, 28) if N.arg_w(a, 0, o)) >= 6 and \
+                any(f.get(c) and N.a_('__osSetCompare') in f[c].calls for c in ft.calls
+                    for _ in [0] if f.get(c)) or (sum(1 for o in (0, 4, 8, 12, 16, 20, 24, 28) if N.arg_w(a, 0, o)) >= 6
+                                                  and any(f.get(c) and any(f.get(cc) and N.a_('__osSetCompare') in
+                                                                           f[cc].calls for cc in f[c].calls)
+                                                          for c in ft.calls)):
+            N.one([a], 'osSetTimer', 'fills an OSTimer at arg0 and arms the Compare interrupt')
+    st_ = N.a_('osSetTimer')
+    gc, sc = N.a_('osGetCount'), N.a_('__osSetCompare')
+    di, ri = N.a_('__osDisableInt'), N.a_('__osRestoreInt')
+    if gc and di:
+        cands = [a for a, ft in f.items() if a not in N.name and set(ft.calls) == {di, gc, ri} and
+                 not ft.args_used and ft.returns_value and (not sc or sc not in ft.calls)]
+        N.one(cands, 'osGetTime', 'Count with interrupts off, added to the time since the last read (64-bit)')
+    if sid and sga and sra:
+        si_users = [a for a, ft in f.items() if a not in N.name and sga in ft.calls and sra in ft.calls]
+        for a in si_users:
+            ft = f[a]
+            ncalls = len(ft.calls)
+            if sid in ft.calls and rs in ft.calls and ft.args_used == {0}:
+                # osContStartReadData / osContStartQuery: pack, two SI DMAs, wait
+                packs = [c for c in ft.calls if c not in (sga, sra, sid, rs)]
+                N.one([a] if packs else [], 'osContStartReadData' if not _packs_request(N, packs) else
+                      'osContStartQuery', 'packs a controller command, two SI DMAs between the access calls')
+            elif sid not in ft.calls and ncalls <= 4 and ft.args_used == {0}:
+                N.one([a], 'osEepromProbe', 'asks the EEPROM its status between the SI access calls')
+        for a in [x for x in si_users if x not in N.name]:
+            ft = f[a]
+            if sid in ft.calls and ft.args_used >= {0, 1, 2}:
+                if any(k[0] == 2 and 'w' in v for k, v in ft.arg.items()):
+                    N.one([a], 'osEepromRead', 'an EEPROM block read into *arg2')
+                else:
+                    N.one([a], 'osEepromWrite', 'an EEPROM block written from arg2')
+    er, ew = N.a_('osEepromRead'), N.a_('osEepromWrite')
+    for a, ft in f.items():
+        if a in N.name:
+            continue
+        if er and er in ft.calls and ft.args_used >= {0, 1, 2, 3}:
+            N.one([a], 'osEepromLongRead', 'osEepromRead in a loop')
+        if ew and ew in ft.calls and ft.args_used >= {0, 1, 2, 3}:
+            N.one([a], 'osEepromLongWrite', 'osEepromWrite in a loop with a delay')
+    # osContInit: SI DMAs and a timer wait, creating its queue
+    if sid and st_:
+        cands = [a for a, ft in f.items() if a not in N.name and sid in ft.calls and st_ in ft.calls and
+                 ctq in ft.calls]
+        N.one(cands, 'osContInit', 'waits with a timer, then SI DMAs to find the controllers')
+    # osContGetReadData(pads): a leaf copying the SI buffer into 6-byte OSContPad records at arg0
+    srd = N.a_('osContStartReadData')
+    if srd:
+        bufs = {g for g in f[srd].globals_}
+        cands = [a for a, ft in f.items() if a not in N.name and ft.leaf and ft.args_used == {0} and
+                 N.arg_w(a, 0, 0) and any(g in bufs or abs(g - b) < 0x100 for g in ft.globals_ for b in bufs)]
+        N.one(cands, 'osContGetReadData', 'copies the SI buffer into OSContPad records at arg0')
+    # osPiReadIo: access, raw read, release
+    rri = N.a_('osPiRawReadIo')
+    if rri:
+        cands = [a for a, ft in f.items() if a not in N.name and rri in ft.calls and len(ft.calls) == 3 and
+                 ft.args_used >= {0, 1}]
+        N.one(cands, 'osPiReadIo', 'osPiRawReadIo between the PI access calls')
+
+
+def _packs_request(N, packs):
+    """the pack osContInit uses is the request (query) pack"""
+    ci = N.a_('osContInit')
+    return bool(ci and any(p in N.f[ci].calls for p in packs))
+
+
+def _sp_init(N):
+    f = N.f
+    spc, sss, rsd = N.a_('__osSpSetPc'), N.a_('__osSpSetStatus'), N.a_('__osSpRawStartDma')
+    wb = N.a_('osWritebackDCache')
+    for a, ft in f.items():
+        if a in N.name:
+            continue
+        if spc and rsd and spc in ft.calls and rsd in ft.calls and ft.args_used == {0}:
+            N.one([a], 'osSpTaskLoad', 'loads the task: SP PC, the boot microcode and the task by SP DMA')
+        if sss and set(ft.calls) == {sss} and not ft.args_used and ft.size <= 0x30:
+            N.one([a], 'osSpTaskYield', 'sets SP_SET_YIELD')
+    gs = N.a_('__osSpGetStatus')
+    for a, ft in f.items():
+        if a in N.name:
+            continue
+        if gs and gs in ft.calls and len(set(ft.calls)) == 1 and ft.returns_value:
+            N.one([a], 'osSpTaskYielded', 'reads SP_STATUS: did the task yield')
+        if sss and sss in ft.calls and not (rsd and rsd in ft.calls) and \
+                not (spc and spc in ft.calls) and len(set(ft.calls)) == 2 and ft.size <= 0x60:
+            N.one([a], 'osSpTaskStartGo', 'waits for the SP, then clears halt')
+    # osInitialize: installs the exception vectors at 0x80000000/0x80000080/0x80000180
+    for a, ft in f.items():
+        if all(v in ft.globals_ for v in (0x80000000, 0x80000080, 0x80000180)):
+            N.one([a], '__osInitialize_common' if any(N.name.get(c) == '__osInitialize_isv' for c in ft.calls) else
+                  'osInitialize', 'writes the exception vectors at 0x80000000, 0x80000080, 0x80000180')
+    oi = N.a_('osInitialize') or N.a_('__osInitialize_common')
+    # osVirtualToPhysical: K0/K1 masks, the TLB probe otherwise
+    pt = N.a_('__osProbeTLB')
+    if pt:
+        cands = [a for a, ft in f.items() if a not in N.name and set(ft.calls) == {pt} and ft.args_used == {0}]
+        N.one(cands, 'osVirtualToPhysical', 'masks KSEG0/KSEG1 addresses, asks the TLB for the rest')
+
+
+RULES = (_anchors, _hardware, _structure, _vi, _io, _sp_init)
+
+
+def identify(img, funcs):
+    """{addr: (name, rule)} for the libultra functions found"""
+    N = Namer(img, funcs)
+    for _ in range(12):
+        N.changed = False
+        for r in RULES:
+            r(N)
+        if not N.changed:
+            break
+    return {a: (n, N.why[a]) for a, n in N.name.items()}, N

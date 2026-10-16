@@ -70,10 +70,13 @@ ULTRA(__ll_div) {
     (void)rdram;
     RET64(b ? (uint64_t)(a / b) : 0);
 }
+/* libultra's __ll_rem(unsigned long long, long long): C's conversions make
+ * it an unsigned remainder (its code is a ddivu, the same as __ull_rem);
+ * the signed one with the sign fix-up is __ll_mod */
 ULTRA(__ll_rem) {
-    int64_t a = (int64_t)A64, b = (int64_t)B64;
+    uint64_t a = A64, b = B64;
     (void)rdram;
-    RET64(b ? (uint64_t)(a % b) : 0);
+    RET64(b ? a % b : 0);
 }
 ULTRA(__ll_mod) {
     int64_t a = (int64_t)A64, b = (int64_t)B64, r;

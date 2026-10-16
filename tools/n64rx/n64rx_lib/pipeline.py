@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 
-from . import ROOT, VERSION, N64rxError, engines, packs, rom as romlib
+from . import ROOT, VERSION, N64rxError, engines, packs, romonly, rom as romlib
 
 GEN_VERSION = 3   # bump when what n64rx writes into gen/ changes (the cache key)
 VIDEO = {'auto': 0, '480': 2, '720': 3}
@@ -81,6 +81,10 @@ def decide_gpr(pack, rom, override, prog):
         import tomllib
         import recomp_scan64
         syms = tomllib.loads(_syms_path(pack).read_text(encoding='utf-8'))
+        ignored = set(tomllib.loads((pack.dir / 'recomp.toml').read_text(encoding='utf-8'))
+                      .get('patches', {}).get('ignored', []))
+        for sec in syms.get('section', []):   # what is not recompiled does not count
+            sec['functions'] = [f for f in sec.get('functions', []) if f['name'] not in ignored]
         r = recomp_scan64.scan(rom.data, syms)
     except ImportError:
         prog.note('rabbitizer is not installed (pip install rabbitizer): 64-bit registers, the safe default')
@@ -98,6 +102,35 @@ def _syms_path(pack):
     import tomllib
     cfg = tomllib.loads((pack.dir / 'recomp.toml').read_text(encoding='utf-8'))
     return pack.dir / cfg['input']['symbols_file_path']
+
+
+REFUSED = re.compile(r'Error recompiling (\S+)')
+
+
+def _refused(log, start):
+    with open(log, 'rb') as f:
+        f.seek(start)
+        return sorted(set(REFUSED.findall(f.read().decode('utf-8', 'replace'))))
+
+
+def _ignore_dead(pack, ainfo, refused, prog):
+    """functions the recompiler refused, left out when only replaced
+    libultra reaches them (PLAN.md 3.14); False when one is live"""
+    by_name = {n: x for x, n in ainfo['names'].items()}
+    live = [n for n in refused if by_name.get(n) in ainfo['live']]
+    if live:
+        prog.note(f'the recompiler refused game code: {", ".join(live)}')
+        return False
+    cfgp = pack.dir / 'recomp.toml'
+    text = cfgp.read_text(encoding='utf-8')
+    m = re.search(r'^ignored = \[(.*)\]$', text, re.M)
+    have = set(re.findall(r'"([^"]+)"', m.group(1))) if m else set()
+    have |= set(refused)
+    text = re.sub(r'^ignored = \[.*\]$', lambda _m: 'ignored = [' + ', '.join(f'"{n}"' for n in sorted(have)) + ']',
+                  text, flags=re.M)
+    cfgp.write_text(text, encoding='utf-8', newline='\n')
+    prog.note(f'left out (dead, refused by the recompiler): {", ".join(refused)}')
+    return True
 
 
 def write_recomp_config(pack, rom_file, gen, cfg_dir):
@@ -191,18 +224,35 @@ This folder contains your game's code: keep it to yourself.
 '''
 
 
-def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None, echo=None, eng=None):
+def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None, echo=None, eng=None,
+          analyze=False):
     echo = echo or (lambda s: print(s, flush=True))
     prog = Progress(echo, 5)
     prog.step('Reading the ROM')
     rom = romlib.read(rom_path)
-    pack = packs.match(rom, packs.all_packs())
-    prog.note(f'{pack.title}: {rom.describe()}, {rom.order} byte order, SHA-1 known to the pack')
+    try:
+        pack = packs.match(rom, packs.all_packs())
+    except N64rxError:
+        pack = None   # no pack: the ROM alone (PLAN.md 3.14)
     eng = eng or engines.pick(engine)
     out_root = pathlib.Path(out) if out else pathlib.Path.cwd() / 'out'
     if eng.name == 'docker':
         return _build_in_docker(eng, rom, out_root, video, fast, gpr, prog)
-    bdir = ROOT / 'build-xbox' / pack.id
+    ainfo = None
+    if analyze or pack is None:
+        base = pack
+        bdir = ROOT / 'build-xbox' / ((base.id + '-rom') if base else re.sub(r'[^a-z0-9]', '', rom.code.lower()))
+        bdir.mkdir(parents=True, exist_ok=True)
+        t0 = time.time()
+        pack, ainfo = romonly.make(rom, bdir, base)
+        a = ainfo['analysis']
+        prog.note(f'{pack.title}: {rom.describe()}, {rom.order} byte order, '
+                  + ('analysed from the ROM over its pack' if base else 'no pack: analysed from the ROM alone'))
+        prog.note(f'{len(a.all_funcs())} functions in {len(a.img.segments)} segments, {len(ainfo["ids"])} libultra '
+                  f'functions named, in {time.time() - t0:.1f} s ({bdir / "analysis.txt"})')
+    else:
+        prog.note(f'{pack.title}: {rom.describe()}, {rom.order} byte order, SHA-1 known to the pack')
+        bdir = ROOT / 'build-xbox' / pack.id
     bdir.mkdir(parents=True, exist_ok=True)
     log = bdir / 'n64rx.log'
     log.write_text(f'n64rx {VERSION} build {rom.path} ({engines.host_summary()}, engine {eng.name})\n', encoding='utf-8')
@@ -220,9 +270,16 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     else:
         if gen.exists():
             shutil.rmtree(gen)
-        cfg = write_recomp_config(pack, rom_file, gen, bdir / 'cfg')
-        if eng.recompile(cfg, log) or not (gen / 'funcs.h').exists():
-            raise N64rxError('N64Recomp failed on this ROM.', f'the log says why:\n{tail(log)}\nfull log: {log}')
+        for _attempt in range(40):
+            cfg = write_recomp_config(pack, rom_file, gen, bdir / 'cfg')
+            start = log.stat().st_size
+            if not eng.recompile(cfg, log) and (gen / 'funcs.h').exists():
+                break
+            refused = _refused(log, start)
+            if not ainfo or not refused or not _ignore_dead(pack, ainfo, refused, prog):
+                raise N64rxError('N64Recomp failed on this ROM.', f'the log says why:\n{tail(log)}\nfull log: {log}')
+            if gen.exists():
+                shutil.rmtree(gen)
         extern = write_extern_h(gen)
         prog.note(f'{len(extern)} functions the runtime or the pack provides')
         bits = decide_gpr(pack, rom, gpr, prog)
