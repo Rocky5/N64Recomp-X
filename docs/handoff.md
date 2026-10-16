@@ -4,39 +4,46 @@ One entry per milestone: what was verified, how, and where ("xemu" results
 are emulator-only; timing, audio, memory and HDD latency are judged on the
 console).
 
-## Where things stand (2026-10-16, end of the parallel round)
+## Where things stand (2026-10-16, evening)
 
 The newest state first; the entries below are the record, oldest first.
 
 | game (US) | how built | xemu | console (red) |
 |---|---|---|---|
 | Pilotwings 64 | its pack, or the ROM alone (`--analyze`): the same | title to results, saves, sound, 720p + hor+, the BACK menu | `vnrx1`: plays, sound, EEPROM saves, the BACK menu, the combos; 53-59 fps |
-| Mario Kart 64 | the ROM alone | title, menus, races (F3DEX), sound (nead), Controller Pak, 720p 16:9 | `vmk2`/`vmk4`: races at 29.9 fps (display lists 2-3 ms), sound, the ROM inside the XBE, the BACK menu and its Paks page, EEPROM and pak files; the map screen's framebuffer effect is wrong |
+| Mario Kart 64 | the ROM alone | title, menus, races (F3DEX), sound (nead), Controller Pak, 720p 16:9 | `vmk2`/`vmk4`: races at 29.9 fps (display lists 2-3 ms), sound, the ROM inside the XBE, the BACK menu and its Paks page, EEPROM and pak files; the map screen's TV (a framebuffer read) wrong |
 | Super Mario 64 | the ROM alone + three `--learn` rounds | head screen, Lakitu intro, castle grounds (TLB aliasing); head shading off | not tried |
-| Dr. Mario 64 | the ROM alone | links, boots, faults on PI_STATUS through KSEG1 | - |
-| Pokémon Snap | the ROM alone | builds (overlays sharing a vram mapped by the last DMA); runs its intro (F3DEX2, FlashRAM), loads the main-menu overlay, then reads NULL+0xe under `omCreateProcess` | - |
-| the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | 143 build an XBE, 17 present frames in 45 s | - |
+| Pokémon Snap | the ROM alone (overlays sharing a vram) | its intro (the Jack and Beans logo scene, F3DEX2), past the main menu's load since the thread-stack fix | `vsnap1` (before the fix): the crash xemu had |
+| Ridge Racer 64 | the ROM alone + one `--learn` round | the first F3DEX2 game drawn: its save screen at ~42 fps; A not taken yet | - |
+| Forsaken 64 | the ROM alone | builds and boots (aspMain), stops later | - |
+| Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (32 -> 53 MB) | builds; the 53 MB ROM through the page cache inside the budget; stopped at its RAM-size probe (KSEG1, since modelled) | - |
+| Dr. Mario 64 | the ROM alone | links, boots; its gzip main segment is not found | - |
+| the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s2: 143 build, 17 present frames; s4 (all of today's work): see `docs/analyzer.md` | - |
 
-Built and merged in the round (each with host tests and a kill switch; the
-entries below say how each was verified): the ROM inside the XBE, the ROM
-page cache (ROMs over 16 MB), the safety net and the learning loop
-(`--learn`), the graphics microcode registry with F3DEX/F3DEX2, the audio
-microcode registry with nead and `n_aspMain`, every save type (Controller
-Pak, SRAM, FlashRAM), the BACK menu's Paks page, the TLB, the V track's
-`decomp_check.py`/`test_analyze.py`, the library sweep. Merged since: `snap` (overlays sharing a vram, below). Agents still running
-when this was written: `fbfx`
-(framebuffer effects), `mmio` (the RCP registers and RDRAM through KSEG1).
+Built and merged on 2026-10-16 (each with host tests and a kill switch; the
+entries below say how each was verified): the ROM inside the XBE; the ROM
+page cache (ROMs over 16 MB); Yaz0 games inflated at build time; the safety
+net and the learning loop (`--learn`); the TLB (page-table aliases);
+overlays sharing a vram (the function table follows the PI DMA); the RCP
+register model and KSEG1 RDRAM (`mmio.c`); the graphics microcode registry
+with F3DEX/F3DEX2; framebuffer readback (off by default); the audio
+microcode registry with nead and `n_aspMain`; every save type (Controller
+Pak, SRAM, FlashRAM) and the BACK menu's Paks page; the V track's
+`decomp_check.py`/`test_analyze.py` (6 decomps, 0 wrong names); the library
+sweep; and the analyser's entry shapes (74 -> 13 games whose entry code is
+not read), cross-function branches, the later `osSetEventMesg`. Two runtime
+fixes that matter to every game: threads start 16 bytes below their stack
+top (libultra's `osCreateThread`), and the BACK menu drops the texture
+cache when its card finds no room. Diagnosis tools: `-DXRC_WATCH`
+(a hardware write watch), `-DXRC_THREAD_TRACE`, the stall report.
 
-**Open, in the order they block the most games** (counts from the sweep):
-the RCP's registers reached through KSEG1 by libultra the analyser did not
-name (75 games), entry code that is not the SDK's (71), TLB-mapped
-addresses (23, before the TLB merge), no graphics task (14), boot segments
-below the entrypoint (14), branches into another function's body (12),
-KSEG1 RDRAM (9); then overlays sharing a vram (Snap, Paper Mario), Yaz0 and
-gzip-compressed code (the Zeldas, Dr. Mario 64), S2DEX's own commands,
-framebuffer effects, MusyX and other audio microcodes, M2's leftovers (720p
-on the console, the 30-minute soak, Pilotwings' pack README), M3's
-measurement gate.
+**Open, roughly in the order they block the most games**: what the s4
+sweep's table in `docs/analyzer.md` ranks; the 13 entries that are their
+own loaders (Acclaim's Turok 1-3, Armorines, All-Star Baseball; Army Men;
+two Star Wars), gzip/Rare compressed code, S2DEX's own commands,
+framebuffer effects by default (MK64's TV, Snap's photos), MusyX and the
+other audio microcodes, M2's leftovers (720p on the console, the 30-minute
+soak, Pilotwings' pack README), M3's measurement gate.
 
 ## M0: skeleton, toolchain, the tool's shape (2026-10-16, branch `dev`)
 
@@ -732,3 +739,25 @@ switch; 4 of 18); null-ish KUSEG reads (4); a recompiled store to a
 register still has no effect (only the interpreter's do). The Expansion
 Pak probe (`0xA0400000`: Zelda, Hybrid Heaven) now reads 0 instead of
 faulting, so those games see 4 MB: their packs need `rdram_mb = 8`.
+
+### The orchestrator's solo work after the agents (2026-10-16, evening)
+
+Done on `dev`, each with a kill switch, host tests passing, Mario Kart 64
+and Pilotwings 64 rebuilt and booted in xemu after the runtime changes:
+
+- **Yaz0** (`n64rx_lib/yaz0.py`, `test_yaz0.py`): the Zelda DMA table found by
+  behaviour, every file inflated to its vrom, the table rewritten. Ocarina of
+  Time 1.2 builds from its ROM alone (53 MB, page cache) and boots in xemu.
+- **The analyser**: entries that clear from a start to an end, call main with
+  jal, clear empty ranges, or set the stack and jump at once (245 of 258
+  distinct games' entries parse, from 184); jal-main entries end after the
+  call; functions that branch into another's body or to code no function
+  holds are interpreted (Mario Party, 64 Oozumou 2, Ridge Racer 64,
+  Forsaken 64 compile); the later `osSetEventMesg` (with PRENMI) and the
+  `osCreatePiManager` that calls it (Ridge Racer 64 ran once named).
+- **The runtime**: threads start at `sp - 16` (Pokémon Snap past its main
+  menu's load; found with the new `-DXRC_WATCH` hardware write watch);
+  `MEM_WU` in `recomp.h`; the stall report also for games that never send a
+  graphics task; the mmio agent's register model takes over snap's shadow
+  pages (the RSP memories' boot values kept).
+- **Not verified on a console**: everything in this entry.

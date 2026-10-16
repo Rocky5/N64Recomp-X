@@ -15,15 +15,12 @@ The decomps are the answer keys that make the ROM-only path stable
 (PLAN.md §6 "V"): read, compared against, never shipped.
 
 **Status (`docs/handoff.md`, "Where things stand"): M1 done; M2 mostly
-done (Pilotwings 64 on the console). From the ROM alone: Mario Kart 64 plays
-on the console (races at 30 fps, sound, Controller Pak, the BACK menu and its
-Paks page, the ROM inside the XBE); Super Mario 64 reaches the castle
-grounds in xemu (`--learn`, the TLB); 143 of 246 library games build an XBE
-(`tools/xbox/sweep.py`), 17 present frames. Built ahead of the milestone
-order: F3DEX/F3DEX2, the audio registry (nead, `n_aspMain`), every save
-type, the ROM page cache, the safety net and learning loop. Next: what
-blocks the most games (`docs/analyzer.md`'s library tables). CI is
-manual-only (free minutes).** `docs/PLAN.md` is binding on
+done. From the ROM alone: Mario Kart 64 plays on the console (30 fps races,
+sound, Controller Pak, the BACK menu and Paks page, the ROM inside the XBE);
+in xemu Super Mario 64 reaches the castle grounds, Pokémon Snap plays its
+intro, Ridge Racer 64 draws (F3DEX2), Ocarina of Time builds (Yaz0, page
+cache). The library sweep (`tools/xbox/sweep.py`) ranks what blocks the
+rest (`docs/analyzer.md`). CI is manual-only (free minutes).** `docs/PLAN.md` is binding on
 the approach (§1), the architecture (§3), the build, game packs and tests
 (§4), the feature specs (§5), the milestone order and exit checks (§6).
 `docs/research.md` holds the evidence. Read both, then `docs/handoff.md` and
