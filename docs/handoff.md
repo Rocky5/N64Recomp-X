@@ -188,3 +188,5 @@ is 480i only: needs an HD AV pack), a save moved to or from Wings64-X
   step 5) is not built.
 - The analyser has no host test yet: `test_analyze.py` (synthetic MIPS
   fixtures) and `decomp_check.py` are the V track's first files.
+- Decided, to build: the ROM inside the XBE (`$ROM`, PLAN.md §3.5); the
+  output folder still holds the ROM next to `default.xbe`.

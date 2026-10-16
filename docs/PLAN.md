@@ -66,8 +66,8 @@ Four parts, in the order a user meets them:
    `n64rx build <rom>` identifies the game from the ROM (byte order
    normalised, SHA-1 looked up in the game packs), runs the recompiler on it,
    compiles the result with the runtime for the Xbox and leaves a folder
-   (`default.xbe`, `default.tbn`, the normalised ROM, a one-page README) that
-   the user copies to the console. It runs inside a published Docker image
+   (`default.xbe` with the normalised ROM inside it, `default.tbn`, a
+   one-page README: §3.5) that the user copies to the console. It runs inside a published Docker image
    (the same bytes on every OS) or on a native toolchain it can install;
    `n64rx doctor` says which is available and what is missing.
 2. **The ROM analyser** (§3.14, maintainer 2026-10-16): **any ROM in, an XBE
@@ -177,7 +177,7 @@ source gives this project and under what terms.
 ### 3.1 Layering
 
 ```
-user's ROM (next to default.xbe on the console; given to n64rx on the PC)
+user's ROM (inside default.xbe on the console, §3.5; given to n64rx on the PC)
         |
 games/<id>/              game pack: game.toml (SHA-1s, title ID, save type, RDRAM size, ucode families,
                          audio path, knobs), <id>.syms.toml (+ datasyms), overlays.txt, recomp.toml,
@@ -390,10 +390,22 @@ cooperative single-thread shim the siblings keep in reserve, same API.
 
 ### 3.5 The ROM (`pi.c`, `xhw_rom.c`)
 
-Wings64-X §3.1 generalised: find the ROM next to `default.xbe` (any name,
-`.z64/.n64/.v64/.rom/.bin`), normalise the byte order in place, parse the
-header, SHA-1 the image, look it up in the pack's known table, refuse anything
-else with the hash shown. Then one of two sources:
+**The ROM lives inside the XBE** (maintainer, 2026-10-16: one file per game
+to copy and manage; decided, to be built). `n64rx` puts the normalised
+(decompressed, for Yaz0 games) image into `default.xbe` as a section of its
+own, `$ROM`, that the kernel never loads (no preload flag, not in any
+`XeLoadSection` call): it costs no RAM until the runtime reads it. At boot
+the runtime finds `$ROM` in its own section headers, reads its bytes from
+`D:\default.xbe` at the section's raw offset (the same file reads the
+resident load and the page cache already do, so both sources below stay
+as they are), SHA-1s them against the table the build wrote, and refuses
+anything else with the hash shown. The output folder is then
+`default.xbe`, `default.tbn` and the README; the built XBE already holds
+the game's recompiled code, so publishing it was never allowed and nothing
+changes there. Until it is built (and as the fallback the boot keeps for a
+build without `$ROM`): the ROM next to `default.xbe`, Wings64-X §3.1
+generalised (any name, `.z64/.n64/.v64/.rom/.bin`, normalised in place).
+Then one of two sources:
 
 | source | when | how |
 |---|---|---|
@@ -408,7 +420,8 @@ console in M5, with the resident path as the comparison where the ROM fits.
 decompressed image, so `n64rx` decompresses at build time and writes the
 decompressed, normalised image into the output folder as the ROM the console
 reads; the known table holds the hash of the user's file and of the
-decompressed image; the console's check is on the latter. DVD-R users get the
+decompressed image; the console's check is on the latter. With the ROM in
+the XBE the decompressed image is what `$ROM` holds. DVD-R users get the
 same folder on a disc (`n64rx xiso`), slower, with the page cache sized for
 it (`[rom] dvd_cache_mb`).
 

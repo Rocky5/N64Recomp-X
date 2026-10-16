@@ -30,7 +30,9 @@ what was verified, and how, is [`docs/handoff.md`](docs/handoff.md).
 2. `n64rx build "Your Game (USA).z64"` (or drop the ROM onto `n64rx.cmd` on
    Windows).
 3. Copy the folder it makes (`out/<game>/`) to your Xbox, for example to
-   `E:\Games\`, and start `default.xbe`.
+   `E:\Games\`, and start `default.xbe`. (Today the folder also holds the
+   ROM next to `default.xbe`; the ROM is moving inside the XBE, so each
+   game becomes one file to copy: PLAN.md §3.5.)
 
 Nothing leaves your machine: the ROM is read where it is, the build is
 local, and the tool uploads nothing.

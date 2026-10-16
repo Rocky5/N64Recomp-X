@@ -247,3 +247,11 @@ the game probes an EEPROM).
 track). The maintainer: "between all the decomps that are there, we should
 be able to get it working pretty stable". Their lists stay in `build-host/`;
 the rules keep only what generalises.
+
+**The ROM goes inside the XBE** (maintainer, 2026-10-16: "that way there is a
+singular package for the user to manage"; decided, not built yet, PLAN.md
+§3.5). A `$ROM` section the kernel never loads, read by the runtime from
+`D:\default.xbe` at its raw offset: no RAM until read, the resident load and
+the page cache unchanged, the SHA-1 check on the embedded bytes. Nothing
+changes about publishing: a built XBE was never shareable (it holds the
+game's recompiled code). Until then the ROM sits next to `default.xbe`.
