@@ -135,6 +135,20 @@ class Packs(unittest.TestCase):
             (p.dir / 'x.syms.toml').write_text('# changed\n')
             self.assertNotEqual(k, pipeline.cache_key(rom, p, pin='abc'))
 
+    def test_rom_pins_and_resident(self):
+        """[rom] pin and resident (PLAN.md 3.5): the page cache's pins in xrc_game.c"""
+        with tempfile.TemporaryDirectory() as tmp:
+            p = fake_pack(tmp, romlib.parse('x.z64', synthetic()))
+            self.assertEqual(p.rom_pins, [])
+            self.assertEqual(pipeline.rom_pins_c(p), '')
+            (p.dir / 'game.toml').write_text((p.dir / 'game.toml').read_text() +
+                                             '[rom]\nresident = "never"\npin = [[0x1000, 0x8000], ["0x20000", 16]]\n')
+            p = packs.load(p.dir)
+            self.assertEqual(p.rom_pins, [(0x1000, 0x8000), (0x20000, 16)])
+            self.assertEqual(pipeline.rom_pins_c(p),
+                             'static const uint32_t rom_pins[] = { 0x1000u, 0x8000u, 0x20000u, 0x10u };\n')
+            self.assertEqual(pipeline.RESIDENT[p.raw['rom']['resident']], ' -DXRC_ROM_RESIDENT_MB=0')
+
     def test_folder_name(self):
         self.assertEqual(pipeline.folder_name('N64Rx: Test / Pack?'), 'N64Rx_ Test _ Pack_')
         self.assertEqual(len(pipeline.folder_name('x' * 80)), 42)

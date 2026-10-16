@@ -96,11 +96,29 @@ uint32_t xrom_xbe_section(const uint8_t* hdr, uint32_t len, const char* name, ui
 
 #ifndef XROM_HOST_TEST
 /* ---- the Xbox part (xhw_rom.c): find, load, check ---- */
-/* The normalised image in RAM (z64 byte order), or never returns: a card,
- * then the dashboard. The loading screen shows "Reading ROM" and "Checking
- * the ROM (SHA-1)" with their progress. */
+/* The normalised image in RAM (z64 byte order), NULL when it is bigger than
+ * the resident limit and the page cache serves it (read it through
+ * xhw_rom_read either way), or never returns: a card, then the dashboard.
+ * The loading screen shows "Reading ROM" and "Checking the ROM (SHA-1)"
+ * with their progress. */
 const uint8_t* xhw_rom_load_verified(const xrom_target* target, xrom_info* out);
 const xrom_info* xhw_rom_info(void);   /* what the last successful load found */
+
+/* ---- reading the image, any thread (PLAN.md 3.5: resident or the page cache) ----
+ * The one way to the ROM's bytes: a ROM up to XRC_ROM_RESIDENT_MB is in RAM
+ * whole (xhw_rom_load_verified returns it, xhw_rom_resident too); a bigger
+ * one is in the page cache (xhw_romcache.c) and xhw_rom_load_verified
+ * returns NULL. `sink` gets [off, off + n) of the normalised image in pieces
+ * (one per 64 KB chunk in the cache; one piece when resident), `at` bytes
+ * into the request; the bytes are valid during the call only. 0 if the
+ * range is outside the image (nothing handed over). */
+typedef void (*xrom_sink)(void* user, uint32_t at, const uint8_t* src, uint32_t n);
+int xhw_rom_read(uint32_t off, uint32_t n, xrom_sink sink, void* user);
+uint32_t xhw_rom_size(void);
+const uint8_t* xhw_rom_resident(void);   /* the whole image, or NULL with the page cache */
+/* Keep [off, off + len) of the image held (the pack's [rom] pin); no-op when
+ * resident. Returns the 64 KB chunks pinned. */
+uint32_t xhw_rom_pin(uint32_t off, uint32_t len);
 #endif
 
 #ifdef __cplusplus

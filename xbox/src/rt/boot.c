@@ -135,10 +135,19 @@ static void boot_block(void) {
     for (i = 0; i < 64; i += 4) wr32(0x8000031C + i, 0);   /* osAppNMIBuffer */
 }
 
+/* the pack's [rom] pin ranges held in the page cache (no-op when resident) */
+static void rom_pins(void) {
+    uint32_t i, chunks = 0;
+    for (i = 0; i < xrc_game.num_rom_pins; i++)
+        chunks += xhw_rom_pin(xrc_game.rom_pins[2 * i], xrc_game.rom_pins[2 * i + 1]);
+    if (xrc_game.num_rom_pins)
+        xhw_logf("[PI] %u pinned ranges: %u KB held%s", (unsigned)xrc_game.num_rom_pins, (unsigned)(chunks * 64),
+                 xhw_rom_resident() ? " (resident ROM: nothing to do)" : "");
+}
+
 static void game(void) {
     xrom_target t;
     xrom_info info;
-    const uint8_t* rom;
     recomp_context ctx;
     uint32_t boot, i;
     char line[72];
@@ -147,8 +156,8 @@ static void game(void) {
     snprintf(t.code, sizeof t.code, "%s", xrc_game.code ? xrc_game.code : "");
     t.size = xrc_game.rom_size;
     for (i = 0; i < 4 && xrc_game.sha1[i]; i++) snprintf(t.sha1[t.nsha1++], sizeof t.sha1[0], "%s", xrc_game.sha1[i]);
-    rom = xhw_rom_load_verified(&t, &info);
-    xu_pi_set_rom(rom, info.size);
+    xhw_rom_load_verified(&t, &info);   /* resident, or the page cache (NULL): read through xu_rom_* */
+    rom_pins();
 
     xhw_splash_stage("Preparing memory");
     xhw_splash_progress(0.3f);
@@ -157,7 +166,7 @@ static void game(void) {
     boot_block();
     boot = xrc_game.boot_size;
     if (boot > info.size - 0x1000) boot = info.size - 0x1000;
-    xu_to_rdram(xrc_game.entrypoint, rom + 0x1000, boot);   /* the IPL3's copy */
+    xu_rom_to_rdram(0x1000, xrc_game.entrypoint, boot);   /* the IPL3's copy */
     xhw_logf("[RECOMP] boot segment: %u KB from ROM 0x1000 to %08x", (unsigned)(boot >> 10),
              (unsigned)xrc_game.entrypoint);
 

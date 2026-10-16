@@ -44,7 +44,14 @@ docs/look/           baseline shots: the loading screen (xemu, STILL), the BACK 
    (a card), the test pack (its checks on a card), or a game: the ROM read
    (`xhw_rom.c`: `default.xbe`'s own `$ROM` section, found in the image
    header at 0x10000 and read from `D:\default.xbe` at its raw offset; a
-   ROM file beside the XBE when the build has none) and checked by SHA-1,
+   ROM file beside the XBE when the build has none) and checked by SHA-1:
+   up to 16 MB read whole into RAM (resident), bigger streamed through a
+   256 KB buffer for the hash and then served by the page cache
+   (`xhw_romcache.c`: the ROM's size reserved, 64 KB chunks committed and
+   read on first touch, an LRU over 16 MB, 12 at 720p; the pack's
+   `[rom] pin` ranges held). Every reader of the image (PI DMA, the
+   `osEPi*` family, `osPiReadIo`, the boot copy) goes through
+   `xhw_rom_read` (`xrom.h`; pi.c's `xu_rom_to_rdram`/`xu_rom_read`),
    the RDRAM window, the boot block (`osTvType` ...
    `osMemSize`), the boot copy (1 MB from ROM 0x1000), the function table,
    the mode switch (`xhw_video_boot`), the renderer, the recompiled

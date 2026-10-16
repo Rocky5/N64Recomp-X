@@ -266,3 +266,58 @@ Windows 11, xemu slot 12; the maintainer's own ROMs, never in the tree.
 - Interpreted code is slow (no decoded-block cache); a learnt segment that
   overlaps another overlay at the same address is not handled (M5).
 
+### The ROM page cache (2026-10-16, branch `agent/romcache`)
+
+Windows 11, xemu slot 12; the maintainer's own ROMs, never in the tree.
+PLAN.md §3.5 "page cache", §3.10; `docs/decisions.md` has the design.
+
+**Verified**
+
+- Host: `test_romcache.py` (the core on a fake file and a fake
+  reservation: chunk boundaries, DMAs over 3 and 11 chunks from odd
+  offsets, word reads across a boundary, a partial last chunk, out-of-range
+  requests, the LRU order and its cap, a DMA bigger than the cap, pins and
+  their half-cap limit, failed fills and commits handing over zeros and
+  retrying, the counters, v64/n64 files normalised per chunk, 20000 random
+  reads against the image, the streamed SHA-1 equal to the whole one);
+  `test_n64rx.py` (`[rom] pin`, `[rom] resident`); `test_xbe_rom.py`.
+- xemu, Pilotwings 64 with the cache forced (`N64RX_CFLAGS="-DXHW_AUTOPAD=1
+  -DXRC_ROM_RESIDENT_MB=0"`, scenario `tools/xbox/scenarios/flight`):
+  title, menus, a flight to the results card, as with the resident ROM.
+  `[ROM] 8192 KB streamed and hashed in 464 ms`; `[MEM] after nv2a free
+  33132 KB` (resident: 26152 KB); `[PI]` the first second 45 misses
+  (2880 KB, stall 127 ms), then about one miss a second; 4.6 MB held after
+  100 s, nothing evicted.
+- The same with a 1 MB cap (`-DXRC_ROM_CACHE_MB=1`): plays to the same
+  results card; 14-26 misses and evictions a second in the busy seconds,
+  stall up to 45 ms a second (xemu's file reads), never a wrong byte seen.
+- Rayman 2 (32 MB, from its ROM alone): `[ROM] 32768 KB streamed and
+  hashed in 1429 ms`, `[PI] cache: 32 MB ROM reserved ..., LRU over 16 MB`,
+  `[MEM] rom page cache free 55800 KB`, `after nv2a 35108 KB`, the boot copy
+  through the cache; the game then stops in the interpreter on `tlbwi`
+  (`42000002` at `80003d60`: TLB mapping, not the ROM). Ridge Racer 64
+  (32 MB) the same: 1204 ms for the hash, 35156 KB free after nv2a, then
+  `tlbwi` at `8000ed60`.
+- `[MEM] boot: 65536 KB of RAM, nothing to hold (64 MB console)`;
+  `[CLOCK] cpu 733 MHz (TSC against the ACPI timer, 3375000 Hz)`, retrace
+  58.55 Hz (xemu); nothing timed changed.
+
+**Not verified / gaps**
+
+- The console: the HDD's ~10 ms seeks against xemu's host file reads; the
+  `[PI]` stall numbers above are emulator-only. Audio DMAs that miss stall
+  the audio thread (pins are the answer; no pack has any yet).
+- No 32 MB ROM runs far from the ROM alone yet: Paper Mario, Kirby 64,
+  Pokemon Stadium stop in the analyser ("the boot segment would be
+  -0x..."); Turok 2/3, Spider-Man, Road Rash 64, Shadow Man, Battle for
+  Naboo, Nuclear Strike, Indiana Jones, SW Racer ("the entry code ... is
+  not the SDK's"); Mario Party 1-3, Mario Golf, Pokemon Puzzle League,
+  Mega Man 64, Hydro Thunder, No Mercy, Gex 3, Banjo-Tooie (E) fail in
+  N64Recomp or the compile; Ogre Battle 64 (40 MB) stops n64rx with a
+  Python traceback (`gen/funcs.h` missing after the recompiler); OoT and
+  Majora's Mask need Yaz0 (M5). Rayman 2 and Ridge Racer 64 need `tlbwi`
+  in the interpreter.
+- Prefetch hints and `[rom] dvd_cache_mb` are not built; the cache cap at
+  720p follows the boot's prediction (a BACK hold to 480i keeps the 12 MB).
+- `xu_rom_ptr` is resident-only now (NULL with the cache): new readers use
+  `xu_rom_read`/`xu_rom_to_rdram`.

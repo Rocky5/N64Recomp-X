@@ -16,7 +16,10 @@
  * routines and build on a host with -DXROM_HOST_TEST (test_xbe_rom.py). The
  * Xbox half (find $ROM or the file in D:\, read it in 256 KB
  * pieces under the loading screen's bar, hash, report) is behind
- * #ifndef XROM_HOST_TEST.
+ * #ifndef XROM_HOST_TEST. A ROM up to XRC_ROM_RESIDENT_MB stays in RAM
+ * whole; a bigger one is only streamed through the hash and then served by
+ * the page cache (xhw_romcache.c). Either way xhw_rom_read is the one way
+ * to its bytes.
  *
  * The extension is only a hint to find the file; the first four bytes decide
  * the byte order (.z64 as is, .v64 swapped pairs, .n64 reversed words) and
@@ -34,6 +37,7 @@
 
 #include "xhw.h"
 #include "xhw_internal.h"
+#include "xhw_romcache.h"
 #endif
 
 /* ---- pure part ---- */
@@ -189,6 +193,18 @@ uint32_t xrom_xbe_section(const uint8_t* hdr, uint32_t len, const char* name, ui
 #define XHW_ROM_IN_XBE 1   /* 0: ignore $ROM, read a ROM beside default.xbe only */
 #endif
 
+/* PLAN.md 3.5: resident up to this many MB (0: the page cache for every
+ * ROM, a test of the cache on a small one), the page cache over it */
+#ifndef XRC_ROM_RESIDENT_MB
+#define XRC_ROM_RESIDENT_MB 16
+#endif
+#ifndef XRC_ROM_CACHE_MB
+#define XRC_ROM_CACHE_MB 16       /* the page cache's LRU cap (PLAN.md 3.10) */
+#endif
+#ifndef XRC_ROM_CACHE_720P_MB
+#define XRC_ROM_CACHE_720P_MB 12  /* the same when the boot predicts 720p (the bigger framebuffers) */
+#endif
+
 #define CHUNK (256u * 1024u)
 #define XBE_HDR ((const uint8_t*)0x00010000)   /* where the kernel maps the image header */
 #define CARD_LINES 8
@@ -197,8 +213,23 @@ uint32_t xrom_xbe_section(const uint8_t* hdr, uint32_t len, const char* name, ui
 static xrom_info s_info;
 static xrom_target s_target;
 static int s_inside;   /* the ROM is default.xbe's $ROM section */
+static const uint8_t* s_resident;   /* the image in RAM, or NULL: the page cache */
+static uint32_t s_size;
 
 const xrom_info* xhw_rom_info(void) { return &s_info; }
+uint32_t xhw_rom_size(void) { return s_size; }
+const uint8_t* xhw_rom_resident(void) { return s_resident; }
+
+int xhw_rom_read(uint32_t off, uint32_t n, xrom_sink sink, void* user) {
+    if (s_resident) {
+        if (off >= s_size || n > s_size - off) return 0;
+        if (n) sink(user, 0, s_resident + off, n);
+        return 1;
+    }
+    return s_size ? xhw_romcache_read(off, n, sink, user) : 0;
+}
+
+uint32_t xhw_rom_pin(uint32_t off, uint32_t len) { return s_resident || !s_size ? 0 : xhw_romcache_pin(off, len); }
 
 /* Extension (after the last dot) is one of the accepted ones, any case. */
 static int accepted_ext(const char* name) {
@@ -332,6 +363,86 @@ static int find_rom(char* name, int cap) {
     return 0;
 }
 
+static void __attribute__((noreturn)) read_failed(HANDLE h, uint32_t done) {
+    snprintf(s_info.message, sizeof s_info.message, "Read error after %u bytes (error %u).", (unsigned)done,
+             (unsigned)GetLastError());
+    CloseHandle(h);
+    fail(&s_info, XROM_UNREADABLE);
+    fail_card(&s_info, "ROM can't be read");
+}
+
+static void log_header(const xrom_info* info) {
+    xhw_logf("[ROM] title \"%s\" code %s region %c v%u crc 0x%08x 0x%08x order %s", info->title, info->code,
+             (char)info->region, (unsigned)info->version, (unsigned)info->crc1, (unsigned)info->crc2,
+             order_name(info->order));
+}
+
+/* the SHA-1 in s_info against the pack's: a card, or the verified line */
+static void hash_verdict(void) {
+    xrom_info* info = &s_info;
+    if (xrom_check_hash(info, &s_target) != XROM_OK) {
+        xhw_logf("[ROM] SHA-1 %s", info->sha1_hex);
+        if (s_inside)   /* the build checked it on the PC: the copy went wrong */
+            snprintf(info->message, sizeof info->message,
+                     "The ROM inside default.xbe is damaged (SHA-1 is %s, expected %s). Copy default.xbe again.",
+                     info->sha1_hex, s_target.nsha1 ? s_target.sha1[0] : "(none)");
+        fail_card(info, "Bad or modified ROM dump");
+    }
+    xhw_logf("[ROM] verified: %s %s, SHA-1 ok", s_target.title, info->label);
+}
+
+/* A ROM for the page cache: read once through a small buffer, normalised a
+ * piece at a time, hashed, and nothing kept (PLAN.md 3.5). The header check
+ * runs on the first piece, before the rest is read. */
+static void stream_check(HANDLE h, uint32_t size, xsha1_ctx* sha) {
+    xrom_info* info = &s_info;
+    uint8_t* buf = (uint8_t*)malloc(CHUNK);
+    uint32_t done = 0;
+    char stage[64];
+    if (!buf) xhw_fatal("Out of memory", "Can't allocate the ROM's read buffer.");
+    snprintf(stage, sizeof stage, "Checking the ROM (%u MB, SHA-1)", (unsigned)((size + (1u << 20) - 1) >> 20));
+    xhw_splash_stage(stage);
+    xhw_splash_progress(0.0f);
+    xsha1_init(sha);
+    while (done < size) {
+        DWORD got = 0, want = size - done < CHUNK ? size - done : CHUNK;
+        if (!ReadFile(h, buf, want, &got, NULL) || got != want) {
+            free(buf);
+            read_failed(h, done + got);
+        }
+        if (done == 0) {
+            info->order = xrom_detect_order(buf);
+            if (info->order == XROM_ORDER_UNKNOWN) {
+                free(buf);
+                CloseHandle(h);
+                xrom_check_header(info, &s_target);
+                fail_card(info, "Not an N64 ROM");
+            }
+            xrom_normalise(buf, got, info->order);
+            xrom_parse_header(buf, info);
+            log_header(info);
+            if (xrom_check_header(info, &s_target) != XROM_OK) {
+                free(buf);
+                CloseHandle(h);
+                fail_card(info, info->verdict == XROM_WRONG_REGION ? "Another release of the game" : "Not the right game");
+            }
+        } else {
+            xrom_normalise(buf, got, info->order);
+        }
+        xsha1_update(sha, buf, got);
+        done += got;
+        xhw_splash_progress((float)done / (float)size);
+    }
+    free(buf);
+}
+
+/* the page cache's cap: XRC_ROM_CACHE_MB, less at 720p */
+static uint32_t cache_cap(void) {
+    xhw_video_plan p;
+    xhw_video_predict(&p);
+    return (uint32_t)(strcmp(p.name, "720p") == 0 ? XRC_ROM_CACHE_720P_MB : XRC_ROM_CACHE_MB) << 20;
+}
+
 const uint8_t* xhw_rom_load_verified(const xrom_target* target, xrom_info* out) {
     char path[96], stage[64];
     xrom_info* info = &s_info;
@@ -391,6 +502,23 @@ const uint8_t* xhw_rom_load_verified(const xrom_target* target, xrom_info* out) 
         fail_card(info, "Not the right ROM");
     }
     size = lo;
+    s_size = size;
+    if (size > (uint32_t)XRC_ROM_RESIDENT_MB << 20) {
+        t0 = xhw_time_us();
+        stream_check(h, size, &sha);
+        xsha1_final(&sha, info->sha1);
+        t1 = xhw_time_us();
+        xhw_splash_progress(1.0f);
+        xhw_logf("[ROM] %u KB streamed and hashed in %u ms, nothing kept: the page cache (over %u MB)",
+                 (unsigned)(size >> 10), (unsigned)((t1 - t0) / 1000), (unsigned)XRC_ROM_RESIDENT_MB);
+        hash_verdict();
+        /* the handle stays open: the cache's fills read from it */
+        if (!xhw_romcache_start(h, s_inside ? raw : 0, size, info->order, cache_cap()))
+            xhw_fatal("Out of memory", "No room for the ROM's page cache.");
+        xhw_mem_log("rom page cache");
+        if (out) *out = *info;
+        return NULL;
+    }
     buf = (uint8_t*)malloc(size);
     if (!buf) xhw_fatal("Out of memory", "Can't allocate the ROM's buffer.");
     xhw_commit(buf, size);
@@ -400,13 +528,7 @@ const uint8_t* xhw_rom_load_verified(const xrom_target* target, xrom_info* out) 
     t0 = xhw_time_us();
     while (done < size) {
         DWORD got = 0, want = size - done < CHUNK ? size - done : CHUNK;
-        if (!ReadFile(h, buf + done, want, &got, NULL) || got == 0) {
-            snprintf(info->message, sizeof info->message, "Read error after %u bytes (error %u).", (unsigned)done,
-                     (unsigned)GetLastError());
-            CloseHandle(h);
-            fail(info, XROM_UNREADABLE);
-            fail_card(info, "ROM can't be read");
-        }
+        if (!ReadFile(h, buf + done, want, &got, NULL) || got == 0) read_failed(h, done);
         done += got;
         xhw_splash_progress((float)done / (float)size);
     }
@@ -420,9 +542,7 @@ const uint8_t* xhw_rom_load_verified(const xrom_target* target, xrom_info* out) 
     }
     xrom_normalise(buf, size, info->order);
     xrom_parse_header(buf, info);
-    xhw_logf("[ROM] title \"%s\" code %s region %c v%u crc 0x%08x 0x%08x order %s", info->title, info->code,
-             (char)info->region, (unsigned)info->version, (unsigned)info->crc1, (unsigned)info->crc2,
-             order_name(info->order));
+    log_header(info);
     if (xrom_check_header(info, &s_target) != XROM_OK)
         fail_card(info, info->verdict == XROM_WRONG_REGION ? "Another release of the game" : "Not the right game");
 
@@ -437,15 +557,8 @@ const uint8_t* xhw_rom_load_verified(const xrom_target* target, xrom_info* out) 
     xhw_splash_progress(1.0f);
     xhw_logf("[ROM] loaded %u KB in %u ms, SHA-1 in %u ms", (unsigned)(size >> 10), (unsigned)((t1 - t0) / 1000),
              (unsigned)((t2 - t1) / 1000));
-    if (xrom_check_hash(info, &s_target) != XROM_OK) {
-        xhw_logf("[ROM] SHA-1 %s", info->sha1_hex);
-        if (s_inside)   /* the build checked it on the PC: the copy went wrong */
-            snprintf(info->message, sizeof info->message,
-                     "The ROM inside default.xbe is damaged (SHA-1 is %s, expected %s). Copy default.xbe again.",
-                     info->sha1_hex, s_target.nsha1 ? s_target.sha1[0] : "(none)");
-        fail_card(info, "Bad or modified ROM dump");
-    }
-    xhw_logf("[ROM] verified: %s %s, SHA-1 ok", s_target.title, info->label);
+    hash_verdict();
+    s_resident = buf;
     if (out) *out = *info;
     return buf;
 }

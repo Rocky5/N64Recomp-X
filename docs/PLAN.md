@@ -419,6 +419,12 @@ Then one of two sources:
 | **resident** | normalised image ≤ `XRC_ROM_RESIDENT_MB` (16) | the whole file in RAM (Wings64-X D2); PI DMA is a swap-copy |
 | **page cache** | larger ROMs (32-64 MB; decompressed Zelda images) | `xhw_reserve_lazy` of the ROM's size; 64 KB chunks filled from the file on first touch by the PI thread (never from a fault inside the kernel's file system: reads commit first, Melee-X's rule); an LRU over `XRC_ROM_CACHE_MB` (16, 12 at 720p) decommits cold chunks; the pack can pin ranges (`[rom] pin = [...]`: animation and audio tables that are read every frame) and list prefetch hints; `[PI]` counters log hits, misses, stall time per second |
 
+Status (2026-10-16): both sources built (`xhw_rom.c`, `xhw_romcache.c`);
+every reader goes through `xhw_rom_read` (`xrom.h`); pins from `[rom] pin`;
+`[rom] resident` and `-DXRC_ROM_RESIDENT_MB` choose. Prefetch hints and
+`dvd_cache_mb` are not built. Verified in xemu with the cache forced on
+Pilotwings 64; console numbers (the HDD's seeks) are M5's.
+
 HDD latency (~10 ms a seek) against the N64's microsecond cart latency is the
 risk (§7 R6): per-frame synchronous DMAs of a few KB (Zelda's animation
 frames) must hit the cache, which pins and prefetch provide; measured on the

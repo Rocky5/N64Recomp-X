@@ -291,3 +291,23 @@ in as a segment; both stay in the build folder. The runtime merges a DMA
 that continues the last one, so a game that loads a segment in 4 KB chunks
 (SM64) yields the whole segment.
 
+**The ROM page cache: a reservation, committed chunks, one lock**
+(2026-10-16, PLAN.md §3.5, M5). A ROM over `XRC_ROM_RESIDENT_MB` (16) is
+streamed once for its SHA-1 through a 256 KB buffer and nothing is kept;
+the cache then reserves the ROM's size (address space only, MEM_RESERVE)
+so image byte `i` always lives at `base + i`, and commits a 64 KB chunk
+(MEM_COMMIT) right before the ReadFile that fills it, on the reading
+thread: never a fault inside the kernel's file system. Eviction is
+MEM_DECOMMIT of the LRU tail when the cap (16 MB, 12 at 720p, pins
+included) is reached. Melee-X's `xhw_reserve_lazy` (commit on fault) is
+not in this tree and is not needed: every reader goes through
+`xhw_rom_read`, which touches chunks before handing them over, so nothing
+ever faults on the reservation. Readers get the bytes through a callback
+(`xrom_sink`) under the cache's lock, a chunk at a time, so a chunk can't
+be evicted by another N64 thread under the copy; `xu_rom_ptr` is now
+resident-only (NULL with the cache) for that reason. Pins (`[rom] pin`)
+may take at most half the cap, so a pack can't starve the LRU. A failed
+fill hands over zeros, logs and retries next time (the DMA's own "outside
+the ROM" zeros are the same policy). Kill switches: `-DXRC_ROM_RESIDENT_MB`
+(0: the cache for every ROM, 64: none), the pack's `[rom] resident =
+always | never`.

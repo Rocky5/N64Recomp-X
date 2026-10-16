@@ -29,6 +29,7 @@ class Pack:
     stage: str
     test: bool
     raw: dict
+    rom_pins: list = dataclasses.field(default_factory=list)   # [rom] pin: [[offset, length], ...] (PLAN.md 3.5)
 
     @property
     def title_id_hex(self):
@@ -68,7 +69,8 @@ def load(path):
                 boot_size=_int(cpu.get('boot_size', 0x100000)), rdram_mb=_int(cpu.get('rdram_mb', 4)),
                 gpr=str(cpu.get('gpr', 'auto')), compressed=rom.get('compressed', 'none'),
                 save_type=t.get('save', {}).get('type', 'none'), stage=t.get('status', {}).get('stage', 'planned'),
-                test=bool(g.get('test', False)), raw=t)
+                test=bool(g.get('test', False)), raw=t,
+                rom_pins=[(_int(o), _int(n)) for o, n in rom.get('pin', [])])
 
 
 def all_packs(games=GAMES):
