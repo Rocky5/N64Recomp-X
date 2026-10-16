@@ -80,7 +80,8 @@ def parse_entry(rom, entry):
     else."""
     regs, bss, size, main, snap = {}, None, None, None, None
     empty = False
-    for i in range(48):
+    last_call = None
+    for i in range(64):
         o = 0x1000 + 4 * i
         ins = Ins(int.from_bytes(rom[o:o + 4], 'big'), entry + 4 * i)
         d = ins.dest
@@ -106,11 +107,20 @@ def parse_entry(rom, entry):
                 size = other
         elif ins.is_jr:
             main = regs.get(ins.rs)
+            empty = empty or (bss is None and i < 8 and 29 in regs)   # the stack, then jr to a loader (Turok)
+            break
+        elif ins.w & 0xFC00003F == 0x0000000D and last_call is not None and bss is None:
+            main, empty = last_call, True   # break after the last call: that call was main (Army Men)
             break
         elif ins.is_j:
             main = ins.target
             empty = empty or (bss is None and i < 8 and 29 in regs)   # the stack, then j (Rogue Squadron)
             break
+        elif ins.is_jalr:   # a call through a register: main only if it lands in KSEG0
+            t = regs.get(ins.rs)   # (Turok 2, Armorines: jalr to TLB-mapped code, not supported)
+            last_call = t if t is not None and t >= 0x80000000 else None
+        elif ins.is_jal and not (bss is not None or empty or (i < 8 and 29 in regs)):
+            last_call = ins.target if ins.target >= 0x80000000 else None   # a set-up call, or main before a break
         elif ins.is_jal and (bss is not None or empty or (i < 8 and 29 in regs)):
             main = ins.target   # main called, the entry spins after it; or the stack set
             empty = empty or bss is None   # and main called at once, no BSS clear (Madden 2000, Bust-A-Move '99)

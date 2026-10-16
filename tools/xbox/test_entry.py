@@ -85,6 +85,16 @@ def main():
     check(funcs.parse_entry(rom_with([lui(SP, 0x803F), ori(SP, SP, 0xFFF0), jal(mainf), NOP]), ENTRY)
           == (ENTRY + 0x100000, 0, mainf), 'the stack and jal')
 
+    # the stack, then jr to a loader in the boot segment (Turok, Episode I Racer)
+    T2_ = 10
+    check(funcs.parse_entry(rom_with([lui(T2_, 0x8000), lui(SP, 0x8015), addiu(T2_, T2_, 0x4C4), jr(T2_),
+                                      addiu(SP, SP, -0x4900)]), ENTRY) == (ENTRY + 0x100000, 0, 0x800004C4),
+          'the stack and jr to a loader')
+    # set-up calls, then main, then break (Army Men)
+    brk = 0x0001008D
+    check(funcs.parse_entry(rom_with([lui(4, 0x800B), jal(0x800004A0), NOP, jal(0x800004A0), NOP, jal(mainf), NOP,
+                                      brk]), ENTRY) == (ENTRY + 0x100000, 0, mainf), 'set-up calls, main, break')
+
     # none of these: a jal before any stack or clear (a loader of its own) is not taken for main
     check(funcs.parse_entry(rom_with([jal(mainf), NOP] + [NOP] * 40), ENTRY) is None, 'a bare jal is refused')
     check(funcs.parse_entry(rom_with([NOP] * 48), ENTRY) is None, 'no entry at all')
