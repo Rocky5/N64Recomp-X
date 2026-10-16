@@ -26,6 +26,9 @@
 #include "settings.h"
 #include "ultra.h"
 
+void xrc_menu_feed(int port, const xhw_pad* p);
+int xrc_menu_blocks(uint32_t raw_buttons);
+
 enum {
     N_A = 0x8000, N_B = 0x4000, N_Z = 0x2000, N_START = 0x1000, N_DU = 0x0800, N_DD = 0x0400, N_DL = 0x0200,
     N_DR = 0x0100, N_L = 0x0020, N_R = 0x0010, N_CU = 0x0008, N_CD = 0x0004, N_CL = 0x0002, N_CR = 0x0001,
@@ -80,6 +83,7 @@ static void map(int port, const xhw_pad* p, Pad* out) {
 
 static void read_pads(void) {
     int i;
+    uint32_t raw = 0;
     xhw_pad_lock();
     xhw_pad_poll();
     for (i = 0; i < 4; i++) {
@@ -89,8 +93,12 @@ static void read_pads(void) {
             memset(&s_pads[i], 0, sizeof s_pads[i]);
             continue;
         }
+        xrc_menu_feed(i, &p);           /* BACK taps open the menu */
+        if (p.connected) raw |= p.buttons;
         map(i, &p, &s_pads[i]);
     }
+    if (xrc_menu_blocks(raw))   /* the menu is open, or the press that closed it is still down */
+        for (i = 0; i < 4; i++) s_pads[i].button = 0, s_pads[i].x = s_pads[i].y = 0;
     xhw_pad_unlock();
     xhw_combo_note_read(xu_retrace());
     xhw_combo_act();

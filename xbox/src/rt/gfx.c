@@ -11,20 +11,39 @@
 #include "ultra/ultra.h"
 #include "xgfx.h"
 
-static int s_up;
+static volatile int s_up;
+static xhw_mutex* s_lock;
+
+int xrc_menu_open(void);
+
+/* one thread in the interpreter and the back end at a time: the game's
+ * graphics tasks, the BACK menu's frames (settings_menu.c, the VI thread) */
+void xrc_gfx_lock(void) { xhw_mutex_lock(s_lock); }
+void xrc_gfx_unlock(void) { xhw_mutex_unlock(s_lock); }
+int xrc_gfx_ready(void) { return s_up; }
 
 void xrc_gfx_boot(void) {
+    s_lock = xhw_mutex_create();
     xgfx_init();
     s_up = 1;
     xgfx_set_fps_overlay(g_xrc_settings.fps);
-    xgfx_set_tex_filter(g_xrc_settings.texture_filter);
+    xgfx_set_tex_filter(g_xrc_settings.texture_filter ? 2 : 0);   /* settings: 0 N64, 1 sharp; xgfx: 2 sharp */
     f3d_set_widescreen(g_xrc_settings.widescreen == XRC_WS_ON ||
                        (g_xrc_settings.widescreen == XRC_WS_AUTO && (xhw_video()->height >= 720 || xhw_video_widescreen_set())));
 }
 
+/* DIVERGES: a task that comes while the BACK menu is open waits for it to
+ * close (the game is frozen under the menu; settings_menu.c) */
 void xrc_gfx_task(uint32_t task) {
     if (!s_up) return;
+    xrc_gfx_lock();
+    while (xrc_menu_open()) {
+        xrc_gfx_unlock();
+        xhw_sleep_ms(10);
+        xrc_gfx_lock();
+    }
     f3d_run(rd32(task + TK_DATA_PTR));
+    xrc_gfx_unlock();
 }
 
 /* the interpreter's hooks: no game state known (no title fit), no port

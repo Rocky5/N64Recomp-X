@@ -76,6 +76,11 @@ BLACK UP DOWN LEFT RIGHT`, triggers `L R`, sticks `SL SR SU SD CL CR CU CD`,
 | `t6000 L R BACK BLACK for 300` | the same from the "No game built in" card |
 | `t800 L R BACK WHITE for 300` | `[PAD] port 1: L + R + BACK + WHITE`, a restart; next boot: `previous exit: restart: ...` |
 
+M2's: `tools/xbox/scenarios/menu/autopad.txt` (a game build): `[MENU] opened`,
+`[MENU] Widescreen: ...`, `[MENU] closed (settings.ini saved)`, four shots.
+A COM1 `[FBDUMP]` takes seconds in xemu, so scenarios space their shots.
+Timed events follow the ACPI clock.
+
 ## Switches
 
 | switch | default | effect |
@@ -94,6 +99,7 @@ BLACK UP DOWN LEFT RIGHT`, triggers `L R`, sticks `SL SR SU SD CL CR CU CD`,
 | `-DXHW_AUTOPAD=1` | 0 | a test build with scripted input |
 | `-DXRC_AUDIO=0` | 1 | audio tasks counted and dropped: silent |
 | `-DXRC_AUDIO_DUMP=<s>` | 0 | test builds: 3 s of the output from second `<s>` as `[AUDDUMP]` lines (`tools/xbox/auddump_to_wav.py serial.log out.wav`: the WAV and its numbers, RMS, L/R correlation, the energy below 4 kHz; the WAV stays outside the tree) |
+| `-DXRC_MENU=0` | 1 | no BACK menu (settings.ini still works) |
 | `-DASP_HLE_WORDSWAP=0` | 1 on the console | `asp_hle` on a native-order RDRAM (Wings64-X's layout; the host tests' first group) |
 
 Wings64-X's platform switches (`XHW_*`, `XGFX_*`) carry over; its

@@ -1,0 +1,13 @@
+# BACK menu (test builds): open over the intro, change Widescreen, close with B.
+# A COM1 [FBDUMP] takes seconds in xemu: shots are spaced out.
+t30000 BACK for 200
+t31000 SHOT
+t38000 DOWN for 100
+t38600 RIGHT for 100
+t39500 SHOT
+t46000 DOWN for 100
+t46400 DOWN for 100
+t46800 DOWN for 100
+t47600 SHOT
+t54000 B for 100
+t56000 SHOT

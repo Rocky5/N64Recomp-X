@@ -101,6 +101,32 @@ void xhw_flush(void* stdio_file);
 unsigned xhw_log_fallback(void);
 /* Two lines at the top of the picture for 10 s, any thread (logged too). */
 void xhw_notice(const char* line1, const char* line2);
+/* The BACK menu's card (xbox/src/rt/settings_menu.c), drawn in the loading
+ * screen's dress by xhw_splash_draw.c: the aurora and sparks, the title with
+ * the wordmark's light sweep, the bar's green line, the rows. Rendered into
+ * a plain ARGB image (alpha: the card's rounded shape and glow) that the
+ * interpreter composites over the frozen, dimmed game. */
+#define XHW_PANEL_ROWS 12
+#define XHW_PANEL_W 512          /* the image, in 480-line pixels */
+#define XHW_PANEL_H 416
+enum { XHW_PANEL_SETTING = 0, XHW_PANEL_ACTION = 1 };
+typedef struct xhw_panel {
+    uint32_t t_ms;               /* since the menu opened: the animations */
+    int32_t sel;                 /* the selected row */
+    int32_t rows;
+    char title[40];              /* the pack's title */
+    char sub_left[40];           /* "SETTINGS" */
+    char sub_right[40];          /* "running 720p 16:9" */
+    char label[XHW_PANEL_ROWS][28];
+    char value[XHW_PANEL_ROWS][28];
+    int32_t kind[XHW_PANEL_ROWS];   /* XHW_PANEL_* */
+    int32_t star[XHW_PANEL_ROWS];   /* applies after a restart */
+    char info[64];               /* about the selected row */
+    char note[64];               /* warm: "* used after a restart", a message */
+    char footer[64];
+} xhw_panel;
+/* img: XHW_PANEL_W x XHW_PANEL_H ARGB8888 (straight alpha), pitch in pixels */
+void xhw_panel_render(uint32_t* img, int pitch_px, const xhw_panel* p);
 /* Test builds: an integer switch from E:\UDATA\<title id>\debug.txt
  * ("name = value"), else `def` (xhw_debug.c). Release builds: always `def`. */
 int xhw_debug_int(const char* name, int def);

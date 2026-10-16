@@ -17,6 +17,10 @@ void f3d_hold_last(int on);
 /* The photo album (patches/028): 1 keeps the picture presented last under
  * every following frame, 0 ends it. */
 void f3d_fb_persist(int on);
+/* A frame of the held picture alone (no display list), dimmed, with a card
+ * image over it, presented: the BACK menu's frames over the frozen game
+ * (call f3d_hold_last(1) first; f3d_interp.c says how the card is placed). */
+void f3d_present_held(const uint32_t* img, int tw, int th, int pw, int ph, int fade, int slide);
 
 /* ---- hooks (xbox/src/game) ---- */
 /* The game's top-level state (0 = title screen), for the title fit; the

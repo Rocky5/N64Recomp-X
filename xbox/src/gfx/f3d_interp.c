@@ -1495,6 +1495,74 @@ static void side_clear(void) {
     if (x1 < s_out.fb_w) xgfx_clear(x1, 0, s_out.fb_w, h, 0xFF000000u, 1, 0, 1.0f);
 }
 
+/* A frame with no display list: the held picture (f3d_hold_last(1) first),
+ * dimmed, and a card image over it, presented. The BACK menu's frames over
+ * the game's last one (xbox/src/rt/settings_menu.c, xhw_panel_render).
+ * img: tw x th ARGB (powers of two) holding a pw x ph card in 480-line
+ * pixels, straight alpha; shown centred at the content box's scale (1x at
+ * 480, 1.5x at 720p; 3/4 as wide on an anamorphic 480), `fade` 0..256 of
+ * its opacity and of the dim, `slide` pixels below its place. */
+void f3d_present_held(const uint32_t* img, int tw, int th, int pw, int ph, int fade, int slide) {
+    XgfxState st;
+    XgfxVtx q[6];
+    float zy, zx, x0, y0, x1, y1;
+    uint32_t tex = 0;
+    int i;
+    static const uint8_t corner[6] = { 0, 1, 2, 2, 1, 3 };
+    if (fade < 0) fade = 0;
+    if (fade > 256) fade = 256;
+    xgfx_frame_begin();
+    map_setup();
+    s_side_drawn = 0;
+    hold_frame();
+    if (!s_side_drawn) side_clear();
+    memset(&st, 0, sizeof st);
+    st.color_write = 1;
+    st.blend = XGFX_BLEND_ALPHA;
+    st.scissor[2] = s_out.fb_w;
+    st.scissor[3] = s_out.fb_h;
+    /* the dim: black at up to 55 % over the whole frame */
+    st.cc0 = cc_words_const(4 /* SHADE */, 4, &st.cc1);
+    memset(q, 0, sizeof q);
+    for (i = 0; i < 6; i++) {
+        int c = corner[i];
+        q[i].x = (c & 1) ? (float)s_out.fb_w : 0.0f;
+        q[i].y = (c & 2) ? (float)s_out.fb_h : 0.0f;
+        q[i].w = 1.0f;
+        q[i].rgba[3] = (uint8_t)(140 * fade / 256);
+    }
+    xgfx_draw(&st, q, 2);
+    if (img && fade > 0) tex = xgfx_tex_create((uint32_t)tw, (uint32_t)th, img);
+    if (tex) {
+        /* TEXEL0 x SHADE in colour and alpha: the card, faded by the shade's alpha */
+        st.cc0 = (1u << 20) | (4u << 15) | (1u << 12) | (4u << 9) | (1u << 5) | 4u;
+        st.cc1 = (15u << 28) | (15u << 24) | (1u << 21) | (4u << 18) | (7u << 15) | (7u << 12) | (7u << 9) | (7u << 6) |
+                 (7u << 3) | 7u;
+        st.tex[0] = tex;
+        st.wrap_s[0] = st.wrap_t[0] = XGFX_WRAP_CLAMP;
+        zy = s_ch / 480.0f;
+        zx = zy * s_cw / (s_ch * 4.0f / 3.0f);
+        st.filter[0] = (zx == 1.0f && zy == 1.0f) ? 0u : 1u;
+        x0 = (float)(int)(((float)s_out.fb_w - (float)pw * zx) * 0.5f);
+        y0 = (float)(int)(((float)s_out.fb_h - (float)ph * zy) * 0.5f) + (float)slide * zy;
+        x1 = x0 + (float)pw * zx;
+        y1 = y0 + (float)ph * zy;
+        for (i = 0; i < 6; i++) {
+            int c = corner[i];
+            q[i].x = (c & 1) ? x1 : x0;
+            q[i].y = (c & 2) ? y1 : y0;
+            q[i].w = 1.0f;
+            q[i].rgba[0] = q[i].rgba[1] = q[i].rgba[2] = 255;
+            q[i].rgba[3] = (uint8_t)(255 * fade / 256);
+            q[i].s0 = (c & 1) ? (float)pw / (float)tw : 0.0f;
+            q[i].t0 = (c & 2) ? (float)ph / (float)th : 0.0f;
+        }
+        xgfx_draw(&st, q, 2);
+        xgfx_tex_destroy(tex);   /* deferred until the GPU is done with it */
+    }
+    xgfx_present();
+}
+
 void f3d_run(uint32_t dl) {
     uint64_t t0 = xhw_time_us();
     int i;

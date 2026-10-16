@@ -136,3 +136,53 @@ Wings64-X's `texconv.c` already took (its textures stayed big-endian).
 
 **CI is manual-only** (the maintainer's free Actions minutes): `gh workflow
 run build.yml --ref dev`, `-f image=true` to rebuild the SDK image.
+
+## M2 (2026-10-16)
+
+**`asp_hle` runs on the word-swapped image** (`ASP_HLE_WORDSWAP`, the
+console's default). Transfers between RDRAM and DMEM swap the halfwords of
+each word, so DMEM's s16 lanes stay native and every MMX path is unchanged;
+only the ADPCM decoder reads bytes, through `o ^ 1`. Everything the
+microcode reads is the game's own N64 data, so no loader is patched (the
+siblings converted the bank loader). `test_asp_hle` runs both layouts and
+requires the same RAM results.
+
+**The resampler table is found in the task's microcode data**, not read at a
+pack-given ROM offset: the first audio task's data segment is searched for
+512 bytes that pass `asp_hle`'s checks (PW64: data+0xC0). Generic, and
+nothing from the ROM is stored.
+
+**`osAiSetFrequency` returns the DAC's real rate** (video clock / divider:
+22050 asked, 22047 given), as libultra does; Wings64-X returned the asked
+rate. The synthesizer runs at what it is told.
+
+**The BACK menu opens on a BACK tap** (BACK let go with nothing else pressed
+meanwhile), not on the press. BACK + WHITE (screenshots, moved from BACK
+alone) and the exit combos all start with BACK; opening on the press would
+put the menu up on the way to every one of them.
+
+**The BACK menu is a card in the loading screen's dress, composited on the
+GPU** (the maintainer: "should look super cool and match the vibe"). The
+platform renders it into a 512x416 ARGB image (`xhw_panel_render` in
+`xhw_splash_draw.c`: the same aurora, sparks, light sweep and green bar as
+the loading screen, a rounded body with a teal edge and glow in alpha); the
+interpreter shows it over the held game frame, dimmed to 45 %, scaled with
+the content box (1.5x at 720p, 3/4 as wide on an anamorphic 480). It fades
+and slides in over 200 ms, out over 100 ms. The plan's "CPU text over the
+frame" (xhw_overlay.c) could not blend: the framebuffer is write-combined.
+Host preview: `docs/look/menu-card-host.png` (`test_splash` writes it over a
+stand-in game frame).
+
+**The menu has its own thread; the VI thread only reads the controllers.**
+Drawn on the VI thread, a slow frame (xemu: 20-40 ms) swallowed short
+presses. The menu thread (level 13) holds the renderer while the menu is up,
+so a graphics task waits for it; the VI thread polls the pads every retrace
+and changes the settings; the held-direction repeat is timed by the clock.
+
+**Autopad times `t<ms>` events by the ACPI clock**, not `GetTickCount`: the
+kernel tick fell behind under load in xemu and a 100 ms press lasted 300.
+(Other `GetTickCount` uses in the platform are timeouts and the loading
+screen's animation; they stay for now.)
+
+**Widescreen offers Auto, On and Off.** Stretch needs interpreter work and
+comes with M6.

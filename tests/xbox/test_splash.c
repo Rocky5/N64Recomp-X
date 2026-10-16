@@ -12,6 +12,10 @@
  *   - the background stays in the family's palette (dark and cool: navy,
  *     teal, violet; sparks pale teal)
  *   - -DXHW_SPLASH_STILL frames are the same whatever the time
+ *   - the BACK menu's card (xhw_panel_render): its shape in alpha (corners
+ *     and the outside clear, the body opaque), every row of the fullest
+ *     menu inside the body and above the footer, animated over time; a
+ *     preview over a stand-in game frame dimmed as the interpreter dims it
  * Writes the frames it checked as raw ARGB for the .py to save as PNGs
  * (build-host/splash_*.png), for the eye. Exit code 0 when all passed. */
 #include <stdio.h>
@@ -162,6 +166,73 @@ int main(int argc, char** argv) {
         xhw_splash_render(s_full, W, &a);
         xhw_splash_render(s_bg, W, &b);
         CHECK(!memcmp(s_full, s_bg, sizeof s_full), "STILL frames differ with the time");
+    }
+
+    /* the BACK menu's card */
+    {
+        static uint32_t img[XHW_PANEL_H][XHW_PANEL_W], img2[XHW_PANEL_H][XHW_PANEL_W];
+        static const char* const labels[10] = { "Video output", "Widescreen", "Texture filter", "FPS counter", "Volume",
+                                                "Controller", "  Stick dead zone", "Restart", "Exit to dashboard", "Return" };
+        static const char* const values[10] = { "720p -> 480i", "Auto, 16:9", "N64 (bilinear)", "Off", "100%",
+                                                "Port 4 (none)", "60%", "", "", "" };
+        xhw_panel pn;
+        int r, ok, ox = (W - XHW_PANEL_W) / 2, oy = (H - XHW_PANEL_H) / 2;
+        memset(&pn, 0, sizeof pn);
+        pn.t_ms = 1300;
+        pn.sel = 1;
+        pn.rows = 10;
+        snprintf(pn.title, sizeof pn.title, "%s", "Pilotwings 64");
+        snprintf(pn.sub_left, sizeof pn.sub_left, "%s", "SETTINGS");
+        snprintf(pn.sub_right, sizeof pn.sub_right, "%s", "running 720p 16:9");
+        for (r = 0; r < 10; r++) {
+            snprintf(pn.label[r], sizeof pn.label[r], "%s", labels[r]);
+            snprintf(pn.value[r], sizeof pn.value[r], "%s", values[r]);
+            pn.kind[r] = r >= 7 ? XHW_PANEL_ACTION : XHW_PANEL_SETTING;
+        }
+        pn.star[0] = 1;
+        snprintf(pn.info, sizeof pn.info, "%s", "At 480 lines 16:9 needs the dashboard's widescreen");
+        snprintf(pn.note, sizeof pn.note, "%s", "* used after a restart");
+        snprintf(pn.footer, sizeof pn.footer, "%s", "A / Left / Right change     B return");
+        xhw_panel_render(&img[0][0], XHW_PANEL_W, &pn);
+        CHECK((img[0][0] >> 24) == 0 && (img[XHW_PANEL_H - 1][XHW_PANEL_W - 1] >> 24) == 0, "the corners are not clear");
+        CHECK((img[XHW_PANEL_H / 2][XHW_PANEL_W / 2] >> 24) == 255, "the body is not opaque");
+        CHECK((img[11][11] >> 24) < 255, "the corner is not rounded");
+        for (ok = 1, r = 0; r < 10; r++)
+            ok &= xhw_splash_text_width(labels[r], 1) + xhw_splash_text_width(values[r], 1) + 2 * 8 + 32 <= XHW_PANEL_W - 2 * 34;
+        CHECK(ok, "a row is too wide for the card");
+        CHECK(xhw_splash_text_width(pn.info, 1) <= XHW_PANEL_W - 2 * 34, "the info line is too wide");
+        {   /* the text never reaches the glow ring: everything not body is untouched by glyphs */
+            int bad = 0;
+            for (y = 0; y < XHW_PANEL_H; y++)
+                for (x = 0; x < XHW_PANEL_W; x++)
+                    if ((img[y][x] >> 24) < 255 &&
+                        (x > 30 && x < XHW_PANEL_W - 30 && y > 30 && y < XHW_PANEL_H - 30))
+                        bad++;
+            CHECK(!bad, "%d see-through pixels inside the body", bad);
+        }
+        pn.t_ms = 2100;
+        xhw_panel_render(&img2[0][0], XHW_PANEL_W, &pn);
+        CHECK(memcmp(img, img2, sizeof img) != 0, "the card does not move");
+        /* the preview: a stand-in game frame, dimmed to 45 %, the card over it */
+        for (y = 0; y < H; y++)
+            for (x = 0; x < W; x++) {
+                int rr = 60 + y / 4, gg = 120 + y / 6, bb = 200 - y / 8;
+                if (y > 300) rr = 70 + (x * 7 % 40), gg = 110 + (y % 30), bb = 60;
+                if (((x / 40) + (y / 40)) % 2 && y > 300) gg += 30;
+                rr = rr * 45 / 100, gg = gg * 45 / 100, bb = bb * 45 / 100;
+                s_full[y * W + x] = 0xFF000000u | (uint32_t)(rr << 16 | gg << 8 | bb);
+            }
+        pn.t_ms = 1300;
+        xhw_panel_render(&img[0][0], XHW_PANEL_W, &pn);
+        for (y = 0; y < XHW_PANEL_H; y++)
+            for (x = 0; x < XHW_PANEL_W; x++) {
+                uint32_t c = img[y][x], a = c >> 24, *d = &s_full[(oy + y) * W + ox + x];
+                uint32_t r0 = (*d >> 16) & 255, g0 = (*d >> 8) & 255, b0 = *d & 255;
+                uint32_t r1 = (c >> 16) & 255, g1 = (c >> 8) & 255, b1 = c & 255;
+                *d = 0xFF000000u | ((r1 * a + r0 * (255 - a)) / 255) << 16 | ((g1 * a + g0 * (255 - a)) / 255) << 8 |
+                     ((b1 * a + b0 * (255 - a)) / 255);
+            }
+        save("splash_menu", s_full);
     }
 
     printf("test_splash: %d checks, %d failed\n", s_checks, s_fail);

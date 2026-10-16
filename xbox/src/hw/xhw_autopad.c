@@ -184,16 +184,19 @@ static void fill_e(void) {
 }
 
 static unsigned s_test_hang;   /* env MX_TEST_HANG */
+/* milliseconds from the ACPI clock: GetTickCount (the kernel tick) fell
+ * behind under load in xemu, so a "for 100" press lasted 300 ms */
+static DWORD xhw_ms_now(void) { return (DWORD)(xhw_time_us() / 1000u); }
 static DWORD s_load_t0;        /* the time base of t<ms> events */
 
-void xhw_autopad_clock(void) { s_load_t0 = GetTickCount(); }
+void xhw_autopad_clock(void) { s_load_t0 = xhw_ms_now(); }
 
 void xhw_autopad_load(void) {
     static char buf[16 * 1024];
     HANDLE h = CreateFileA("D:\\autopad.txt", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
     DWORD n = 0;
     char *p, *nl;
-    s_load_t0 = GetTickCount();
+    s_load_t0 = xhw_ms_now();
     if (h == INVALID_HANDLE_VALUE) return;
     ReadFile(h, buf, sizeof buf - 1, &n, NULL);
     CloseHandle(h);
@@ -219,7 +222,7 @@ static void xhw_autopad_tick(uint32_t tick) { s_match_tick = tick; }
 static DWORD s_match_end;   /* GetTickCount at the match's end, 0 before */
 
 void xhw_autopad_match_end(void) {
-    if (!s_match_end) s_match_end = GetTickCount() | 1;
+    if (!s_match_end) s_match_end = xhw_ms_now() | 1;
 }
 
 /* A console round's run that hangs (the GPU stall a copy stress hunts for)
@@ -267,7 +270,7 @@ void xhw_autopad_after_hang(void) {
 
 void xhw_autopad_apply(int port, xhw_pad* out) {
     unsigned f = xhw_present_count();   /* presented frames: a screenshot stalls the game, not this count */
-    unsigned ms = (unsigned)(GetTickCount() - s_load_t0);
+    unsigned ms = (unsigned)(xhw_ms_now() - s_load_t0);
     int i;
     if (port != 0) return;
     if (s_test_hang && f >= s_test_hang) {   /* the game thread stops for good */
@@ -275,7 +278,7 @@ void xhw_autopad_apply(int port, xhw_pad* out) {
         for (;;) Sleep(1000);
     }
     /* before the events: a round 2 script has only env lines */
-    if (s_match_end && (LONG)(GetTickCount() - s_match_end) > 12000) {   /* signed: s_match_end | 1 may be 1 ms ahead */
+    if (s_match_end && (LONG)(xhw_ms_now() - s_match_end) > 12000) {   /* signed: s_match_end | 1 may be 1 ms ahead */
         const char* next = getenv("MX_NEXT_XBE");
         if (next) xhw_launch_xbe(next);
         s_match_end = 0;

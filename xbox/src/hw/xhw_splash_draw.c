@@ -44,6 +44,10 @@ const unsigned char xhw_font16[256 * 16] = {   /* also the overlay's (xhw_overla
 #define GW 8
 #define GH 16
 
+/* the surface text, fills and sparks clip to: the 640x480 frame, or the
+ * BACK menu's card image while xhw_panel_render draws */
+static int s_clip_w = W, s_clip_h = H;
+
 /* ---- colour ---- */
 static uint32_t rgb(int r, int g, int b) {
     r = r < 0 ? 0 : r > 255 ? 255 : r;
@@ -169,7 +173,7 @@ static void background(uint32_t* fb, int pitch, uint32_t t_ms) {
 #define SPARKS 48
 static void add_px(uint32_t* fb, int pitch, int x, int y, int r, int g, int b) {
     uint32_t* p;
-    if (x < 0 || x >= W || y < 0 || y >= H) return;
+    if (x < 0 || x >= s_clip_w || y < 0 || y >= s_clip_h) return;
     p = fb + (size_t)y * (size_t)pitch + x;
     r += R_(*p);
     g += G_(*p);
@@ -217,11 +221,11 @@ static void glyphs(uint32_t* fb, int pitch, const char* s, int x, int y, int zoo
                 if (!(g[gy] & (0x80 >> gx))) continue;
                 for (zy = 0; zy < zoom; zy++) {
                     int py = y + gy * zoom + zy;
-                    if (py < 0 || py >= H) continue;
+                    if (py < 0 || py >= s_clip_h) continue;
                     for (zx = 0; zx < zoom; zx++) {
                         int px = x + gx * zoom + zx;
                         uint32_t c = col;
-                        if (px < 0 || px >= W) continue;
+                        if (px < 0 || px >= s_clip_w) continue;
                         if (sweep_w) {   /* the light sweep: a diagonal band, brightest in its middle */
                             int d = (px + (py - y) / 2) - sweep_x;
                             if (d < 0) d = -d;
@@ -253,9 +257,9 @@ static void text_c(uint32_t* fb, int pitch, const char* s, int y, int zoom, uint
 static void fill(uint32_t* fb, int pitch, int x, int y, int w, int h, uint32_t col) {
     int i, j;
     for (j = y; j < y + h; j++) {
-        if (j < 0 || j >= H) continue;
+        if (j < 0 || j >= s_clip_h) continue;
         for (i = x; i < x + w; i++)
-            if (i >= 0 && i < W) fb[(size_t)j * (size_t)pitch + i] = col;
+            if (i >= 0 && i < s_clip_w) fb[(size_t)j * (size_t)pitch + i] = col;
     }
 }
 
@@ -379,4 +383,243 @@ void xhw_splash_render(uint32_t* fb, int pitch, const xhw_splash_state* s) {
         text_c(fb, pitch, xhw_splash_hold_text(s->hold, s->holding), VIDEO_Y + 20, 1, col);
     }
     if (s->video_note[0]) text_c(fb, pitch, s->video_note, VIDEO_Y + 40, 1, rgb(220, 200, 120));
+}
+
+/* ---- the BACK menu's card (xhw_panel_render, PLAN.md 5.2) ----------------
+ * The loading screen in miniature: its aurora (sampled where the card sits
+ * on a 640x480 screen, so it is the same sky), its sparks, the title in
+ * the wordmark's white with the light sweep coming round every few
+ * seconds, the bar's green as a line under it with the bar's moving
+ * highlight, then the rows. The selected row sits on a teal glow that
+ * slides to it, with the bar's green as its marker and a glint crossing
+ * it. Round the rounded body: a thin teal edge and a soft glow, both in
+ * the alpha channel, so the frozen game shows through around the card. */
+#define PW XHW_PANEL_W
+#define PH XHW_PANEL_H
+#define PG 10                   /* the glow ring outside the body */
+#define PR 12                   /* corner radius */
+#define PX0 ((W - PW) / 2)      /* the card's place on a 640x480 screen */
+#define PY0 ((H - PH) / 2)
+#define P_TITLE_Y (PG + 16)
+#define P_LINE_Y (P_TITLE_Y + 40)
+#define P_SUB_Y (P_LINE_Y + 10)
+#define P_ROWS_Y (P_SUB_Y + 28)
+#define P_ROW_H 22
+#define P_ACTION_GAP 8
+#define P_X0 (PG + 24)          /* text margins */
+#define P_X1 (PW - PG - 24)
+
+static uint8_t s_pmask[PH][PW];   /* body coverage 0..255 */
+static uint8_t s_pglow[PH][PW];   /* the glow outside it, 0..255 */
+static uint8_t s_pedge[PH][PW];   /* the edge line just inside it */
+static int s_pmask_ready;
+
+static void panel_mask(void) {
+    int x, y;
+    for (y = 0; y < PH; y++)
+        for (x = 0; x < PW; x++) {
+            /* distance to the rounded body in pixels, negative inside */
+            float hx = (PW - 2 * PG) * 0.5f - PR, hy = (PH - 2 * PG) * 0.5f - PR;
+            float qx = (x + 0.5f - PW * 0.5f), qy = (y + 0.5f - PH * 0.5f), d;
+            qx = (qx < 0 ? -qx : qx) - hx;
+            qy = (qy < 0 ? -qy : qy) - hy;
+            if (qx > 0 && qy > 0) d = __builtin_sqrtf(qx * qx + qy * qy) - PR;
+            else d = (qx > qy ? qx : qy) - PR;
+            s_pmask[y][x] = (uint8_t)(d <= -0.5f ? 255 : d >= 0.5f ? 0 : (int)((0.5f - d) * 255.0f));
+            if (d > 0 && d < PG) {
+                float g = 1.0f - d / PG;
+                s_pglow[y][x] = (uint8_t)(g * g * 255.0f);
+            } else {
+                s_pglow[y][x] = 0;
+            }
+            s_pedge[y][x] = (uint8_t)(d > -2.0f && d <= 0.5f ? 255 : d > -3.0f && d <= -2.0f ? 110 : 0);
+        }
+    s_pmask_ready = 1;
+}
+
+static void mix(uint32_t* p, int r, int g, int b, int a) {
+    uint32_t c = *p;
+    if (a > 255) a = 255;
+    *p = (c & 0xFF000000u) | ((uint32_t)((R_(c) * (255 - a) + r * a) / 255) << 16) |
+         ((uint32_t)((G_(c) * (255 - a) + g * a) / 255) << 8) | (uint32_t)((B_(c) * (255 - a) + b * a) / 255);
+}
+
+/* the aurora under the card: the same 160x120 sky as the loading screen, its
+ * upper three quarters squeezed onto the card (the bands fade out below) */
+static void panel_sky(uint32_t* img, int pitch, uint32_t t_ms) {
+    static int16_t row0[W][3], row1[W][3];
+    int y, x, ly_prev = -1, br, bgc, bb;
+    aurora(t_ms);
+    for (y = 0; y < PH; y++) {
+        int sy = 8 + y * 3 / 4, ly = sy >> 2, k = sy & 3;   /* the upper sky, where the bands are */
+        uint32_t* d = img + (size_t)y * (size_t)pitch;
+        if (ly != ly_prev) {
+            widen(ly, row0);
+            widen(ly + 1, row1);
+            ly_prev = ly;
+        }
+        bg_at(sy, &br, &bgc, &bb);
+        for (x = 0; x < PW; x++) {
+            int sx = PX0 + x;
+            int r = (row0[sx][0] * (4 - k) + row1[sx][0] * k) >> 2, g = (row0[sx][1] * (4 - k) + row1[sx][1] * k) >> 2,
+                b = (row0[sx][2] * (4 - k) + row1[sx][2] * k) >> 2;
+            /* the bands twice as strong as on the loading screen: the card is
+             * small and the frozen game around it is dimmed */
+            r = br + (r - br) * 2, g = bgc + (g - bgc) * 2, b = bb + (b - bb) * 2;
+            d[x] = rgb(r, g, b);
+        }
+    }
+}
+
+/* fewer sparks than the loading screen, rising through the card */
+static void panel_sparks(uint32_t* img, int pitch, uint32_t t_ms) {
+    uint32_t seed = 0x2545F491u;
+    int i;
+    for (i = 0; i < 20; i++) {
+        uint32_t span = PH + 20, speed, x0, ph, y, life;
+        int x, a, dx, dy;
+        seed = seed * 1664525u + 1013904223u;
+        x0 = PG + (seed >> 8) % (PW - 2 * PG);
+        seed = seed * 1664525u + 1013904223u;
+        speed = 8 + ((seed >> 8) % 14);
+        seed = seed * 1664525u + 1013904223u;
+        ph = (seed >> 8) % span;
+        y = (t_ms / 1000u * speed + ((t_ms % 1000u) * speed) / 1000u + ph) % span;
+        life = y;
+        x = (int)x0 + (sinq((int)(t_ms / 8u) + i * 131) * 5 >> 14);
+        y = (uint32_t)(PH + 10) - y;
+        a = (int)(life < span / 2 ? life : span - life) * 2 * 40 / (int)span;
+        for (dy = -1; dy <= 1; dy++)
+            for (dx = -1; dx <= 1; dx++) {
+                int k = (dx == 0 && dy == 0) ? 4 : (dx == 0 || dy == 0) ? 2 : 1;
+                if (x + dx < 0 || x + dx >= PW || (int)y + dy < 0 || (int)y + dy >= PH) continue;
+                if (s_pmask[(int)y + dy][x + dx] < 255) continue;
+                add_px(img, pitch, x + dx, (int)y + dy, a * k * 2 / 8, a * k * 5 / 8, a * k * 6 / 8);
+            }
+    }
+}
+
+static void shadowed(uint32_t* img, int pitch, const char* s, int x, int y, int zoom, uint32_t col) {
+    glyphs(img, pitch, s, x + 1, y + 1, zoom, rgb(2, 4, 12), 0, 0);
+    glyphs(img, pitch, s, x, y, zoom, col, 0, 0);
+}
+
+/* a row's top: the actions sit a little apart from the settings */
+static int row_y(const xhw_panel* p, int r) {
+    int y = P_ROWS_Y + r * P_ROW_H, i;
+    for (i = 0; i < r && i + 1 < p->rows; i++)
+        if (p->kind[i] != XHW_PANEL_ACTION && p->kind[i + 1] == XHW_PANEL_ACTION) y += P_ACTION_GAP;
+    return y;
+}
+
+void xhw_panel_render(uint32_t* img, int pitch, const xhw_panel* p) {
+    static int s_hl_y = -1;   /* the highlight's place: it slides to the selected row */
+    uint32_t t = p->t_ms;
+    int x, y, r, tz = 2, tw, rows = p->rows > XHW_PANEL_ROWS ? XHW_PANEL_ROWS : p->rows;
+    sin_init();
+    if (!s_pmask_ready) panel_mask();
+    s_clip_w = PW;
+    s_clip_h = PH;
+    panel_sky(img, pitch, t + 4000u);   /* a few seconds into the sky: the bands are up */
+
+    /* the title: white, the wordmark's sweep every 3.5 s */
+    if (xhw_splash_text_width(p->title, 2) > P_X1 - P_X0) tz = 1;
+    tw = xhw_splash_text_width(p->title, tz);
+    {
+        uint32_t ph = (t + 3300u) % 3500u;
+        int sweep_w = 0, sweep_x = 0, tx = (PW - tw) / 2, ty = P_TITLE_Y + (tz == 1 ? 8 : 0);
+        if (ph < 700u) {
+            sweep_w = 36;
+            sweep_x = tx - sweep_w + (int)(ph * (uint32_t)(tw + 2 * sweep_w) / 700u);
+        }
+        glyphs(img, pitch, p->title, tx + 2, ty + 2, tz, rgb(2, 4, 12), 0, 0);
+        glyphs(img, pitch, p->title, tx, ty, tz, rgb(236, 236, 244), sweep_x, sweep_w);
+    }
+    /* the bar's green as a line, growing out from the middle as the menu opens */
+    {
+        int len = P_X1 - P_X0, grow = t >= 300u ? len : (int)((uint32_t)len * t / 300u);
+        int x0 = P_X0 + (len - grow) / 2, hl = (int)((t / 4u) % (uint32_t)(len + 80)) - 40;
+        for (y = 0; y < 3; y++) {
+            uint32_t* row = img + (size_t)(P_LINE_Y + y) * (size_t)pitch;
+            int dr = (1 - y) * 14, dg = (1 - y) * 10, db = (1 - y) * 12;
+            for (x = x0; x < x0 + grow; x++) {
+                int d = x - P_X0 - hl, k = 0;
+                if (d < 0) d = -d;
+                if (d < 40) k = (40 - d) * 2;
+                row[x] = rgb(120 + dr + k / 2, 200 + dg + k / 3, 110 + db + k / 2);
+            }
+        }
+    }
+    if (p->sub_left[0]) shadowed(img, pitch, p->sub_left, P_X0, P_SUB_Y, 1, rgb(150, 200, 140));
+    if (p->sub_right[0])
+        shadowed(img, pitch, p->sub_right, P_X1 - xhw_splash_text_width(p->sub_right, 1), P_SUB_Y, 1, rgb(120, 132, 158));
+
+    /* the highlight: a teal glow fading to the right, the green marker, a glint */
+    if (p->sel >= 0 && p->sel < rows) {
+        int target = row_y(p, p->sel) - 2, hx0 = PG + 12, hx1 = PW - PG - 12, gl;
+        if (s_hl_y < 0 || t < 40u) s_hl_y = target;
+        if (s_hl_y != target) s_hl_y += (target - s_hl_y + (target > s_hl_y ? 1 : -1)) / 2;
+        gl = (int)((t / 3u) % (uint32_t)(hx1 - hx0 + 400)) - 60;
+        for (y = s_hl_y; y < s_hl_y + 20; y++) {
+            uint32_t* row = img + (size_t)y * (size_t)pitch;
+            int edge = (y == s_hl_y || y == s_hl_y + 19) ? 2 : 1;
+            for (x = hx0; x < hx1; x++) {
+                int a = 120 - (x - hx0) * 90 / (hx1 - hx0), d = x + (y - s_hl_y) / 2 - hx0 - gl;
+                if (d < 0) d = -d;
+                if (d < 30) a += (30 - d) * 3;
+                mix(&row[x], 40, 140, 160, a / edge);
+            }
+            for (x = hx0; x < hx0 + 3; x++) row[x] = y < s_hl_y + 2 ? rgb(170, 235, 160) : rgb(120, 200, 110);
+        }
+    }
+    /* the rows; a thin rule before the actions */
+    for (r = 0; r < rows; r++) {
+        int ry = row_y(p, r), sel = r == p->sel, act = p->kind[r] == XHW_PANEL_ACTION;
+        uint32_t lc = sel ? rgb(255, 236, 150) : act ? rgb(176, 192, 224) : rgb(220, 226, 240);
+        if (r > 0 && act && p->kind[r - 1] != XHW_PANEL_ACTION) {
+            uint32_t* row = img + (size_t)(ry - P_ACTION_GAP / 2 - 2) * (size_t)pitch;
+            for (x = P_X0; x < P_X1; x++) mix(&row[x], 90, 110, 150, 120);
+        }
+        shadowed(img, pitch, p->label[r], P_X0 + (sel ? 6 : 0), ry, 1, lc);
+        if (p->value[r][0]) {
+            int vw = xhw_splash_text_width(p->value[r], 1), vx = P_X1 - vw - (sel ? 16 : 0) - (p->star[r] ? 16 : 0);
+            shadowed(img, pitch, p->value[r], vx, ry, 1, sel ? rgb(250, 250, 255) : rgb(150, 165, 190));
+            if (sel) {
+                int pulse = (sinq((int)(t / 2u)) * 3) >> 14;
+                shadowed(img, pitch, "<", vx - 16 - pulse, ry, 1, rgb(150, 220, 140));
+                shadowed(img, pitch, ">", P_X1 - 8 - (p->star[r] ? 16 : 0) + pulse, ry, 1, rgb(150, 220, 140));
+            }
+            if (p->star[r]) shadowed(img, pitch, "*", P_X1 - 8, ry, 1, rgb(255, 200, 110));
+        }
+    }
+    {
+        int iy = row_y(p, rows - 1) + P_ROW_H + 10;
+        if (p->info[0]) shadowed(img, pitch, p->info, P_X0, iy, 1, rgb(150, 165, 190));
+        if (p->note[0]) shadowed(img, pitch, p->note, P_X0, iy + 20, 1, rgb(255, 214, 120));
+        if (p->footer[0])
+            shadowed(img, pitch, p->footer, (PW - xhw_splash_text_width(p->footer, 1)) / 2, PH - PG - 26, 1,
+                     rgb(110, 120, 140));
+    }
+    panel_sparks(img, pitch, t);
+
+    /* the shape: the teal edge, the body's coverage and the glow in alpha */
+    {
+        int pulse = 200 + ((sinq((int)(t / 3u)) * 55) >> 14);
+        for (y = 0; y < PH; y++) {
+            uint32_t* row = img + (size_t)y * (size_t)pitch;
+            for (x = 0; x < PW; x++) {
+                int m = s_pmask[y][x];
+                if (s_pedge[y][x] && m) mix(&row[x], 90, 190, 205, s_pedge[y][x] * 3 / 4);
+                if (m == 255) continue;
+                if (m) {
+                    row[x] = (row[x] & 0xFFFFFFu) | ((uint32_t)m << 24);
+                } else {
+                    int g = s_pglow[y][x] * pulse / 255 * 150 / 255;
+                    row[x] = ((uint32_t)g << 24) | 0x3CA8BEu;   /* teal glow */
+                }
+            }
+        }
+    }
+    s_clip_w = W;
+    s_clip_h = H;
 }

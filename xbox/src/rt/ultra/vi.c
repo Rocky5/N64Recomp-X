@@ -13,8 +13,15 @@
  * tasks run synchronously on the scheduler's thread, retraces pile up
  * meanwhile, and the task's own SP/DP done events (posted as it returns)
  * found the queue full and were lost; the game then waited for its RDP
- * timeout (Wings64-X console run 3). A late retrace message is harmless. */
+ * timeout (Wings64-X console run 3). A late retrace message is harmless.
+ *
+ * DIVERGES: while the BACK menu is open no retrace message goes out, so the
+ * game waits at its retrace (../settings_menu.c), and this thread drives
+ * the menu. */
 #include "ultra.h"
+
+int xrc_menu_open(void);
+void xrc_menu_vi(unsigned retrace);
 
 #ifndef XRC_VI_RESERVE
 #define XRC_VI_RESERVE 2
@@ -37,7 +44,8 @@ static void vi_thread(void* arg) {
         if (s_cur != s_next) s_cur = s_next;
         s_retrace++;
         mq = s_mq;
-        if (mq && s_retrace % s_every == 0) {
+        xrc_menu_vi(s_retrace);
+        if (mq && s_retrace % s_every == 0 && !xrc_menu_open()) {
             int32_t count = (int32_t)rd32(mq + MQ_MSGCOUNT), valid = (int32_t)rd32(mq + MQ_VALIDCOUNT);
             if (!XRC_VI_RESERVE || valid + 1 + XRC_VI_RESERVE <= count) xu_send(mq, s_msg, 0, 0);
         }

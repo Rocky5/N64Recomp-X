@@ -129,7 +129,7 @@ void xhw_pad_poll(void) {
     for (i = 0; i < n; i++) open_device(i);
 }
 
-/* BACK (unmapped by default): a screenshot of the next frame to E:, in test
+/* BACK + WHITE (BACK alone opens the BACK menu): a screenshot of the next frame to E:, in test
  * builds (XHW_TEST_BUILD, xhw.h) or with settings.ini's `screenshots = 1`. */
 static volatile int s_shots;
 void xhw_pad_set_shots(int on) { s_shots = on; }
@@ -151,7 +151,7 @@ static void shot_button(int port, uint32_t buttons) {
     static uint32_t s_prev[PORTS];
     uint32_t pressed = buttons & ~s_prev[port];
     if (!XHW_TEST_BUILD && !s_shots) return;
-    if (pressed & XHW_BTN_BACK) xhw_shot_request(0);
+    if ((buttons & XHW_BTN_BACK) && (pressed & XHW_BTN_WHITE)) xhw_shot_request(0);
     s_prev[port] = buttons;
 }
 
