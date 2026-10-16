@@ -124,6 +124,9 @@ typedef uint64_t gpr;
 #define MEM_B(offset, reg) (*(int8_t*)(rdram + (XRC_ADDR((reg) + (offset)) ^ 3)))
 #define MEM_HU(offset, reg) (*(uint16_t*)(rdram + (XRC_ADDR((reg) + (offset)) ^ 2)))
 #define MEM_BU(offset, reg) (*(uint8_t*)(rdram + (XRC_ADDR((reg) + (offset)) ^ 3)))
+/* lwu (64-bit code): the word zero-extended (upstream's generator emits it; the
+ * library sweep found it in Bomberman 64: The Second Attack!) */
+#define MEM_WU(offset, reg) (*(uint32_t*)(rdram + XRC_ADDR((reg) + (offset))))
 
 /* the high word at the lower address, as upstream */
 #define SD(val, offset, reg) { \
