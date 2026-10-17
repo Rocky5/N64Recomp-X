@@ -1217,4 +1217,12 @@ it is C++, its virtual functions reached only through vtables, and the
 521st lookup returned nothing ("no function at 80029d30"). The table holds
 4096 now, with a hash index (`XRC_MAX_LEARN`); Paperboy presents 1447
 frames in 35 s at ~50 fps.
+A mini sweep at `4769cad` (s8b, 12 games): Paperboy presents (1147 frames,
+2026 learn lines); the others fail as before for their own reasons
+(Bomberman 64 and AeroGauge "no function", Buck Bumble, Donald Duck,
+Pokémon Stadium 2 no frames, Goemon a KUSEG write, Big Mountain 2000 a
+divide by zero, Rayman 2 a NULL read). Clay Fighter 63⅓ and Top Gear
+Overdrive draw a frame or two and wait: a frame left open with no task and
+no matching swap is now presented by the VI thread after 6 retraces
+(`XRC_SWAP_STALE`); Clay Fighter shows its frame again.
 

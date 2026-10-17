@@ -52,6 +52,22 @@ void xrc_gfx_boot(void) {
 #endif
 static int s_swapped;
 static unsigned s_open_tasks;   /* tasks since the last present on a swap */
+static volatile int s_busy;               /* a task in the interpreter */
+static volatile unsigned s_task_retrace;  /* the retrace the last task ended at */
+#ifndef XRC_SWAP_STALE
+#define XRC_SWAP_STALE 6   /* retraces an open frame waits for its swap before it is presented anyway */
+#endif
+
+/* the VI thread, every retrace: a frame left open with no task and no swap
+ * to its buffer for XRC_SWAP_STALE retraces (a game that draws once and
+ * waits, or swaps a buffer it did not draw into) is presented as it is */
+void xrc_gfx_vi(unsigned retrace) {
+    if (!XRC_PRESENT_ON_SWAP || !s_up || !s_swapped || s_busy || !f3d_frame_open()) return;
+    if (retrace - s_task_retrace < XRC_SWAP_STALE) return;
+    xrc_gfx_lock();
+    if (!s_busy && f3d_frame_open()) f3d_present_frame();
+    xrc_gfx_unlock();
+}
 
 /* osViSwapBuffer (ultra/vi.c) */
 void xrc_gfx_swap(uint32_t fb) {
@@ -87,8 +103,11 @@ void xrc_gfx_task(uint32_t task) {
         xhw_logf("[GFX] %u tasks and no swap to their buffer: frames presented at every task's end", XRC_SWAP_TASKS);
     }
     before = f3d_presents();
+    s_busy = 1;
     f3d_set_ucode(gfx_ucode_at(rd32(task + TK_UCODE_DATA), rd32(task + TK_UCODE_DATA_SIZE)));
     f3d_run(rd32(task + TK_DATA_PTR), !split);
+    s_busy = 0;
+    s_task_retrace = xu_retrace();
     if (split) s_open_tasks = f3d_presents() != before ? 0 : s_open_tasks + 1;
     s_dp = f3d_last_fullsync();
     xrc_gfx_unlock();

@@ -2214,6 +2214,7 @@ int f3d_swap(uint32_t fb) {
 }
 
 void f3d_split_frames(int on) { s_split = on; }
+int f3d_frame_open(void) { return s_fopen; }
 
 void f3d_run(uint32_t dl, int present) {
     uint64_t t0 = xhw_time_us();
