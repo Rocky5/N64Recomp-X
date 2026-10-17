@@ -25,6 +25,7 @@ class Feat:
     cache: set = field(default_factory=set)     # cache op codes
     special: set = field(default_factory=set)   # eret tlbp tlbr tlbwi sync div 64
     hw: dict = field(default_factory=dict)      # physical HW address -> 'r'|'w'|'rw'
+    k1ram: bool = False                         # RDRAM by a constant uncached (KSEG1) address: a memory-size probe
     arg: dict = field(default_factory=dict)     # (argno, offset, size) -> 'r'|'w'|'rw'
     consts: set = field(default_factory=set)    # immediates and lui values formed
     globals_: dict = field(default_factory=dict)  # constant RAM address -> 'r'|'w'|'rw'
@@ -162,6 +163,8 @@ def features(img, f):
                     _mark(ft.hw, a & 0x1FFFFFFF, rw)
                 elif 0x80000000 <= a < 0x80800000:
                     _mark(ft.globals_, a, rw)
+                elif 0xA0000000 <= a < 0xA0800000:
+                    ft.k1ram = True
         # value tracking
         d = i.dest
         if i.is_jal or i.is_jalr:

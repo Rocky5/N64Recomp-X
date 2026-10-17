@@ -76,6 +76,9 @@ class Namer:
 def _anchors(N):
     for a, ft in N.f.items():
         c0, leaf, sz = ft.cop0, ft.leaf, ft.size
+        # osGetMemSize: writes 0x12345678 and 0x87654321 through uncached RDRAM a MB at a time
+        if {0x12340000, 0x87650000, 0xA0000000} <= ft.consts and not c0 and sz <= 0x200:
+            N.one([a], 'osGetMemSize', 'the 0x12345678 / 0x87654321 probe through KSEG1 RDRAM')
         if leaf and c0 == {('mf', 12), ('mt', 12)} and not ft.hw:
             if ft.returns_value and 0 not in ft.args_used:
                 N.one([a], '__osDisableInt', 'mfc0/mtc0 Status, clears IE, returns the old IE')
@@ -285,6 +288,24 @@ def _structure(N):
         if stp:
             pairs = [c for c in cands if any(stp in f[x].calls and c in f[x].calls for x in N.callers.get(c, ()))]
             N.one(pairs, 'osGetThreadPri', 'returns arg0->priority; called next to osSetThreadPri')
+    # the thread getters by their shape: t, or the running thread when t is NULL
+    # (__osRunningThread, a global the runtime never sets: a game's own copy reads
+    # NULL+0x14), then one field: +0x14 id (osGetThreadId), +0x4 priority
+    # (osGetThreadPri). Both read the same global; a name only when one fits each.
+    getters = {}
+    for a, ft in f.items():
+        if a in N.name or not ft.leaf or ft.size > 0x20 or ft.args_used != {0} or not ft.returns_value:
+            continue
+        if len(ft.globals_) != 1 or len(ft.gptr) != 1:
+            continue
+        (g, off, size), = ft.gptr.keys()
+        if size == 4 and off in (0x14, 0x4) and list(ft.globals_)[0] == g:
+            getters.setdefault(off, []).append((a, g))
+    for off, name in ((0x14, 'osGetThreadId'), (0x4, 'osGetThreadPri')):
+        cs = getters.get(off, [])
+        other = getters.get(0x4 if off == 0x14 else 0x14, [])
+        if len(cs) == 1 and (not other or len(other) != 1 or other[0][1] == cs[0][1]):
+            N.one([cs[0][0]], name, f'returns arg0 (or the running thread) +{off:#x}')
     # managers: create a queue, a thread, start it, set an event
     ct = N.a_('osCreateThread')
     cq = N.a_('osCreateMesgQueue')

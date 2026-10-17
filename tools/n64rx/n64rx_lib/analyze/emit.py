@@ -143,6 +143,15 @@ def write_syms(a: Analysis, nm, path):
     pathlib.Path(path).write_text('\n'.join(lines), encoding='utf-8', newline='\n')
 
 
+def _reg_or_probe(ft):
+    """a register by a fixed address, or RDRAM by a fixed uncached one (a game's
+    own memory-size probe at 0xA0400000: Ocarina of Time, F-Zero X, Bassmasters;
+    the interpreter's model reads past RDRAM as nothing, recompiled code faults)"""
+    return bool(ft.hw) or ft.k1ram or any(0xA0000000 <= c < 0xA0800000 and not c & 0xFFFF for c in ft.consts)
+    # (the upper half of an uncached RDRAM address formed: Ocarina of Time's -O0 check keeps the
+    # address on the stack, out of the constant tracker's reach; a handful of functions a game)
+
+
 def hw_funcs(a: Analysis, live, nm, replaced):
     """the live functions the recompiler would translate that reach a hardware
     register by a constant KSEG1 address (libultra the rules did not name:
@@ -151,7 +160,7 @@ def hw_funcs(a: Analysis, live, nm, replaced):
     stores there going to the register model (xbox/src/rt/mmio.c). A function
     the rules named and the runtime replaces stays replaced."""
     return {x: nm[x] for x, f in a.all_funcs().items()
-            if x in live and x != a.entry and nm[x] not in replaced and features(a.img, f).hw}
+            if x in live and x != a.entry and nm[x] not in replaced and _reg_or_probe(features(a.img, f))}
 
 
 def report(a: Analysis, ids, live, nm, replaced):
