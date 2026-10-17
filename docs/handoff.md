@@ -1226,3 +1226,11 @@ Overdrive draw a frame or two and wait: a frame left open with no task and
 no matching swap is now presented by the VI thread after 6 retraces
 (`XRC_SWAP_STALE`); Clay Fighter shows its frame again.
 
+**Bomberman 64 (open, the same before today: s7, s8, s8b).** "No function
+at ade00008": its loader `func_8000083C(index, dest, arg)` DMAs a code
+segment (ROM index << 17) to `dest` and calls `dest(arg)`; on thread 3 the
+call came with `dest` = 0x80020668, thread 3's own OSThread, so the DMA
+wrote code over the thread's stack and the callback read back an
+instruction word. Where that argument comes from (its handler table,
+`func_80001A30`) is next.
+
