@@ -277,27 +277,47 @@ void xhw_log_keep(const char* name) {
     LeaveCriticalSection(&s_log_cs);
 }
 
+/* The lock's holder runs above every game thread while it holds it: a
+ * low-priority holder (an idle-priority N64 thread logging, Donkey Kong 64's
+ * captures over COM1) was preempted for good by busy game threads, and every
+ * thread that logs then waited behind it (the VI thread: retraces stopped).
+ * Kill switch: -DXHW_LOG_BOOST=0. */
+#ifndef XHW_LOG_BOOST
+#define XHW_LOG_BOOST 1
+#endif
+static KPRIORITY log_enter(void) {
+    EnterCriticalSection(&s_log_cs);
+    if (!XHW_LOG_BOOST || KeGetCurrentIrql() >= DISPATCH_LEVEL) return -1;
+    return KeSetPriorityThread(KeGetCurrentThread(), 15);
+}
+static void log_leave(KPRIORITY old) {
+    LeaveCriticalSection(&s_log_cs);
+    if (old >= 0) KeSetPriorityThread(KeGetCurrentThread(), old);
+}
+
 /* One line, newline appended if missing, under one lock so lines from other
  * threads never land inside it. */
 static void log_write(const char* s, size_t n, int newline) {
+    KPRIORITY old;
     log_lock_init();
-    EnterCriticalSection(&s_log_cs);
+    old = log_enter();
     s_log_trace = n >= 6 && memcmp(s, "[DRAW]", 6) == 0;
     log_write_locked(s, n);
     if (newline && (n == 0 || s[n - 1] != '\n')) log_write_locked("\n", 1);
     s_log_trace = 0;
-    LeaveCriticalSection(&s_log_cs);
+    log_leave(old);
 }
 
 /* COM1 only, one whole line: bulk output (screenshots) that would drown
  * boot.log, whose every line is flushed to disk. */
 void xhw_log_com1_line(const char* line) {
     size_t n = strlen(line);
+    KPRIORITY old;
     log_lock_init();
-    EnterCriticalSection(&s_log_cs);
+    old = log_enter();
     com1_write(line, n);
     if (n == 0 || line[n - 1] != '\n') com1_write("\n", 1);
-    LeaveCriticalSection(&s_log_cs);
+    log_leave(old);
 }
 
 size_t xhw_log_tail(char* out, size_t cap) {
