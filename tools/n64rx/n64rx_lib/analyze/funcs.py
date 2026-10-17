@@ -55,7 +55,19 @@ class Image:
     def seg(self, v):
         if self.focus is not None and self.focus.has(v):
             return self.focus
-        for s in self.segments:
+        # the segments that touch v's 4 KB page, in list order (the first that holds v wins, as a scan
+        # of the list would): Mario Party's 131 segments made the scan most of a 28-minute analysis
+        key = (len(self.segments), id(self.segments[-1]) if self.segments else 0,
+               sum(s.size for s in self.segments[-4:]))
+        if getattr(self, '_pages_key', None) != key:
+            self._pages, self._pages_key = {}, key
+        page = v >> 12
+        cands = self._pages.get(page)
+        if cands is None:
+            lo, hi = page << 12, (page << 12) + 0x1000
+            cands = [s for s in self.segments if s.vram < hi and s.vram + s.size > lo]
+            self._pages[page] = cands
+        for s in cands:
             if s.has(v):
                 return s
         return None

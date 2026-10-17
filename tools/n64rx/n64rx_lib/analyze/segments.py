@@ -27,7 +27,17 @@ ARG_REGS = (4, 5, 6, 7)
 
 def _consts(img, f):
     """(jal pc, target, {arg: value}) for every call in f, args by constant
-    propagation along the function's straight-line order"""
+    propagation along the function's straight-line order (kept per
+    function: the bytes do not change between the segment search's rounds)"""
+    cache = img.__dict__.setdefault('_consts_cache', {})
+    s = img.seg(f.start)
+    key = (f.start, f.end, s.rom - s.vram if s else None)
+    if key not in cache:
+        cache[key] = _consts_walk(img, f)
+    return cache[key]
+
+
+def _consts_walk(img, f):
     regs, stack, out = {0: 0}, {}, []
     pc = f.start
     while pc < f.end:
@@ -131,23 +141,42 @@ def in_data(img, rom_size):
     (ROM start, ROM end, RAM) word triple anywhere in the ROM: the loads a
     game describes in data rather than in code (a script's load command, an
     overlay table). The same test as for a call decides which are code."""
-    import struct
-    rom = img.rom
-    ws = struct.unpack(f'>{len(rom) // 4}I', rom[:len(rom) // 4 * 4])
     out = set()
+    for i, v, r, e, text, text_end in _triples(img.rom, rom_size):
+        if _taken(img, r, v):
+            continue
+        out.add((r, v, e - r, f'a load described in ROM data at {4 * i:#x}', 3 if text else 2))
+        if text:
+            img.text_ends[(r, v)] = text_end
+    return out
+
+
+_TRIPLES = {}
+
+
+def _triples(rom, rom_size):
+    """the word triples in_data tests, found once per ROM (the scan of every
+    word was most of Mario Party's analysis, repeated each round)"""
+    key = (id(rom), len(rom), rom_size)
+    if key in _TRIPLES:
+        return _TRIPLES[key]
+    import struct
+    ws = struct.unpack(f'>{len(rom) // 4}I', rom[:len(rom) // 4 * 4])
+    out = []
     for i in range(len(ws) - 2):
         a, b, c = ws[i], ws[i + 1], ws[i + 2]
         for v, r, e in ((a, b, c), (c, a, b)):
-            if 0x80000400 <= v < 0x80800000 and not v & 3 and 0x1000 <= r < e <= rom_size and not r & 3 and                     0x100 <= e - r <= 0x400000 and not _taken(img, r, v):
+            if 0x80000400 <= v < 0x80800000 and not v & 3 and 0x1000 <= r < e <= rom_size and not r & 3 and \
+                    0x100 <= e - r <= 0x400000:
                 # (start, end, RAM, text start, text end, ...): a descriptor
                 # that says where its code is (HAL's overlay tables) names a
                 # segment even when no known code calls into it (a scene's
                 # entry reached through a pointer): natural 3
                 text = (OVERLAYS and (v, r, e) == (c, a, b) and i + 4 < len(ws) and ws[i + 3] == v and
                         v < ws[i + 4] <= v + (e - r) and not ws[i + 4] & 3)
-                out.add((r, v, e - r, f'a load described in ROM data at {4 * i:#x}', 3 if text else 2))
-                if text:
-                    img.text_ends[(r, v)] = ws[i + 4]
+                out.append((i, v, r, e, text, ws[i + 4] if text else 0))
+    _TRIPLES.clear()
+    _TRIPLES[key] = out
     return out
 
 
