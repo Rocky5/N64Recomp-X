@@ -138,13 +138,15 @@ static void boot_block(void) {
 
 /* The IPL3 ends by copying its own last part from SP DMEM to RDRAM 0 and
  * running it there (`lw t5,0(t0); sw t5,0(t1)` from DMEM X to Y, t1 from
- * 0xA0000000, then `jr 0x80000000`): DMEM 0x4C0..0x774 in the common one,
+ * 0xA0000000 + D, then `jr 0x80000000 + D`; D is 4 in the 6105's, 0 in the
+ * others): DMEM 0x4C0..0x774 in the common one,
  * 0x4C0..0x768 in Banjo-Kazooie's, other ranges in four more; all 268 ROMs
  * of the library have the copy. Below the exception vectors' few words that
  * osInitialize writes, the code stays in RDRAM, and games check it:
  * Banjo-Kazooie's viewport.c reads 0xA00001D8 and, without IPL3's word
  * there, draws with near 750 and far 1250 (its anti-tamper: the world cut
- * off near and far; maintainer, vbk1 on the console). DMEM holds ROM
+ * off near and far; maintainer, vbk1 on the console); Donkey Kong 64's
+ * heap.c reads 0xA00002E8 and otherwise never frees its timed objects. DMEM holds ROM
  * 0x000..0xFFF, so the range is read from the ROM. DIVERGES: none meant
  * (what the console leaves); -DXRC_IPL3_LEFT=0: low RDRAM left zero. */
 #ifndef XRC_IPL3_LEFT
@@ -154,7 +156,7 @@ static uint32_t be32(const uint8_t* p) { return (uint32_t)p[0] << 24 | (uint32_t
 
 static void ipl3_left(void) {
     static uint8_t ipl[0x1000];
-    uint32_t i, j, x, y;
+    uint32_t i, j, x, y, d;
     if (!XRC_IPL3_LEFT || xu_rom_read(0, ipl, sizeof ipl)) return;   /* 0: read */
     for (i = 0x40; i < sizeof ipl; i += 4) {
         if (be32(ipl + i) != 0x3C09A000u) continue;   /* lui t1, 0xA000: the copy's destination */
@@ -164,10 +166,17 @@ static void ipl3_left(void) {
             if (w >> 16 == 0x2508u) x = w & 0xFFFFu;   /* addiu t0, t0, X: the start in DMEM */
             if (w >> 16 == 0x256Bu) y = w & 0xFFFFu;   /* addiu t3, t3, Y: the end */
         }
-        if (x < 0x40 || y <= x || y > sizeof ipl || y - x > 0x400u || y - x > (xrc_game.entrypoint & 0x1FFFFFFFu))
+        /* addiu t1, t1, D up to the loop's lw t5, 0(t0): the destination's
+         * offset (4 in the 6105's, which runs the copy from 0x80000004) */
+        d = 0;
+        for (j = i + 4; j < i + 0x30 && j < sizeof ipl && be32(ipl + j) != 0x8D0D0000u; j += 4)
+            if (be32(ipl + j) >> 16 == 0x2529u) d += (uint32_t)(int32_t)(int16_t)(be32(ipl + j) & 0xFFFFu);
+        if (x < 0x40 || y <= x || y > sizeof ipl || d > 0x100u || y - x + d > 0x400u ||
+            y - x + d > (xrc_game.entrypoint & 0x1FFFFFFFu))
             continue;
-        xu_rom_to_rdram(x, 0x80000000u, y - x);
-        xhw_logf("[BOOT] IPL3's last part in RDRAM 0..%03x (DMEM %03x..%03x)", (unsigned)(y - x), (unsigned)x, (unsigned)y);
+        xu_rom_to_rdram(x, 0x80000000u + d, y - x);
+        xhw_logf("[BOOT] IPL3's last part in RDRAM %03x..%03x (DMEM %03x..%03x)", (unsigned)d, (unsigned)(d + y - x),
+                 (unsigned)x, (unsigned)y);
         return;
     }
     xhw_log("[BOOT] IPL3: no copy to RDRAM found; low RDRAM left zero");

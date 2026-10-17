@@ -721,8 +721,10 @@ Banjo-Kazooie checks one (`viewport.c`: the word at 0xA00001D8 must be
 "serious near and far clipping", `vbk1`; the sky, drawn with 5 and 15000,
 disappeared with it). Chosen: at boot the runtime finds the copy in the
 ROM's own IPL3 (`addiu t0,t0,X` and `addiu t3,t3,Y` before `lui t1,0xA000`)
-and puts ROM X..Y at RDRAM 0. All 268 ROMs of the library have the copy, in
-six variants (0x4C0..0x774 in 240 of them). No game's bytes or addresses
+and puts ROM X..Y at RDRAM D (`addiu t1,t1,D` before the loop: 4 in the
+6105's, which Donkey Kong 64 checks at 0xA00002E8, 0 elsewhere). All 268
+ROMs of the library have the copy, in six variants (0x4C0..0x774 in 240 of
+them). No game's bytes or addresses
 are in the runtime: the ROM supplies them. Rejected: running the IPL3 in
 the interpreter (it initialises RDRAM and the RCP through registers the
 runtime does not model).

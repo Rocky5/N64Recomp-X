@@ -1027,6 +1027,13 @@ from the console results above.
   (black before); triangles rejected beyond far in a 600-frame window 0
   (694 of 789 before). The `[GFX] frame` line now splits rejected and
   clipped triangles by far and near. Console: not yet.
+- **Donkey Kong 64** checks the same IPL3 copy (the decomp's `heap.c`:
+  0xA00002E8 must hold 0xC86E2000, else its timed objects are never freed);
+  the 6105's copy lands at RDRAM 4, which the boot now reads from the IPL3
+  too. xemu, test build, 90 s: still presenting at 80 s (1684 frames; it
+  stopped near 790 before), no audio tasks (MusyX, open). Paper Mario and
+  Jet Force Gemini crash writing RDRAM 0 as in their earlier learning runs
+  (unchanged).
 - **Mario Kart 64's drift boosts** (the decomp's `player_controller.c`,
   read, nothing changed yet): a spark level needs the stick past -10/+10
   after MK64's own dead zone (12 of the raw value, then clamped to 53) for
