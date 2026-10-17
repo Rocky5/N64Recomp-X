@@ -505,6 +505,13 @@ static Last* last_of(void) {
         if (!s_last[i].thread && __sync_bool_compare_and_swap(&s_last[i].thread, NULL, me)) return &s_last[i];
     return &s_last[23];
 }
+uint32_t xrc_interp_last_pc(void* thread);
+uint32_t xrc_interp_last_pc(void* thread) {   /* the stall report's (ultra/thread.c) */
+    unsigned i;
+    for (i = 0; i < 24; i++)
+        if (s_last[i].thread == thread) return s_last[i].pc;
+    return 0;
+}
 void xrc_interp_crash_report(void);
 void xrc_interp_crash_report(void) {
     void* me = xhw_thread_self();

@@ -459,6 +459,8 @@ void xu_crash_regs(void) {
         }
 }
 
+uint32_t xrc_interp_last_pc(void* thread);   /* interp.c */
+
 /* the calling N64 thread's stack pointer as its context last held it (0 for
  * a runtime thread): interp.c runs the game's exception code below it */
 uint32_t xu_self_sp(void) {
@@ -582,5 +584,10 @@ void xu_stall_report(const char* why) {
                  s_thr[i].t ? (int)(int32_t)rd32(s_thr[i].t + TH_PRIORITY) : -1,
                  !w ? "runs, or waits outside a queue" : (w & 1) ? "waits for room in" : "waits for a message in",
                  (unsigned)q, w ? (unsigned)rd32(q + MQ_VALIDCOUNT) : 0u, w ? (unsigned)rd32(q + MQ_MSGCOUNT) : 0u);
+        if (!w) {   /* a running thread: where it was last (interp.c; its context's ra and sp) */
+            uint32_t pc = xrc_interp_last_pc(s_thr[i].kt);
+            xhw_logf("[OS] stall:     last interpreted pc %08x, ra %08x, sp %08x", (unsigned)pc,
+                     s_thr[i].ctx ? (unsigned)s_thr[i].ctx->r31 : 0u, s_thr[i].ctx ? (unsigned)s_thr[i].ctx->r29 : 0u);
+        }
     }
 }
