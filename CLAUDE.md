@@ -15,13 +15,15 @@ The decomps are the answer keys that make the ROM-only path stable
 (PLAN.md §6 "V"): read, compared against, never shipped.
 
 **Status (`docs/handoff.md`, "Where things stand"): M1 done; M2 mostly
-done. From the ROM alone: Mario Kart 64 plays on the console (30 fps races,
-sound, Controller Pak, the BACK menu and Paks page, the ROM inside the XBE);
-in xemu Super Smash Bros. plays a match, Mario Party 1-3 run (coroutines),
-Banjo-Kazooie reaches its new-game intro, Super Mario 64 the castle
-grounds, Ocarina of Time its title. The library sweep (s7: 139 of 246
-present frames) (`tools/xbox/sweep.py`) ranks what blocks the
-rest (`docs/analyzer.md`). CI is manual-only (free minutes).** `docs/PLAN.md` is binding on
+done. From the ROM alone, on the console: Mario Kart 64 (30 fps races,
+sound, Controller Pak, the BACK menu and Paks page), Smash Bros. (60 fps),
+Banjo-Kazooie and Mario Party (fixes for their clipping and flicker staged).
+In xemu: Ocarina of Time past its title into Kokiri Forest with music,
+Super Mario 64 the castle grounds, Donkey Kong 64 its file screen, Pokémon
+Snap Oak's lab, Paper Mario past its copy-protection boot. The library
+sweep (s7: 139 of 246 present frames; s8 running) (`tools/xbox/sweep.py`)
+ranks what blocks the rest (`docs/analyzer.md`). CI is manual-only (free
+minutes).** `docs/PLAN.md` is binding on
 the approach (§1), the architecture (§3), the build, game packs and tests
 (§4), the feature specs (§5), the milestone order and exit checks (§6).
 `docs/research.md` holds the evidence. Read both, then `docs/handoff.md` and
