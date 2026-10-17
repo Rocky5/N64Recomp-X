@@ -240,6 +240,8 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_WATCH=<N64 address>` | unset | diagnosis: every write to that word logged with the writer's EIP and the new value (`[WATCH]`, x86 DR0; `xhw_crash.c`) |
 | `-DXRC_TLB_HELPERS=0` | 1 | the runtime's RDRAM helpers mask a KUSEG address to physical instead of translating it through the game's TLB |
 | `N64RX_TRACE=1` (env, n64rx) | unset | diagnosis: N64Recomp's `trace_mode`; the last 64 functions entered (recompiled by name, interpreted by address) are logged with a crash (`[TRACE]`, `xbox/src/rt/trace.c`) |
+| `N64RX_GUARD=0` (env, n64rx) | 1 | functions recompiled from captured code run without checking that RDRAM still holds the bytes they were recompiled from (`guard.c`) |
+| `N64RX_CAPTURED_INTERP=1` or `=<lo>-<hi>` (env, n64rx) | 0 | diagnosis: every function in captured code (or in that vram range) is interpreted; Banjo-Kazooie past its crash with its overlay region interpreted |
 | `N64RX_RECOMP_PRECHECK=0` (env, n64rx) | 1 | what N64Recomp would crash on (a jump table outside the function's segment: it reads the ROM past its end) or refuse one run at a time (a jal to no function, a cop0 register other than Status) is left to it instead of interpreted up front |
 | `-DXRC_LEARN_CODE=0` | 1 | the safety net does not save the RDRAM block of code no ROM DMA put there (`learn_code.bin`, `[LEARNCODE]`) |
 | `-DXRC_STATUS_INIT=<value>` | 0x2000FF01 | the COP0 Status a thread starts with (libultra's: COP1 usable, every interrupt line unmasked, IE) |

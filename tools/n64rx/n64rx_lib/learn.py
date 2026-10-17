@@ -156,8 +156,9 @@ def apply(a, learnt, rom_len):
         new = [x for x in xs if x not in have]
         if not new:
             continue
-        roots = [x for x, f in have.items() if f.how != 'gap'] + new
-        a.funcs[name] = F.discover(a.img, seg, roots)
+        captured = name.startswith('code_')   # one overlay's bytes: calls into it are weak (funcs.discover)
+        roots = [x for x, f in have.items() if f.how != 'gap' and (f.how == 'entry' or not captured)] + new
+        a.funcs[name] = F.discover(a.img, seg, roots, weak_calls=captured)
         notes.append(f'{name}: {len(new)} learnt functions ({", ".join(f"{x:08X}" for x in new[:8])}'
                      f'{"..." if len(new) > 8 else ""}), {len(a.funcs[name])} functions now')
     _cross_roots(a, notes)
@@ -202,7 +203,8 @@ def _cross_roots(a, notes):
             break
         for name, (seg, xs) in want.items():
             have = a.funcs.get(name, {})
-            a.funcs[name] = F.discover(a.img, seg, [x for x, f in have.items() if f.how != 'gap'] + sorted(xs))
+            a.funcs[name] = F.discover(a.img, seg, [x for x, f in have.items() if f.how == 'entry'] + sorted(xs),
+                                       weak=sorted(xs), weak_calls=True)
             added += len(xs)
     if added:
         notes.append(f'captured code: {added} functions called from another captured segment found')

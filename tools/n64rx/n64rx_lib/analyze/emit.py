@@ -300,6 +300,14 @@ def recomp_hazards(a: Analysis, live, nm, replaced):
                 if ins.is_jal and not seg.has(ins.target) and ins.target not in starts:
                     why = f'jal {ins.target:08X}: no function there'
                     break
+                if ins.is_jal and seg.name.startswith('code_') and seg.has(ins.target) and ins.target not in starts:
+                    # into captured code where no function starts: another overlay's function at that address
+                    # (N64Recomp would make a static there and split the function that holds it)
+                    why = f'jal {ins.target:08X}: another overlay\'s function'
+                    break
+                if ins.op == 17 and ins.rs in (16, 17) and 8 <= ins.funct <= 11:   # round/trunc/ceil/floor.l: not in N64Recomp
+                    why = f'{("round", "trunc", "ceil", "floor")[ins.funct - 8]}.l.{"s" if ins.rs == 16 else "d"}'
+                    break
                 if ins.op == 16 and ins.rs in (0, 4) and ins.rd != 12:   # mfc0/mtc0: N64Recomp takes Status only
                     why = f'{"mfc0" if ins.rs == 0 else "mtc0"} of cop0 register {ins.rd}'
                     break

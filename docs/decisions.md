@@ -606,3 +606,18 @@ starts its main thread only on 6105, Banjo-Kazooie breaks its models
 unless 6103) and IPL3's word at RDRAM 0x2FE1C0 (Donkey Kong 64 waits for
 it).
 
+## Captured code is checked before it runs (2026-10-16, `guard.c`)
+
+Code captured from RDRAM was recompiled from the bytes one run saw, but
+decompressed overlays share addresses (Banjo-Kazooie's levels load at
+0x803863F0; Donkey Kong 64's and Conker's do the same). Chosen: n64rx
+hashes each captured 4 KB page as recompiled (`gen/xrc_guard.c`) and wraps
+each of its functions with a check of the page's state; an unverified page
+is hashed in RDRAM on the next call, and a page that holds other bytes runs
+its functions in the interpreter and is captured again. A page is
+unverified again when the game invalidates the instruction cache over it
+or a PI DMA writes it. Rejected for now: recompiling every variant of a
+page (the overlay sections would share vram; N64Recomp resolves such jals
+through lookups, which the runtime would then pick by hash): the next step
+once variants are captured. Kill switch `N64RX_GUARD=0`.
+

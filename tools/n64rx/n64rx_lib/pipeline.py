@@ -15,7 +15,7 @@ import time
 from . import ROOT, VERSION, N64rxError, engines, packs, romonly, rom as romlib, saves
 from . import learn as learnmod
 
-GEN_VERSION = 9   # bump when what n64rx writes into gen/ changes (the cache key)
+GEN_VERSION = 10   # bump when what n64rx writes into gen/ changes (the cache key)
 VIDEO = {'auto': 0, '480': 2, '720': 3}
 EEPROM = {'eep4k': 512, 'eep16k': 2048}
 FATX_BAD = '<>:"/\\|?*'
@@ -69,7 +69,7 @@ def cache_key(rom, pack, gpr=None, pin=None):
     """the recompile step is skipped when this is unchanged: the ROM, every
     file of the pack, the recompiler's pin, what n64rx writes, the width"""
     return hashlib.sha256(json.dumps([rom.sha1, pack.file_hash(), pin or engines.recompiler_pin(), GEN_VERSION,
-                                      gpr or '', os.environ.get('N64RX_TRACE', ''), pack.rdram_mb]).encode()).hexdigest()
+                                      gpr or '', os.environ.get('N64RX_TRACE', ''), pack.rdram_mb, os.environ.get('N64RX_GUARD', '1')]).encode()).hexdigest()
 
 
 def decide_gpr(pack, rom, override, prog, data=None):
@@ -140,6 +140,24 @@ def _ignore_dead(pack, ainfo, refused, prog):
         cfgp.write_text(text, encoding='utf-8', newline='\n')
     else:
         live_entry = None
+    # a static N64Recomp made for a jal target no function holds (static_<section>_<vram>) and then refused:
+    # the live functions that jal there are interpreted instead (Pokemon Puzzle League)
+    statics = [int(m.group(1), 16) for n in refused for m in [re.fullmatch(r'static_\d+_([0-9A-F]{8})', n)] if m]
+    if statics:
+        from .analyze.mips import Ins, words
+        a = ainfo['analysis']
+        callers = set()
+        for seg in a.img.segments:
+            for x, f in a.funcs.get(seg.name, {}).items():
+                if x not in ainfo['live'] or x not in ainfo['names']:
+                    continue
+                ws = words(a.img.rom, seg.rom + (f.start - seg.vram), (f.end - f.start) // 4)
+                if any(Ins(w, f.start + 4 * i).is_jal and Ins(w, f.start + 4 * i).target in statics
+                       for i, w in enumerate(ws)):
+                    callers.add(ainfo['names'][x])
+        refused = [n for n in refused if not re.fullmatch(r'static_\d+_[0-9A-F]{8}', n)] + sorted(callers)
+        if not callers:
+            return False
     live = [n for n in refused if by_name.get(n) in ainfo['live'] and n != live_entry]
     if any(n not in by_name for n in refused):
         return False
@@ -159,6 +177,81 @@ def _ignore_dead(pack, ainfo, refused, prog):
     if dead:
         prog.note(f'left out (dead, refused by the recompiler): {", ".join(dead)}')
     return True
+
+
+GUARD_DEF = re.compile(r'^RECOMP_FUNC void (\w+)\(uint8_t\* rdram, recomp_context\* ctx\) \{$', re.M)
+
+
+def _fnv(data):
+    """FNV-1a over big-endian words (guard.c's page_hash)"""
+    h = 0x811C9DC5
+    for i in range(0, len(data), 4):
+        h = ((h ^ int.from_bytes(data[i:i + 4], 'big')) * 0x01000193) & 0xFFFFFFFF
+    return h
+
+
+def write_guard(pack, gen, data):
+    """code captured from RDRAM (the code_* segments) runs recompiled only
+    while RDRAM still holds it (xbox/src/rt/guard.c): each 4 KB page's hash
+    of the bytes it was recompiled from goes to gen/xrc_guard.c, and each of
+    its functions is wrapped to check its pages' state first. N64RX_GUARD=0:
+    no wrappers. Returns the number of functions wrapped."""
+    import tomllib
+    pages, funcs = {}, []
+    if os.environ.get('N64RX_GUARD', '1') != '0':
+        syms = tomllib.loads(_syms_path(pack).read_text(encoding='utf-8'))
+        for sec in syms.get('section', []):
+            if not sec['name'].startswith('.code_'):
+                continue
+            v0, r0, n = sec['vram'], sec['rom'], sec['size']
+            for vp in range((v0 + 0xFFF) & ~0xFFF, v0 + n - 0xFFF, 0x1000):
+                if vp not in pages:
+                    pages[vp] = _fnv(data[r0 + vp - v0:r0 + vp - v0 + 0x1000])
+            funcs += [(f['name'], f['vram'], f['size']) for f in sec.get('functions', [])]
+    order = sorted(pages)
+    index = {vp: i for i, vp in enumerate(order)}
+    want = {}
+    for name, v, size in funcs:
+        i = index.get(v & ~0xFFF)
+        if i is None:
+            continue
+        j = index.get((v + max(size, 4) - 4) & ~0xFFF, i)
+        want[name] = (v, i, j)
+    wrapped = 0
+    for f in sorted(gen.glob('funcs_*.c')):
+        text = f.read_text(encoding='utf-8')
+        hit = [m for m in GUARD_DEF.finditer(text) if m.group(1) in want]
+        if not hit:
+            continue
+        out, last = [], 0
+        for k, m in enumerate(hit):
+            name = m.group(1)
+            v, i, j = want[name]
+            out.append(text[last:m.start()])
+            if k == 0:
+                out.append('extern volatile unsigned char xrc_guard_state[];\n'
+                           'void xrc_guard_miss(uint8_t* rdram, recomp_context* ctx, uint32_t vram, unsigned i, '
+                           'unsigned j, recomp_func_t* body);\n')
+            out.append(f'static void {name}__g(uint8_t* rdram, recomp_context* ctx);\n'
+                       f'RECOMP_FUNC void {name}(uint8_t* rdram, recomp_context* ctx) {{\n'
+                       f'    if (xrc_guard_state[{i}] == 1 && xrc_guard_state[{j}] == 1) {name}__g(rdram, ctx);\n'
+                       f'    else xrc_guard_miss(rdram, ctx, 0x{v:08X}u, {i}u, {j}u, {name}__g);\n'
+                       f'}}\n'
+                       f'static void {name}__g(uint8_t* rdram, recomp_context* ctx) {{')
+            last = m.end()
+            wrapped += 1
+        out.append(text[last:])
+        f.write_text(''.join(out), encoding='utf-8', newline='\n')
+    n = max(len(order), 1)
+    rows = lambda vals: ',\n'.join('    ' + ', '.join(f'0x{x:08X}u' for x in vals[i:i + 8]) for i in range(0, len(vals), 8)) or '    0'
+    (gen / 'xrc_guard.c').write_text(
+        '/* generated by n64rx: the captured pages\' hashes as recompiled (xbox/src/rt/guard.c) */\n'
+        '#include <stdint.h>\n'
+        f'const uint32_t xrc_guard_vram[{n}] = {{\n{rows(order)}\n}};\n'
+        f'const uint32_t xrc_guard_hash[{n}] = {{\n{rows([pages[v] for v in order])}\n}};\n'
+        f'const unsigned xrc_guard_count = {len(order)}u;\n'
+        f'volatile unsigned char xrc_guard_state[{n}];\n', encoding='utf-8', newline='\n')
+    return wrapped
 
 
 def write_alias_c(pack, gen):
@@ -488,6 +581,9 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
             prog.note('loads into $zero kept as reads')
         extern = write_extern_h(gen)
         ninterp = write_interp_c(pack, gen)
+        nguard = write_guard(pack, gen, recomp_rom.read_bytes())
+        if nguard:
+            prog.note(f'{nguard} functions from captured code checked against RDRAM before they run (guard.c)')
         if write_alias_c(pack, gen):
             prog.note("the game's own copies of libultra go to the runtime's (gen/xrc_alias.c)")
         if ninterp:

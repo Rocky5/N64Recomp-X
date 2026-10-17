@@ -325,27 +325,33 @@ def walk(img, start, starts):
     return f
 
 
-def discover(img, seg, roots, weak=()):
+def discover(img, seg, roots, weak=(), weak_calls=False):
     """Every function of `seg` reachable from `roots`, then its gaps, and
     again from what the gaps called, until nothing new turns up. `weak`:
     roots that may be another overlay's call target at the same address; one
-    that a function's own branches run past is not a start."""
+    that a function's own branches run past is not a start. `weak_calls`:
+    every call target found is weak (code captured from RDRAM: one overlay's
+    bytes, where other code jals into the overlays loaded there at other
+    times; Banjo-Kazooie's core code calls level functions that sit
+    mid-function in its cutscene overlay, which split its functions and
+    lost their epilogues)."""
     funcs, starts = {}, set(roots)
     queue = list(roots)
     prev, img.focus = img.focus, seg
     try:
-        return _discover(img, seg, roots, funcs, starts, queue, set(weak))
+        return _discover(img, seg, roots, funcs, starts, queue, set(weak), weak_calls)
     finally:
         img.focus = prev
 
 
-def _discover(img, seg, roots, funcs, starts, queue, weak):
+def _discover(img, seg, roots, funcs, starts, queue, weak, weak_calls=False):
+    strong = set(starts) - weak   # where a walk stops: a weak start is walked over
     while True:
         while queue:
             s = queue.pop()
             if s in funcs or not seg.has(s):
                 continue
-            f = walk(img, s, starts)
+            f = walk(img, s, strong)
             f.how = 'entry' if s in roots else 'call'
             funcs[s] = f
             for k in [k for k in funcs if funcs[k].how == 'gap' and s < k < f.end]:
@@ -354,6 +360,10 @@ def _discover(img, seg, roots, funcs, starts, queue, weak):
                 if t not in starts:
                     starts.add(t)
                     queue.append(t)
+                    if weak_calls and seg.has(t):
+                        weak.add(t)
+                    else:
+                        strong.add(t)
         _settle(funcs, weak)
         new = _gaps(img, seg, funcs)
         _settle(funcs, weak)
@@ -362,6 +372,10 @@ def _discover(img, seg, roots, funcs, starts, queue, weak):
                 if t not in starts:
                     starts.add(t)
                     queue.append(t)
+                    if weak_calls and seg.has(t):
+                        weak.add(t)
+                    else:
+                        strong.add(t)
         if not queue:
             return funcs
 

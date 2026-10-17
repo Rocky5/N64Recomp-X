@@ -830,3 +830,28 @@ All xemu; nothing new on the console.
   map at a KUSEG host address can be aliased on a 64 MB console (xemu runs
   128 MB).
 
+### Banjo-Kazooie draws (2026-10-17, night, xemu)
+
+From the ROM alone, after twenty-odd learning rounds: Banjo-Kazooie runs
+its intro and draws Banjo and Kazooie (F3DEX 1.21; about 20 fps in xemu;
+some textures missing: the backpack, the sky). What it took, besides the
+earlier pieces (osCicId, 64-bit registers):
+
+- **Calls into captured code are weak starts** (`funcs.discover
+  weak_calls`): Banjo's core code jals into its level overlays at fixed
+  addresses; in the captured cutscene overlay those addresses are
+  mid-function, and treating them as starts cut its functions' epilogues
+  off (a function returned without restoring sp and ra). Found by
+  interpreting halves of the overlay region until the crash went
+  (`N64RX_CAPTURED_INTERP=<lo>-<hi>`), then the decomp's function list. A
+  jal into captured code where no function starts runs its caller
+  interpreted (N64Recomp would make a static there and split a function).
+- **Captured code is checked before it runs** (`guard.c`, decisions.md):
+  pages hashed as recompiled; a page holding another overlay runs
+  interpreted and is captured again.
+- **The log lock's holder runs above the game's threads**
+  (`XHW_LOG_BOOST`).
+
+Not verified on a console. Next: the textures it misses; the variants of
+its overlays recompiled instead of interpreted.
+

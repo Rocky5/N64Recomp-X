@@ -213,6 +213,29 @@ void xrc_learn_kuseg(uint32_t va, int aliased) {
     emit(line);
 }
 
+/* guard.c: a captured page now holds other code than the build recompiled
+ * (an overlay loaded over another): saved again, once a page a run, so the
+ * next --learn build has this one too */
+void xrc_learn_recapture(uint32_t vram) {
+    static uint32_t s_done[256];
+    static unsigned s_n;
+    static volatile long s_busy;
+    uint32_t vp = vram & ~(VPAGE - 1);
+    unsigned i;
+    if (!XRC_LEARN_CODE) return;
+    for (i = 0; i < s_n; i++)
+        if (s_done[i] == vp) return;
+    if (s_n == 256) return;
+    s_done[s_n++] = vp;
+    while (__sync_lock_test_and_set(&s_busy, 1)) xhw_sleep_ms(0);
+    if ((int32_t)vp >= 0) {
+        if (xrc_tlb_to_phys(vp) != ~0u && xrc_tlb_to_phys(vp + VPAGE - 4) != ~0u) save(vp, VPAGE, word_mapped);
+    } else if ((vp & 0x1FFFFFFFu) < xrc_rdram_size) {
+        save(0x80000000u | (vp & 0x1FFFFFFFu), VPAGE, word_kseg0);
+    }
+    __sync_lock_release(&s_busy);
+}
+
 /* the blocks [lo, hi) the build asks for: captured code whose jump table
  * sits in RDRAM no capture holds yet (n64rx's want.txt; the function's
  * interpreter stub calls this the first time it runs, when its table is

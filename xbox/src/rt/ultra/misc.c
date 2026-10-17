@@ -28,6 +28,7 @@ ULTRA(osInvalDCache) {
 ULTRA(osInvalICache) {
     (void)rdram;
     xrc_learn_inval(ARG(0), ARG(1));   /* learn.c: code there may be new */
+    xrc_guard_inval(ARG(0), ARG(1));   /* guard.c: recompiled code there checked again */
 }
 
 /* KSEG0/KSEG1 masked; a TLB-mapped address through tlb.c's entries (an

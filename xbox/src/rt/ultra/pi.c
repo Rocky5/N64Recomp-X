@@ -75,6 +75,7 @@ uint32_t xu_pi_dma(uint32_t dev, uint32_t dram, uint32_t n) {
     if (xu_rom_to_rdram(rom_offset(dev), dram, n) == 0) {
         xrc_learn_dma(rom_offset(dev), dram, n);   /* learn.c: where code came from */
         xrc_ovl_dma(rom_offset(dev), dram, n);     /* ovl.c: which overlay is loaded there now */
+        xrc_guard_inval(dram | 0x80000000u, n);       /* guard.c: recompiled code there checked again */
         return 0;
     }
     for (i = 0; i < n; i++) wr8(dram + i, 0);

@@ -123,7 +123,10 @@ machine and stays in their build folder.
    (Donkey Kong 64's "Expansion Pak" screen; `romonly._wants_8mb`).
    Open: a captured block can be saved before all of it is loaded (Donkey
    Kong 64 then calls a "function" of stale bytes); captured code needs a
-   check of its bytes before its recompiled form is trusted.
+   check of its bytes before its recompiled form is trusted (now
+   `guard.c`). Call targets inside captured code are weak starts: other
+   code jals into whichever overlay is loaded there at the time
+   (`funcs.discover weak_calls`).
 
 `N64RX_WITHHOLD=<vram>,...` (a test switch) takes functions out of the
 analysis as if it had missed them; a function the learn file names is never

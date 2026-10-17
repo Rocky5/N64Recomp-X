@@ -99,6 +99,14 @@ def make(rom, bdir, base=None, learnt=None):
     # (N64RX_XBRANCH_INTERP=0: recompiled, the compile then fails as before)
     if os.environ.get('N64RX_XBRANCH_INTERP', '1') != '0':
         interp.update({x: n for x, n in emit.cross_funcs(a, live, nm, replaced).items() if n not in ignored})
+    # diagnosis: every function in code captured from RDRAM interpreted (N64RX_CAPTURED_INTERP=1), which
+    # reads the bytes RDRAM holds when it runs: whether a captured overlay's recompiled code is stale
+    ci = os.environ.get('N64RX_CAPTURED_INTERP', '0')   # 1, or a range lo-hi (hex) of vram
+    if ci != '0':
+        lo, hi = (int(v, 16) for v in ci.split('-')) if '-' in ci else (0, 1 << 32)
+        interp.update({x: nm[x] for seg in a.img.segments if seg.name.startswith('code_')
+                       for x in a.funcs.get(seg.name, {}) if x in live and nm[x] not in ignored and x != a.entry
+                       and nm[x] not in replaced and lo <= x < hi})
     # what N64Recomp would crash on (a jump table outside the function's segment) or refuse one run at a
     # time (a jal to no function): interpreted up front (N64RX_RECOMP_PRECHECK=0: left to the recompiler)
     if os.environ.get('N64RX_RECOMP_PRECHECK', '1') != '0':
