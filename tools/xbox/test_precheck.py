@@ -74,5 +74,34 @@ runs = learn._code_runs(code)
 check(sorted(runs) == [0x80280000, 0x802B0000], f'runs: {sorted(hex(x) for x in runs)}')
 check(len(runs[0x80280000]) == 0x20000 and runs[0x80280000][0x10000:0x10001] == b'b', 'the joined run holds both blocks')
 
+# a game's own setjmp/longjmp by shape (romonly._setjmp_longjmp; strand.c runs them as coroutines)
+import struct  # noqa: E402
+import tempfile  # noqa: E402
+import types  # noqa: E402
+from n64rx_lib import romonly, pipeline  # noqa: E402
+REGS = (29, 31, 16, 17, 18, 19, 20, 21, 22, 23, 30)
+sj = [sw(r, 4 * i, A0) for i, r in enumerate(REGS)] + [i_(57, A0, 20 + k, 0x2C + 4 * k) for k in range(12)] + \
+    [jr(31), addu(2, 0, 0)]
+lj = [lw(r, 4 * i, A0) for i, r in enumerate(REGS)] + [i_(49, A0, 20 + k, 0x2C + 4 * k) for k in range(12)] + \
+    [addu(2, 5, 0), jr(31), NOP]
+rom = struct.pack(f'>{len(sj) + len(lj)}I', *(sj + lj))
+seg = types.SimpleNamespace(name='main', rom=0, vram=0x80000400)
+F = types.SimpleNamespace
+funcs = {0x80000400: F(start=0x80000400, end=0x80000400 + 4 * len(sj)),
+         0x80000400 + 4 * len(sj): F(start=0x80000400 + 4 * len(sj), end=0x80000400 + len(rom))}
+an = F(img=F(segments=[seg], rom=rom), funcs={'main': funcs})
+check(romonly._setjmp_longjmp(an) == {0x80000400: 'n64_setjmp', 0x80000400 + 4 * len(sj): 'n64_longjmp'},
+      'setjmp and longjmp by shape')
+an.funcs['main'] = {0x80000400: funcs[0x80000400]}
+check(romonly._setjmp_longjmp(an) == {}, 'a setjmp alone is not a pair')
+
+with tempfile.TemporaryDirectory() as d:
+    g = pathlib.Path(d)
+    (g / 'funcs_0.c').write_text('void f(uint8_t* rdram, recomp_context* ctx) {\n    n64_setjmp(rdram, ctx);\n'
+                                 '    n64_setjmp_x(rdram, ctx);\n}\n', encoding='utf-8')
+    check(pipeline.write_setjmp_sites(g) == 1, 'one setjmp site')
+    t = (g / 'funcs_0.c').read_text(encoding='utf-8')
+    check('    XRC_SETJMP(rdram, ctx);\n' in t and 'n64_setjmp_x(rdram, ctx);' in t, 'the call made XRC_SETJMP')
+
 print('test_precheck: ' + ('ok' if not fails else f'{fails} failed'))
 sys.exit(1 if fails else 0)

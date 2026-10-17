@@ -274,7 +274,10 @@ Soccer 64, Mystical Ninja, Pokémon Snap, Kirby 64, Diddy Kong Racing
 (grey boxes: its microcode), Mario Kart 64. Stopping early: Ocarina of Time
 and F-Zero X (2-3 frames), Mario Party (none: its older libultra's SI
 functions were not named; `__osSiRawStartDma` with the status check inline
-and controller reads with no SI access queue are named now).
+and controller reads with no SI access queue are named now). Mario Party
+draws since (2026-10-17): the analyser finds a game's own setjmp/longjmp
+by shape and the runtime runs the contexts they switch as coroutines
+(`strand.c`, `docs/decisions.md`).
 
 ## Known gaps
 

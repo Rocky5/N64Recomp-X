@@ -17,6 +17,7 @@ The newest state first; the entries below are the record, oldest first.
 | Ridge Racer 64 | the ROM alone + one `--learn` round | the first F3DEX2 game drawn: its save screen at ~42 fps; A not taken yet | - |
 | Forsaken 64 | the ROM alone | builds and boots (aspMain), stops later | - |
 | Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (32 -> 53 MB) | builds; the 53 MB ROM through the page cache inside the budget; stopped at its RAM-size probe (KSEG1, since modelled) | - |
+| Mario Party | the ROM alone | the Hudson logo, the intro's 3D scene, the story text at ~58 fps; audio tasks run (53 a second); its processes run as coroutines (`strand.c`) | - |
 | Dr. Mario 64 | the ROM alone | links, boots; its gzip main segment is not found | - |
 | the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s2: 143 build, 17 present frames; s4 (all of today's work): see `docs/analyzer.md` | - |
 
@@ -896,3 +897,26 @@ the mode the game set. Not verified on a console.
   portrait frame empty: a framebuffer effect) and the attract story text.
 - Not verified on a console.
 
+
+### Mario Party draws and plays its intro (2026-10-17, xemu)
+
+From the ROM alone, no learning rounds: the Hudson logo, the intro's 3D
+scene (the grass and the sand circle), the story text, at 58-59 fps, with
+53 audio tasks a second. Two pieces:
+
+- **Coroutines** (`strand.c`): every game object is a Hudson process that
+  switches stacks with the game's own setjmp/longjmp. n64rx finds the pair
+  by shape (the same in Mario Party 1, 2 and 3), routes it to the runtime
+  and turns the game's three setjmp calls into host setjmps; each context
+  runs on a host thread of its own, one at a time. The main loop's
+  registers had come back wrong before.
+- **Done events** (`sp.c`, `thread.c`): the scheduler thread slept with its
+  SP done already in the queue (flushed after the check), and nnsched's
+  graphics thread took the audio task's done (one run in two froze after
+  ~6 s). Both fixed for every game (`docs/decisions.md`). Three 60 s runs
+  in a row: no freeze.
+
+Verified how: xemu, slot 9, test builds, shots at 8, 15, 25, 35 and 45 s;
+host tests. Not verified: past the story text (no input scripted beyond
+START/A), the sound itself (tasks run; not listened to), a console.
+`[MEM]`/`[CLOCK]`: not recorded (xemu test builds).

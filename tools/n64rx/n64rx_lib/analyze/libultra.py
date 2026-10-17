@@ -21,6 +21,7 @@ AI, PI, SI, SP, VI, MI, DP = 0x04500000, 0x04600000, 0x04800000, 0x04040000, 0x0
 
 class Namer:
     def __init__(self, img, funcs):
+        self.img = img
         self.funcs = funcs
         self.f = {a: features(img, fn) for a, fn in funcs.items()}
         self.name = {}      # addr -> name
@@ -330,6 +331,10 @@ def _structure(N):
         sem = N.a_('osSetEventMesg')
         if len(pim) > 1 and sem:   # the real one registers its event queue for OS_EVENT_PI
             pim = [a for a in pim if sem in f[a].calls]
+        if len(pim) > 1 and sem:   # with OS_EVENT_PI (8) as the event: a game's own scheduler registers SP/DP
+            from .segments import _consts
+            pi8 = [a for a in pim if any(t == sem and args.get(4) == 8 for _pc, t, args in _consts(N.img, N.funcs[a]))]
+            pim = pi8 or pim
         N.one(pim, 'osCreatePiManager', 'starts the PI device manager thread with its queues')
         for a in [m for m in mgrs if m not in N.name]:
             pass
@@ -441,7 +446,7 @@ def _io(N):
                 fc = f.get(c)
                 if not fc or c in N.name:
                     continue
-                if rs in fc.calls and len(fc.calls) <= 3 and not fc.args_used and fc.size <= 0x60:
+                if rs in fc.calls and len(fc.calls) <= 3 and not fc.args_used and fc.size <= 0x80:   # 0x6C: the queue made inline (Mario Party)
                     get[c] = get.get(c, 0) + 1
                 if fc.calls == [ss] and not fc.args_used and fc.size <= 0x40:
                     rel[c] = rel.get(c, 0) + 1

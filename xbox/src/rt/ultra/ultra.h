@@ -122,7 +122,7 @@ uint32_t xu_vi_framebuffer(void);       /* the one shown now */
 void xrc_gfx_task(uint32_t task);
 void xrc_audio_task(uint32_t task);
 unsigned xu_gfx_tasks(void);
-void xu_rcp_flush(void);   /* the done events of tasks run since: out now (under the lock) */
+int xu_rcp_flush(void* mine);   /* sp.c: held done events out (under the lock): `mine`'s, or (NULL) a retrace's; how many */
 
 /* pi.c: the ROM the PI reads (z64 order), through xhw_rom_read (resident or
  * the page cache, PLAN.md 3.5); 0 = done, 1 = outside the ROM (nothing read) */

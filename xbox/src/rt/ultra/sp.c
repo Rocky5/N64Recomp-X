@@ -51,28 +51,56 @@ ULTRA(osSpTaskLoad) {
  * scheduler's thread records it after the call (Blast Corps' scheduler
  * then took a DP done with no task recorded and asserted). The events go
  * out together and in order: SP done ahead of DP done.
- * Kill switch: -DXRC_RCP_DEFER=0 (posted inside the call, as before). */
+ * Kill switch: -DXRC_RCP_DEFER=0 (posted inside the call, as before).
+ *
+ * The events wait for their own thread: another thread that blocks does not
+ * post them, and a retrace posts them once that thread is blocked (or after
+ * two retraces, for a thread that polls). Mario Party's nnsched has two
+ * threads on one SP queue: the audio thread yields the graphics task and
+ * takes its done, the graphics thread waits for the audio thread to pass it
+ * on, and the graphics thread blocking must not post (and take) the audio
+ * task's done meanwhile. Kill switch: -DXRC_RCP_OWNER=0 (any thread that
+ * blocks, and every retrace, posts them all). */
 #ifndef XRC_DP_ON_FULLSYNC
 #define XRC_DP_ON_FULLSYNC 1
 #endif
 #ifndef XRC_RCP_DEFER
 #define XRC_RCP_DEFER 1
 #endif
-static volatile unsigned s_pend_sp, s_pend_dp;
+#ifndef XRC_RCP_OWNER
+#define XRC_RCP_OWNER 1
+#endif
+#define MAX_PEND 16
+static struct { void* thr; int dp; unsigned at; } s_pend[MAX_PEND];   /* oldest first */
+static int s_npend;
+
+void* xu_self_thr(void);                 /* thread.c */
+int xu_thr_blocked(void* thr);
 
 static void post_done(int dp) {
     if (dp) xu_post_event_first(OS_EVENT_DP);   /* jammed in reverse: SP done is read first */
     xu_post_event_first(OS_EVENT_SP);
 }
 
-/* under the lock (thread.c before a thread sleeps, vi.c every retrace) */
-void xu_rcp_flush(void) {
-    while (s_pend_sp) {
-        int dp = s_pend_dp != 0;
-        s_pend_sp--;
-        if (dp) s_pend_dp--;
-        post_done(dp);
+static void take(int i) {
+    post_done(s_pend[i].dp);
+    memmove(&s_pend[i], &s_pend[i + 1], (size_t)(s_npend - i - 1) * sizeof s_pend[0]);
+    s_npend--;
+}
+
+/* under the lock: thread.c before `mine` sleeps (its own tasks' events),
+ * vi.c every retrace with NULL (those whose thread is blocked, or two
+ * retraces old). How many went out. */
+int xu_rcp_flush(void* mine) {
+    int i = 0, n = 0;
+    while (i < s_npend) {
+        int go = !XRC_RCP_OWNER ||
+                 (mine ? s_pend[i].thr == mine
+                       : xu_thr_blocked(s_pend[i].thr) || xu_retrace() - s_pend[i].at >= 2);
+        if (go) take(i), n++;
+        else i++;
     }
+    return n;
 }
 
 ULTRA(osSpTaskStartGo) {
@@ -95,8 +123,11 @@ ULTRA(osSpTaskStartGo) {
         return;
     }
     xu_lock();
-    s_pend_sp++;
-    if (gfx) s_pend_dp++;
+    if (s_npend == MAX_PEND) take(0);   /* nobody blocked for 16 tasks: the oldest goes out */
+    s_pend[s_npend].thr = xu_self_thr();
+    s_pend[s_npend].dp = gfx;
+    s_pend[s_npend].at = xu_retrace();
+    s_npend++;
     xu_unlock();
 }
 

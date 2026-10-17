@@ -158,9 +158,26 @@ static void wake_all(uint32_t key) {
 /* under the lock: sleep until woken; every level of the lock is let go
  * meanwhile (a thread blocked with interrupts "off" lets others run, as a
  * thread switch did on the N64) and taken back after */
+static int pri_of(const Thr* d) { return d->t ? (int)(int32_t)rd32(d->t + TH_PRIORITY) : -1; }
+
+/* another thread already blocked on `key` at this thread's priority or above:
+ * libultra hands a message to the first such waiter, not to a thread that
+ * has yet to block */
+static int waiter_first(const Thr* me, uint32_t key) {
+    int i, p = pri_of(me);
+    for (i = 0; i < s_nthr; i++)
+        if (&s_thr[i] != me && s_thr[i].wait == key && pri_of(&s_thr[i]) >= p) return 1;
+    return 0;
+}
+
 static void sleep_on(Thr* me, uint32_t key) {
     int n = s_depth, i;
-    xu_rcp_flush();   /* sp.c: a task this thread started is done now */
+    /* sp.c: a task this thread started is done now. Its events may be what
+     * this thread was about to wait for (Mario Party's scheduler waits for
+     * SP done right after starting the task): back to the caller's check,
+     * unless a thread that blocked there first gets it (nnsched's audio
+     * thread, waiting for the graphics task it yielded) */
+    if (xu_rcp_flush(me) && !waiter_first(me, key)) return;
     me->wait = key;
     running_next(me);
     for (i = 0; i < n; i++) xu_unlock();
@@ -356,6 +373,16 @@ ULTRA(osCreateMesgQueue) {
 int xu_send(uint32_t mq, uint32_t msg, int block, int jam) {
     Thr* me = block ? self() : NULL;
     int32_t count, valid, first;
+#ifdef XRC_WATCH_QUEUE
+    if (mq == (uint32_t)(XRC_WATCH_QUEUE)) {   /* diagnosis: what goes into one queue, from whom */
+        static unsigned s_n;
+        Thr* who = self();
+        if (((s_n < 8 || msg != 1u) && s_n < 64) || s_n % 600 == 0)
+            xhw_logf("[OS] queue %08x <- %08x by N64 thread %08x (ra %08x)%s #%u valid %u", (unsigned)mq, (unsigned)msg,
+                     (unsigned)who->t, who->ctx ? (unsigned)who->ctx->r31 : 0u, jam ? " jammed" : "", s_n, (unsigned)rd32(mq + MQ_VALIDCOUNT));
+        s_n++;
+    }
+#endif
     xu_lock();
     for (;;) {
         count = (int32_t)rd32(mq + MQ_MSGCOUNT);
@@ -397,6 +424,22 @@ ULTRA(osRecvMesg) {
     Thr* me = block ? self() : NULL;
     int32_t valid, first, count;
     (void)rdram;
+#ifdef XRC_WATCH_RECV
+    void xrc_trace_dump(void);   /* trace.c */
+    if (mq == (uint32_t)(XRC_WATCH_RECV) && block && !rd32(mq + MQ_VALIDCOUNT)) {   /* diagnosis: who waits there */
+        static unsigned s_n;
+        if (s_n++ < 2) {
+            uint32_t sp = (uint32_t)ctx->r29, i;
+            xhw_logf("[OS] recv %08x blocks: N64 thread %08x, ra %08x, sp %08x, a1 %08x", (unsigned)mq,
+                     (unsigned)me->t, (unsigned)ctx->r31, (unsigned)sp, (unsigned)ARG(1));
+            for (i = 0; i < 64; i += 8)
+                xhw_logf("[OS]   sp+%02x: %08x %08x %08x %08x %08x %08x %08x %08x", (unsigned)(4 * i),
+                         rd32(sp + 4 * i), rd32(sp + 4 * i + 4), rd32(sp + 4 * i + 8), rd32(sp + 4 * i + 12),
+                         rd32(sp + 4 * i + 16), rd32(sp + 4 * i + 20), rd32(sp + 4 * i + 24), rd32(sp + 4 * i + 28));
+            xrc_trace_dump();
+        }
+    }
+#endif
     xu_lock();
     while ((valid = (int32_t)rd32(mq + MQ_VALIDCOUNT)) == 0) {
         if (!block) {
@@ -411,6 +454,15 @@ ULTRA(osRecvMesg) {
     if (out) wr32(out, rd32(rd32(mq + MQ_MSG) + 4 * (uint32_t)first));
     wr32(mq + MQ_FIRST, (uint32_t)((first + 1) % (count > 0 ? count : 1)));
     wr32(mq + MQ_VALIDCOUNT, (uint32_t)(valid - 1));
+#ifdef XRC_WATCH_QUEUE
+    if (mq == (uint32_t)(XRC_WATCH_QUEUE)) {   /* diagnosis: who takes what */
+        static unsigned s_r;
+        if (s_r++ < 64)
+            xhw_logf("[OS] queue %08x -> %08x to N64 thread %08x, %d left", (unsigned)mq,
+                     (unsigned)rd32(rd32(mq + MQ_MSG) + 4 * (uint32_t)first), me ? (unsigned)me->t : (unsigned)self()->t,
+                     (int)(valid - 1));
+    }
+#endif
     wake_all(mq | 1);
     xu_unlock();
     RET(0);
@@ -425,12 +477,17 @@ ULTRA(osSetEventMesg) {
     if (e < OS_NUM_EVENTS) {
         s_events[e].mq = ARG(1);
         s_events[e].msg = ARG(2);
+        if (XHW_TEST_BUILD) xhw_logf("[OS] osSetEventMesg %d: queue %08x message %08x", e, (unsigned)ARG(1),
+                                     (unsigned)ARG(2));
     }
 }
 
 static void post(int e, int jam) {
-    static unsigned s_dropped;
+    static unsigned s_dropped, s_seen[OS_NUM_EVENTS];
     if (e < 0 || e >= OS_NUM_EVENTS || !s_events[e].mq) return;
+    if (XHW_TEST_BUILD && s_seen[e] < 2)   /* test builds: the first posts of each event, where they go */
+        s_seen[e]++, xhw_logf("[OS] event %d -> queue %08x message %08x", e, (unsigned)s_events[e].mq,
+                              (unsigned)s_events[e].msg);
     if (xu_send(s_events[e].mq, s_events[e].msg, 0, jam) < 0 && s_dropped++ < 20)
         xhw_logf("[OS] event %d dropped: queue %08x full (%u)", e, (unsigned)s_events[e].mq,
                  (unsigned)rd32(s_events[e].mq + MQ_MSGCOUNT));
@@ -460,6 +517,19 @@ void xu_crash_regs(void) {
 }
 
 uint32_t xrc_interp_last_pc(void* thread);   /* interp.c */
+
+/* strand.c: the contexts a game switches with setjmp/longjmp run on host
+ * threads of their own, each the same N64 thread to the runtime */
+void* xu_self_thr(void) { return self(); }
+int xu_thr_blocked(void* thr) { const Thr* d = (const Thr*)thr; return d->wait || d->stopped; }
+void xu_adopt_thr(void* thr) {
+    if (s_tls == 0xFFFFFFFFu) s_tls = xhw_tls_alloc();
+    xhw_tls_set(s_tls, thr);
+}
+int xu_thr_level(void* thr) {
+    const Thr* d = (const Thr*)thr;
+    return d->t ? xu_level_of((int)(int32_t)rd32(d->t + TH_PRIORITY)) : 8;
+}
 
 /* the calling N64 thread's stack pointer as its context last held it (0 for
  * a runtime thread): interp.c runs the game's exception code below it */

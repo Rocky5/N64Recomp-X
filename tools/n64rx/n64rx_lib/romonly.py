@@ -73,6 +73,15 @@ def make(rom, bdir, base=None, learnt=None):
                 aliases[f'{n}__2'] = n
                 taken.add(f'{n}__2')
         replaced = replaced | set(aliases)
+    # a game's own setjmp/longjmp (Mario Party's processes switch stacks with them): the runtime's,
+    # which give each context a host thread of its own (xbox/src/rt/strand.c); pipeline.py turns each
+    # call to setjmp into a host setjmp in the caller (XRC_SETJMP)
+    if os.environ.get('N64RX_STRANDS', '1') != '0':
+        for k, name in _setjmp_longjmp(a).items():
+            if k not in ids:
+                ids[k] = (name, 'saves (setjmp) or restores (longjmp) sp, ra, s0-s8, f20-f31 at arg0')
+                aliases[name] = 'xrc_' + name[4:]
+        replaced = replaced | set(aliases)
     nm = emit.names(a, ids)
     live = emit.reachable(a, nm, replaced)
     pdir = pathlib.Path(bdir) / 'pack'
@@ -164,6 +173,26 @@ def _wants_8mb(a):
                         any(n.op == 15 and n.imm == 0x0080 for n in near):
                     return True
     return False
+
+
+def _setjmp_longjmp(a):
+    """{vram: 'n64_setjmp' | 'n64_longjmp'}: the libc pair by their shape (sw / lw of sp at 0(a0), ra at
+    4(a0), s0-s7 at 8.., fp at 0x28; setjmp returns 0, longjmp returns arg1 or 1)"""
+    from .analyze.mips import words
+    regs = (29, 31, 16, 17, 18, 19, 20, 21, 22, 23, 30)
+    out = {}
+    for seg in a.img.segments:
+        for x, f in a.funcs.get(seg.name, {}).items():
+            n = (f.end - f.start) // 4
+            if not 14 <= n <= 64:
+                continue
+            ws = words(a.img.rom, seg.rom + (f.start - seg.vram), n)
+            for op, name in ((43, 'n64_setjmp'), (35, 'n64_longjmp')):
+                if all(ws[i] == (op << 26) | (4 << 21) | (r << 16) | (4 * i) for i, r in enumerate(regs)):
+                    out[x] = name
+    if sorted(out.values()) != ['n64_longjmp', 'n64_setjmp']:   # one pair, or none
+        return {}
+    return out
 
 
 def _runtime_ultra():

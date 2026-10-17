@@ -15,7 +15,7 @@ import time
 from . import ROOT, VERSION, N64rxError, engines, packs, romonly, rom as romlib, saves
 from . import learn as learnmod
 
-GEN_VERSION = 11   # bump when what n64rx writes into gen/ changes (the cache key)
+GEN_VERSION = 12   # bump when what n64rx writes into gen/ changes (the cache key)
 VIDEO = {'auto': 0, '480': 2, '720': 3}
 EEPROM = {'eep4k': 512, 'eep16k': 2048}
 FATX_BAD = '<>:"/\\|?*'
@@ -253,6 +253,23 @@ def write_guard(pack, gen, data):
         f'const unsigned xrc_guard_count = {len(order)}u;\n'
         f'volatile unsigned char xrc_guard_state[{n}];\n', encoding='utf-8', newline='\n')
     return wrapped
+
+
+SETJMP_CALL = re.compile(r'^(\s*)n64_setjmp\(rdram, ctx\);$', re.M)
+
+
+def write_setjmp_sites(gen):
+    """each call to the game's setjmp (romonly: n64_setjmp) becomes XRC_SETJMP, a host setjmp in the
+    calling function (recomp.h, xbox/src/rt/strand.c), so a longjmp back to it from another
+    context lands in a live frame. Returns the number of sites."""
+    n = 0
+    for f in sorted(gen.glob('funcs_*.c')):
+        text = f.read_text(encoding='utf-8')
+        new, k = SETJMP_CALL.subn(lambda m: f'{m.group(1)}XRC_SETJMP(rdram, ctx);', text)
+        if k:
+            f.write_text(new, encoding='utf-8', newline='\n')
+            n += k
+    return n
 
 
 def write_alias_c(pack, gen):
@@ -582,6 +599,9 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
             prog.note('loads into $zero kept as reads')
         extern = write_extern_h(gen)
         ninterp = write_interp_c(pack, gen)
+        nsj = write_setjmp_sites(gen)
+        if nsj:
+            prog.note(f'{nsj} calls to the game\'s setjmp made host setjmps (coroutines: strand.c)')
         nguard = write_guard(pack, gen, recomp_rom.read_bytes())
         if nguard:
             prog.note(f'{nguard} functions from captured code checked against RDRAM before they run (guard.c)')

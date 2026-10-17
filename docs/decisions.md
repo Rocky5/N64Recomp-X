@@ -627,3 +627,42 @@ page (the overlay sections would share vram; N64Recomp resolves such jals
 through lookups, which the runtime would then pick by hash): the next step
 once variants are captured. Kill switch `N64RX_GUARD=0`.
 
+## Coroutines through setjmp and longjmp (2026-10-17, `strand.c`)
+
+Mario Party 1-3 run every game object as a process (Hudson's HuPrc) that
+switches stacks with the game's own setjmp/longjmp: the scheduler setjmps
+and longjmps into a process at its entry and stack; a process setjmps its
+own buffer and longjmps back. Recompiled, each N64 call is a host call, so
+the longjmp returned into the wrong host frames and the main loop's $s2
+came back wrong. Chosen: each context runs on a host thread of its own (a
+strand), all the same N64 thread to the runtime, one running at a time.
+n64rx finds the pair by shape (sp, ra, s0-s7, fp, f20-f31 at arg0) and
+routes it to the runtime; each call to setjmp in the generated C becomes
+`XRC_SETJMP`, a host `__builtin_setjmp` in the caller kept per N64 buffer.
+A longjmp to a buffer whose setjmp is still as it wrote it wakes that
+strand, which host-longjmps back into its live frame with the buffer's
+registers; any other longjmp (a new process, or a dying one's buffer
+rewritten) starts a strand at the buffer's ra and sp and ends the one that
+waited there. Rejected: copying host stacks (the recompiled frames are not
+relocatable) and interpreting the processes (all game logic runs in them).
+DIVERGES: a context that returns from its entry waits for good. Kill switch
+`N64RX_STRANDS=0`.
+
+## A task's done events belong to its thread (2026-10-17, `sp.c`, `thread.c`)
+
+Tasks run inside `osSpTaskStartGo` and their done events wait until the
+starting thread blocks (Blast Corps, above). Two holes showed with Mario
+Party's nnsched, whose audio and graphics threads share one SP queue:
+the thread that blocked flushed the events into the queue it was about to
+wait on and then slept anyway (the check came before the flush): now it
+goes back to the caller's check. And any thread's block, or a retrace,
+posted every held event: the graphics thread, waiting for the audio thread
+to pass on the done of the graphics task the audio thread had yielded,
+took the audio task's own done, and both threads waited for good (one run
+in two). Chosen: each held event names the thread that started the task;
+that thread's block posts its own, and a retrace posts one whose thread is
+blocked already or that is two retraces old (a thread that polls). A
+thread back from a flush leaves the message to a thread that blocked on
+that queue first at its priority or above, as libultra hands it to the
+first waiter. Kill switch `-DXRC_RCP_OWNER=0`.
+

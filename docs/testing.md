@@ -213,6 +213,9 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXHW_ROM_IN_XBE=0` | 1 | ignore `default.xbe`'s `$ROM` section: the ROM is looked for next to the XBE (the build-side switch is `n64rx build --rom-beside`, which leaves the section out and writes the file) |
 | `-DXRC_TLB_MISS=0` | 1 | an access to an unmapped KUSEG page is a crash, as before; otherwise the crash handler's fixup runs the game's own exception code (its vector at 0x80000000, or `__osException`) and libultra's fault path, then retries (`tlb.c`) |
 | `-DXRC_RCP_DEFER=0` | 1 | a task's SP/DP done events go out inside `osSpTaskStartGo`, as before; otherwise when the starting thread next blocks, or at the next retrace |
+| `-DXRC_RCP_OWNER=0` | 1 | a held done event goes out when any thread blocks (and at every retrace), as before; otherwise when the thread that started the task blocks, or at a retrace once that thread is blocked or two retraces on (Mario Party's nnsched: the graphics thread took the audio task's SP done and both waited for good) |
+| `-DXRC_WATCH_QUEUE=<N64 address>` | unset | diagnosis: every message into that queue (the first 64, then every 600th) and every one taken out (the first 64), with the N64 thread |
+| `-DXRC_WATCH_RECV=<N64 address>` | unset | diagnosis: the first two times a thread blocks on that queue: its N64 thread, sp, 64 stack words and the trace (`N64RX_TRACE=1`) |
 | `-DXRC_DP_ON_FULLSYNC=0` | 1 | every graphics task raises DP done, as before; otherwise only one whose display list issued a FullSync, as the RDP does (Blast Corps' scheduler asserts on a DP done with no RDP task) |
 | `-DXRC_ERET_RETURN=0` | 1 | an `eret` the interpreter meets outside the game's exception code stops the game, as before; otherwise it returns from the interpreted function (a game's own unnamed libultra dispatching a thread; the sweep's commonest stop) |
 | `-DXRC_TLBWR_RANDOM=0` | 1 | `tlbwr` writes the entry at Wired, as before; otherwise Random counts down from 31 to Wired, one step a write (`interp.c`) |
@@ -246,6 +249,7 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_TLB_HELPERS=0` | 1 | the runtime's RDRAM helpers mask a KUSEG address to physical instead of translating it through the game's TLB |
 | `N64RX_TRACE=1` (env, n64rx) | unset | diagnosis: N64Recomp's `trace_mode`; the last 64 functions entered (recompiled by name, interpreted by address) are logged with a crash (`[TRACE]`, `xbox/src/rt/trace.c`) |
 | `N64RX_GUARD=0` (env, n64rx) | 1 | functions recompiled from captured code run without checking that RDRAM still holds the bytes they were recompiled from (`guard.c`) |
+| `N64RX_STRANDS=0` (env, n64rx) | 1 | the game's own setjmp/longjmp (found by shape) are recompiled as they are instead of run as coroutines on host threads (`strand.c`); Mario Party's processes then corrupt the main loop's registers |
 | `N64RX_CAPTURED_INTERP=1` or `=<lo>-<hi>` (env, n64rx) | 0 | diagnosis: every function in captured code (or in that vram range) is interpreted; Banjo-Kazooie past its crash with its overlay region interpreted |
 | `N64RX_RECOMP_PRECHECK=0` (env, n64rx) | 1 | what N64Recomp would crash on (a jump table outside the function's segment: it reads the ROM past its end) or refuse one run at a time (a jal to no function, a cop0 register other than Status) is left to it instead of interpreted up front |
 | `-DXRC_LEARN_CODE=0` | 1 | the safety net does not save the RDRAM block of code no ROM DMA put there (`learn_code.bin`, `[LEARNCODE]`) |

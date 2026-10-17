@@ -423,6 +423,18 @@ extern int32_t* section_addresses;
 void recomp_syscall_handler(uint8_t* rdram, recomp_context* ctx, int32_t instruction_vram);
 void pause_self(uint8_t* rdram);
 
+/* strand.c: a call to the game's own setjmp (n64rx: n64_setjmp) is a host
+ * setjmp here in the caller, kept per N64 buffer, so a longjmp back to it
+ * from another context lands in this live frame (pipeline.py
+ * write_setjmp_sites). Kill switch: N64RX_STRANDS=0. */
+void** xrc_strand_jb(uint32_t buf);
+void xrc_strand_resumed(uint8_t* rdram, recomp_context* ctx, uint32_t buf);
+#define XRC_SETJMP(rdram, ctx) do { \
+        uint32_t xrc_b_ = (uint32_t)(ctx)->r4; \
+        if (__builtin_setjmp(xrc_strand_jb(xrc_b_))) xrc_strand_resumed(rdram, ctx, xrc_b_); \
+        else n64_setjmp(rdram, ctx); \
+    } while (0)
+
 #ifdef __cplusplus
 }
 #endif
