@@ -475,6 +475,13 @@ def _io(N):
         cands = [a for a, ft in f.items() if a not in N.name and set(ft.calls) == {di, gc, ri} and
                  not ft.args_used and ft.returns_value and (not sc or sc not in ft.calls)]
         N.one(cands, 'osGetTime', 'Count with interrupts off, added to the time since the last read (64-bit)')
+    # osContInit: SI DMAs and a timer wait, creating its queue. Named before the two below: the pack it
+    # calls (the status request) tells osContStartQuery from osContStartReadData (Ocarina of Time's
+    # came out swapped, and the game's own query then sent an empty PIF block: "NO CONTROLLER")
+    if sid and st_:
+        cands = [a for a, ft in f.items() if a not in N.name and sid in ft.calls and st_ in ft.calls and
+                 ctq in ft.calls]
+        N.one(cands, 'osContInit', 'waits with a timer, then SI DMAs to find the controllers')
     if sid and sga and sra:
         si_users = [a for a, ft in f.items() if a not in N.name and sga in ft.calls and sra in ft.calls]
         for a in si_users:
@@ -513,11 +520,12 @@ def _io(N):
             N.one([a], 'osEepromLongRead', 'osEepromRead in a loop')
         if ew and ew in ft.calls and ft.args_used >= {0, 1, 2, 3}:
             N.one([a], 'osEepromLongWrite', 'osEepromWrite in a loop with a delay')
-    # osContInit: SI DMAs and a timer wait, creating its queue
-    if sid and st_:
-        cands = [a for a, ft in f.items() if a not in N.name and sid in ft.calls and st_ in ft.calls and
-                 ctq in ft.calls]
-        N.one(cands, 'osContInit', 'waits with a timer, then SI DMAs to find the controllers')
+    # osContGetQuery(status): __osContGetInitData(&pattern, status), which osContInit calls too
+    ci = N.a_('osContInit')
+    if ci:
+        cands = [a for a, ft in f.items() if a not in N.name and len(ft.calls) == 1 and ft.calls[0] in f[ci].calls
+                 and ft.calls[0] not in N.name and ft.args_used == {0} and ft.size <= 0x40]
+        N.one(cands, 'osContGetQuery', 'the status records at arg0, through the routine osContInit reads them with')
     # osContGetReadData(pads): a leaf copying the SI buffer into 6-byte OSContPad records at arg0
     srd = N.a_('osContStartReadData')
     if srd:
