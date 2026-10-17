@@ -50,6 +50,7 @@ def make(rom, bdir, base=None, learnt=None):
     # overlay: the overlays' functions (keys past 32 bits) are not named
     ids, _N = libultra.identify(a.img, {k: f for k, f in a.all_funcs().items() if k < 1 << 32})
     ids.pop(a.entry, None)   # the entry code is the game's own, whatever it looks like (South Park's clears the TLB)
+    ids.pop(a.main, None)    # and so is main (Conker's and GoldenEye's set up the TLB, osMapTLBRdb's shape)
     lists = emit.recomp_lists(ROOT)
     replaced = lists['reimplemented_funcs'] | lists['ignored_funcs']
     # code captured from RDRAM (learn.py) carries the game's own libultra, a second copy beside the boot

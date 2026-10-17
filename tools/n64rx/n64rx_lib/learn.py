@@ -81,7 +81,7 @@ def read(paths):
             if not m:
                 continue
             kind, x, y, z = m.group(1), int(m.group(2), 16), int(m.group(3), 16), m.group(4)
-            if kind == 'func' and x & 3 == 0 and 0x80000000 <= x < 0x80800000:
+            if kind == 'func' and x & 3 == 0 and not 0x80800000 <= x < 0xC0000000:   # KSEG0, or TLB-mapped
                 n, c = out.funcs.get(x, (0, 0))
                 out.funcs[x] = (max(n, y), c or (int(z, 16) if z else 0))
             elif kind == 'dma' and z and 0 < int(z, 16) <= 0x800000:

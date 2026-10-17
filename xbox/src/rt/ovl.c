@@ -29,19 +29,20 @@
 
 #define PAGE_SHIFT 12
 #define PAGE_WORDS (1u << (PAGE_SHIFT - 2))
-/* the page map: KSEG0's 8 MB, then the first 16 MB of KUSEG, where a game's
- * own TLB maps code (Turok 2 and 3, Armorines: 0x00200000 +) */
-#define KSEG0_PAGES ((8u << 20) >> PAGE_SHIFT)
-#define KUSEG_PAGES ((16u << 20) >> PAGE_SHIFT)
-#define MAX_PAGES (KSEG0_PAGES + KUSEG_PAGES)
-static inline uint32_t page_of(uint32_t vram) {   /* MAX_PAGES: outside the map */
-    uint32_t p;
-    if (vram >= 0x80000000u) {
-        p = (vram - 0x80000000u) >> PAGE_SHIFT;
-        return p < KSEG0_PAGES ? p : MAX_PAGES;
+/* the page map, two levels over the whole 32-bit space: a 1 MB group's 256
+ * page pointers, made on first use (KSEG0's code, and code a game maps with
+ * its own TLB anywhere: Turok 2 at 0x00200000, Conker at 0x10000000,
+ * GoldenEye at 0x70000000) */
+#define GROUP_PAGES 256u
+static uint16_t** s_groups[4096];
+static uint16_t** page_ptr(uint32_t vram, int make) {
+    uint16_t*** g = &s_groups[vram >> 20];
+    if (!*g) {
+        if (!make) return NULL;
+        *g = (uint16_t**)calloc(GROUP_PAGES, sizeof(uint16_t*));
+        if (!*g) return NULL;
     }
-    p = vram >> PAGE_SHIFT;
-    return p < KUSEG_PAGES ? KSEG0_PAGES + p : MAX_PAGES;
+    return &(*g)[(vram >> PAGE_SHIFT) & (GROUP_PAGES - 1)];
 }
 #define SLOT(vram) (((vram) >> 2) & (PAGE_WORDS - 1))
 #define LEARN_SLOTS 512   /* learn.c's stubs, entered at run time */
@@ -49,7 +50,6 @@ static inline uint32_t page_of(uint32_t vram) {   /* MAX_PAGES: outside the map 
 #define XRC_OVERLAYS 1
 #endif
 
-static uint16_t* s_pages[MAX_PAGES];
 static recomp_func_t** s_funcs;   /* index -> function; [0] unused */
 static uint32_t s_nfuncs, s_cap;
 
@@ -75,16 +75,16 @@ __attribute__((weak)) const XrcUltraEntry xrc_ultra_table[1];
 __attribute__((weak)) const unsigned xrc_ultra_count;
 
 static int enter(uint32_t vram, recomp_func_t* f) {
-    uint32_t page = page_of(vram);
-    if (page >= MAX_PAGES || (vram & 3)) return 0;
+    uint16_t** pg = (vram & 3) ? NULL : page_ptr(vram, 1);
+    if (!pg) return 0;
     if (s_nfuncs >= s_cap) return 0;
-    if (!s_pages[page]) {
-        s_pages[page] = (uint16_t*)calloc(PAGE_WORDS, sizeof(uint16_t));
-        if (!s_pages[page]) return 0;
+    if (!*pg) {
+        *pg = (uint16_t*)calloc(PAGE_WORDS, sizeof(uint16_t));
+        if (!*pg) return 0;
     }
     s_funcs[s_nfuncs + 1] = f;
     __asm__ volatile("" ::: "memory");   /* the pointer before the index: get_function runs on other threads */
-    s_pages[page][SLOT(vram)] = (uint16_t)++s_nfuncs;
+    (*pg)[SLOT(vram)] = (uint16_t)++s_nfuncs;
     return 1;
 }
 
@@ -174,18 +174,18 @@ int xrc_ovl_init(void) {
 }
 
 recomp_func_t* xrc_try_function(uint32_t vram) {
-    uint32_t page = page_of(vram);
-    if (page >= MAX_PAGES || !s_pages[page]) return NULL;
+    uint16_t** pg = page_ptr(vram, 0);
+    if (!pg || !*pg) return NULL;
     {
-        uint16_t i = s_pages[page][SLOT(vram)];
+        uint16_t i = (*pg)[SLOT(vram)];
         return i ? s_funcs[i] : NULL;
     }
 }
 
 recomp_func_t* get_function(int32_t vram) {
-    uint32_t page = page_of((uint32_t)vram);
-    if (page < MAX_PAGES && s_pages[page]) {
-        uint16_t i = s_pages[page][SLOT((uint32_t)vram)];
+    uint16_t** pg = page_ptr((uint32_t)vram, 0);
+    if (pg && *pg) {
+        uint16_t i = (*pg)[SLOT((uint32_t)vram)];
         if (i) return s_funcs[i];
     }
     {
@@ -197,9 +197,9 @@ recomp_func_t* get_function(int32_t vram) {
 
 /* ---- overlays (PLAN.md 3.4): the one the last PI DMA loaded is mapped ---- */
 static void set_index(uint32_t vram, uint16_t idx) {
-    uint32_t page = page_of(vram);
-    if (page < MAX_PAGES && s_pages[page])
-        s_pages[page][SLOT(vram)] = idx;
+    uint16_t** pg = page_ptr(vram, 0);
+    if (pg && *pg)
+        (*pg)[SLOT(vram)] = idx;
 }
 
 static void activate(size_t i) {
