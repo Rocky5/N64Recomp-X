@@ -39,6 +39,7 @@ void recomp_syscall_handler(uint8_t* rdram, recomp_context* ctx, int32_t vram) {
 void pause_self(uint8_t* rdram) { (void)rdram; }
 recomp_func_t* xrc_try_function(uint32_t vram) { (void)vram; return NULL; }
 void xrc_learn_func(uint32_t vram, uint32_t len, uint32_t caller) { (void)vram, (void)len, (void)caller; }
+void xrc_trace_vram(uint32_t vram) { (void)vram; }
 
 void xu_post_event(int e) { s_ev |= 1u << e; }
 void xu_post_event_first(int e) { s_evfirst |= 1u << e; }
