@@ -852,8 +852,11 @@ earlier pieces (osCicId, 64-bit registers):
 - **The log lock's holder runs above the game's threads**
   (`XHW_LOG_BOOST`).
 
-Not verified on a console. Next: the textures it misses; the variants of
-its overlays recompiled instead of interpreted.
+Later the same night: its faces textured (a tile inside a larger LOADBLOCK),
+and with START and A pressed it reaches its title screen (the logo, Banjo
+dancing, the copyright lines; 30 fps in xemu) and goes on into the lair
+scenes. Not verified on a console. Next: the sky draws black; the variants
+of its overlays recompiled instead of interpreted.
 
 ### Blast Corps plays its attract demo (2026-10-17, xemu)
 
@@ -867,4 +870,13 @@ starting thread blocks or the next retrace (`XRC_RCP_DEFER`). Mario Kart 64
 and Banjo-Kazooie run as before (xemu). Open: the intro text's glyphs come
 from the wrong rows of its font (T for G, L for Y): the renderer's T
 coordinates or loaded height for that texture. Not verified on a console.
+
+### Donkey Kong 64 presents frames (2026-10-17, xemu)
+
+With 8 MB, the 6105 boot magic and captured code: F3DEX2, about 800 frames
+from 10 s to 50 s of the boot, then the main thread stops sending tasks
+(open). It had read NULL+3 in its own osViGetCurrentMode
+(`__osViCurr->modep->type`: the game's VI context stays empty under the
+runtime's VI); the analyser names it now and the runtime answers it from
+the mode the game set. Not verified on a console.
 

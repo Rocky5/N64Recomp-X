@@ -395,6 +395,14 @@ def _vi(N):
         if nxt is not None:
             N.one([a], 'osViGetNextFramebuffer' if g == nxt else 'osViGetCurrentFramebuffer',
                   'returns the ' + ('next' if g == nxt else 'current') + ' context\'s framebuffer (+4)')
+    # osViGetCurrentMode: the current context's mode (+8), its type byte; the game's own __osViCurr stays
+    # NULL under the runtime's VI (Donkey Kong 64 read NULL+3)
+    modes = [a for a, ft in f.items() if a not in N.name and di in ft.calls and ri in ft.calls and
+             not ft.args_used and ft.returns_value and len([g for g in ctx if g in ft.globals_]) == 1 and
+             any(o == 8 for (_g, o, _s) in ft.gptr) and not any(o == 4 for (_g, o, _s) in ft.gptr)]
+    if nxt is not None:
+        cur = [a for a in modes if [g for g in ctx if g in f[a].globals_][0] != nxt]
+        N.one(cur, 'osViGetCurrentMode', 'returns the current context\'s mode (+8) type')
 
 
 def _io(N):

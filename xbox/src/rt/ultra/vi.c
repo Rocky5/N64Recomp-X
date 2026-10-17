@@ -99,6 +99,11 @@ ULTRA(osViGetCurrentFramebuffer) {
     RET(s_cur);
 }
 
+ULTRA(osViGetCurrentMode) {   /* the mode's type: its first byte */
+    (void)rdram;
+    RET(s_mode ? rd8(s_mode) : 0);
+}
+
 ULTRA(osViGetNextFramebuffer) {
     (void)rdram;
     RET(s_next);
