@@ -965,3 +965,23 @@ On a console: everything in this section. In xemu: the sound itself
 (tasks run; not listened to), Mario Party past its story text, Smash past
 the first seconds of a match. xemu slot 10 sometimes stalls reading the
 ROM at boot (the same XBE boots on another slot): an emulator matter.
+
+### Staged for the console (2026-10-17, commit `e9c907c`, not yet run)
+
+Release builds (ThinLTO, `-O2`, no test flags), the ROM inside each XBE,
+staged in `C:/xemu/hw/stage-<name>` with the map at
+`C:/xemu/hw/n64recomp_x.<name>.map`; each booted 30 s in xemu first, no
+crash. Deploy each with `MX_HW=/c/xemu/hw MX_FTP_HOST=192.168.158.113
+MX_TITLE_ID=<id> MX_APP=<folder> python tools/xbox/console.py deploy <name>`
+(`pull vmk4` first for Mario Kart 64: deploy deletes old logs), then `pull
+<name>` after playing.
+
+| build | game | xbe sha1 | title ID / folder | what to check |
+|---|---|---|---|---|
+| `vmk5` | Mario Kart 64 | c3f3894592e2 | 4E520DF7, `/F/Applications/N64Recomp-X-MK64` | regression after the done-event and thread changes: a GP race still 29.9 fps, sound, BACK menu + Paks page, EEPROM/pak saves |
+| `vssb1` | Super Smash Bros. | 71aba9fe63b4 | 4E520101, `/F/Applications/N64Recomp-X-SSB` | first console run: intro, menus, a 1P match and a 4-player VS (fps, sound, all four pads), SRAM save of the settings |
+| `vmp1` | Mario Party | 25a187ec999f | 4E52376A, `/F/Applications/N64Recomp-X-MP` | first console run of the coroutines (a host thread per process on the real kernel): intro, a board turn, a mini-game, fps, sound, EEPROM save |
+| `vbk1` | Banjo-Kazooie | 8d1bae170588 | 4E52E3F7, `/F/Applications/N64Recomp-X-BK` | first Rare game on the console (~22 learning rounds, captured code, the guard): title, file select, a new game into Spiral Mountain, fps, the sky |
+
+From each `boot.log`: the `[MEM]` and `[CLOCK]` lines, `[PERF]`, any
+`[CRASH]`/card, and whether the 64 MB budget holds (free KB in `[BEAT]`).
