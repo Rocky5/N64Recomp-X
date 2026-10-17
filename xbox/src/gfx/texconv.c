@@ -43,6 +43,20 @@ void texconv_deswizzle(uint8_t* data, unsigned line_bytes, unsigned rows)
     }
 }
 
+void texconv_deswizzle32(uint8_t* data, unsigned line_bytes, unsigned rows)
+{
+    for (unsigned y = 1; y < rows; y += 2) {
+        uint8_t* row = data + (size_t)y * line_bytes;
+        for (unsigned g = 0; g + 16 <= line_bytes; g += 16) {
+            for (unsigned i = 0; i < 8; i++) {
+                uint8_t t = row[g + i];
+                row[g + i] = row[g + 8 + i];
+                row[g + 8 + i] = t;
+            }
+        }
+    }
+}
+
 /* LOADBLOCK writes 64-bit word i to TMEM with its 32-bit halves swapped when the RDP's line counter
    (i * dxt, 11-bit fraction) is on an odd line; sampling swaps back on odd tile rows. So RAM word i shows
    up swapped exactly when those two parities differ. dxt 0 (pre-swizzled data) is texconv_deswizzle;

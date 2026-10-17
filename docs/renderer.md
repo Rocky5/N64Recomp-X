@@ -87,6 +87,14 @@ word) and CI4/CI8 tiles convert through it (`texconv_ci_to_argb8`, RGBA16
 or IA16 by the othermode's TLUT type, CI4 at the tile's palette); the
 palette is part of the texture cache key.
 
+A LOADBLOCK with dxt 0 loads data kept in TMEM order (the RDP reads odd
+rows swapped): `texconv_deswizzle` swaps the 32-bit halves of each 64-bit
+word on odd rows, and for RGBA32 (split across TMEM's two banks, an odd row
+reads texel i from i ^ 2) `texconv_deswizzle32` swaps the 8-byte halves of
+each 16-byte group (`XGFX_DESWIZZLE32`, 2026-10-17: Smash Bros.'s
+character portraits and names were striped with the 16-bit rule; the
+maintainer's "blurry textures" on the console).
+
 Widescreen (generic hor+, the 4:3 box), the screen-fade and BACK-menu held
 frame, the title fit and the scissor rules are below the GBI: the same for
 every family.

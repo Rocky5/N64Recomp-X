@@ -15,6 +15,10 @@ unsigned texconv_line_bytes(unsigned width, n64_siz_t siz);
 /* Undo the TMEM swizzle in place: on odd rows, swap the two 32-bit halves of each 8-byte group.
    Self-inverse. `line_bytes` must be a multiple of 8. */
 void texconv_deswizzle(uint8_t* data, unsigned line_bytes, unsigned rows);
+/* The same for RGBA32: its texels are split across TMEM's two banks, and an
+   odd row reads texel i from i ^ 2, so the swap is of 8-byte halves of each
+   16-byte group (two texels with the next two). */
+void texconv_deswizzle32(uint8_t* data, unsigned line_bytes, unsigned rows);
 
 /* General LOADBLOCK odd-line swap for any dxt (see texconv.c). dxt 0 equals texconv_deswizzle;
    a dxt matching the tile line (2048 / words per line) changes nothing. */

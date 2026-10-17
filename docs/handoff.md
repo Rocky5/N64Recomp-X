@@ -1164,3 +1164,11 @@ functions, the last round learning 3 code ranges and 4 functions. Round 3
 presents for ~28 s, then sends no graphics task (its main thread busy;
 open).
 
+**Smash Bros.'s blurry textures (the console report), found in xemu.** On
+the 1P character select the portraits and names were striped and garbled:
+RGBA32 textures loaded with LOADBLOCK dxt 0 (kept in TMEM order) were
+deswizzled with the 16-bit rule. RGBA32's odd rows swap texel pairs (TMEM's
+two banks); `texconv_deswizzle32` (host-tested, `XGFX_DESWIZZLE32`). The
+portraits and names are sharp now (xemu, scripted). Any game with RGBA32
+dxt-0 loads gains the same. Console: to confirm (a new Smash build).
+

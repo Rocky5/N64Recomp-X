@@ -85,6 +85,9 @@
 #ifndef XGFX_TEX_MEMO
 #define XGFX_TEX_MEMO 1        /* per-frame (load address, tile key) -> texture memo */
 #endif
+#ifndef XGFX_DESWIZZLE32
+#define XGFX_DESWIZZLE32 1     /* LOADBLOCK dxt 0 of RGBA32: odd rows swap texel pairs (TMEM's two banks) */
+#endif
 #ifndef XGFX_DXT_EXACT
 #define XGFX_DXT_EXACT 1       /* LOADBLOCK dxt not sized for the line: the RDP's odd-line rule */
 #endif
@@ -648,7 +651,13 @@ static TexEntry* texture_for_tile(int tidx) {
         xu_from_rdram(raw, seg(ld->addr), (bytes + 7) & ~7u);   /* in N64 byte order */
     }
     if (ld->tile) {
-    } else if (ld->dxt == 0) texconv_deswizzle(raw, line, bytes / line);   /* stored in TMEM order */
+    } else if (ld->dxt == 0) {   /* stored in TMEM order */
+        /* DIVERGES: none meant. RGBA32's odd rows swap texel pairs (the two
+         * banks), not 32-bit words: Smash Bros.'s RGBA32 portraits came out
+         * striped. -DXGFX_DESWIZZLE32=0: the 16-bit rule for every size. */
+        if (t->siz == 3 && XGFX_DESWIZZLE32) texconv_deswizzle32(raw, line, bytes / line);
+        else texconv_deswizzle(raw, line, bytes / line);
+    }
 #if XGFX_DXT_EXACT
     else if (t->siz != 3 && (uint32_t)ld->dxt * (line / 8) != 2048u)
         texconv_deswizzle_dxt(raw, line, bytes / line, ld->dxt);

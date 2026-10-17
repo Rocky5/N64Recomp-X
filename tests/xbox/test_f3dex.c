@@ -415,6 +415,16 @@ static void readback_frame(const GfxUcode* u) {
     cmd(0xB8000000u, 0);
     run(u);
 }
+/* RGBA32 dxt 0: an odd row's texel i is texel i ^ 2 (8-byte halves of 16-byte groups); even rows stay */
+static void test_deswizzle32(void) {
+    uint8_t d[64], want[64];
+    unsigned i;
+    for (i = 0; i < 64; i++) d[i] = want[i] = (uint8_t)i;
+    for (i = 32; i < 64; i++) want[i] = (uint8_t)(((i - 32) ^ 8) + 32);
+    texconv_deswizzle32(d, 32, 2);
+    CHECK(!memcmp(d, want, sizeof d), "deswizzle32: byte 32 is %u, 40 is %u", d[32], d[40]);
+}
+
 static void test_readback(void) {
     GfxUcode u = uc_of("RSP SW Version: 2.0D, 04-01-96");
     unsigned i;
@@ -455,6 +465,7 @@ int main(void) {
     test_f3dex();
     test_f3dex2();
     test_fast3d();   /* and Fast3D again after the others: nothing left over */
+    test_deswizzle32();
     test_readback();
     if (s_fail) printf("test_f3dex: %d failed\n", s_fail);
     return s_fail ? 1 : 0;
