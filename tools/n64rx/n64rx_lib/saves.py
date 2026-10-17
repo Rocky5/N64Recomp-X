@@ -133,3 +133,32 @@ def os_exception(rom_data: bytes):
                 found = ((w[0] & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF
         i = rom_data.find(key, i + 4)
     return [f'-DXRC_OS_EXCEPTION=0x{found:08X}u'] if found else []
+
+
+def os_runqueue(rom_data: bytes):
+    """-DXRC_OS_RUNQUEUE=<addr>: libultra's __osRunQueue, from __osException
+    comparing the running thread's priority with the queue head's
+    (lw rP, 4(k0); lui rQ, hi; lw rQ, lo(rQ); lw rH, 4(rQ); slt). The
+    runtime's threads never fill the game's own queue; while it runs the
+    game's exception code on a TLB miss (rt/interp.c) the queue points at a
+    sentinel of priority -1, so that code returns to the running thread
+    (Conker read the empty queue's head)."""
+    found, i = None, rom_data.find(bytes.fromhex('8F'), 0)
+    words = lambda o: [int.from_bytes(rom_data[o + 4 * k:o + 4 * k + 4], 'big') for k in range(5)]
+    i = 0
+    while True:
+        i = rom_data.find(b'\x8f\x49\x00\x04', i)   # lw t1, 4(k0)
+        if i < 0:
+            break
+        if i % 4 == 0:
+            w = words(i)
+            rq = (w[1] >> 16) & 31
+            if (w[1] >> 26 == 15 and w[2] >> 26 == 35 and (w[2] >> 21) & 31 == rq and (w[2] >> 16) & 31 == rq
+                    and w[3] >> 26 == 35 and (w[3] >> 21) & 31 == rq and w[3] & 0xFFFF == 4
+                    and w[4] >> 26 == 0 and w[4] & 63 == 42):
+                lo = w[2] & 0xFFFF
+                addr = ((w[1] & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF
+                if 0x80000000 <= addr < 0x80800000:
+                    found = addr
+        i += 4
+    return [f'-DXRC_OS_RUNQUEUE=0x{found:08X}u'] if found else []

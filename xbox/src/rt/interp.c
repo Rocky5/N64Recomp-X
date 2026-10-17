@@ -630,6 +630,9 @@ int xrc_interp_refill(uint32_t vaddr, int store) {
 #ifdef XRC_RUNNING_THREAD
     uint32_t running;
 #endif
+#ifdef XRC_OS_RUNQUEUE
+    uint32_t runq;
+#endif
     if (!start) return 0;
     while (__sync_lock_test_and_set(&s_busy, 1)) xhw_sleep_ms(0);
     memset(&ctx, 0, sizeof ctx);
@@ -645,9 +648,25 @@ int xrc_interp_refill(uint32_t vaddr, int store) {
 #ifdef XRC_RUNNING_THREAD
     running = (uint32_t)MEM_W(0, XRC_RUNNING_THREAD);
 #endif
+#ifdef XRC_OS_RUNQUEUE
+    /* the game's run queue, which the runtime's threads never fill: a
+     * sentinel of priority -1 below the handler's stack meanwhile, so the
+     * dispatch after the handler returns to the running thread */
+    runq = (uint32_t)MEM_W(0, XRC_OS_RUNQUEUE);
+    MEM_W(0, (uint32_t)ctx.r29 - 0x200u) = 0;
+    MEM_W(4, (uint32_t)ctx.r29 - 0x200u) = -1;
+    MEM_W(0, XRC_OS_RUNQUEUE) = (int32_t)((uint32_t)ctx.r29 - 0x200u);
+#endif
+    {
+        static unsigned s_n;
+        if (s_n++ < 8) xhw_logf("[TLB] miss %08x: the game's exception code from %08x", (unsigned)vaddr, (unsigned)start);
+    }
     run(rdram, &ctx, start, 0, 0, 1);
 #ifdef XRC_RUNNING_THREAD
     MEM_W(0, XRC_RUNNING_THREAD) = (int32_t)running;
+#endif
+#ifdef XRC_OS_RUNQUEUE
+    MEM_W(0, XRC_OS_RUNQUEUE) = (int32_t)runq;
 #endif
     __sync_lock_release(&s_busy);
     return 1;

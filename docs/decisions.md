@@ -598,6 +598,10 @@ stopped and flagged, OS_EVENT_FAULT out, wait until the game makes it
 runnable). Then the page is aliased and the instruction runs again.
 Rejected: emulating each game's paging in C (game knowledge in the
 runtime; the analyser finds the libultra pieces by their shape instead).
+While that code runs, the game's own `__osRunQueue` (found by n64rx in
+`__osException`'s priority check, `-DXRC_OS_RUNQUEUE`) points at a
+sentinel of priority -1, so its dispatch returns to the running thread:
+the runtime's threads never fill that queue (Conker read its empty head).
 Open: a KUSEG page whose host address lands on the kernel's map
 (GoldenEye's 0x7F000000 with this RDRAM window) cannot be aliased; it
 needs translated loads and stores for that game. The 6105 boot chip's

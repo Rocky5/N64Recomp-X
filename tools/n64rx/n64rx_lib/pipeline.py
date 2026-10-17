@@ -600,6 +600,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     flags += saves.running_thread(pack, recomp_bytes)   # __osRunningThread, kept by thread.c
     flags += saves.faulted_thread(recomp_bytes)         # libultra's fault path, for a TLB miss (tlb.c)
     flags += saves.os_exception(recomp_bytes)           # the game's exception code, for a TLB miss (interp.c)
+    flags += saves.os_runqueue(recomp_bytes)            # its run queue, a sentinel while that code runs
     flags += learnmod.rdram_user(learnt)                 # RDRAM's home when KUSEG lands on the kernel's (mem.c)
     env = {
         'XBOX_BUILD_DIR': engines.msys_path(bdir / 'xbox') if engines.IS_WINDOWS else str(bdir / 'xbox'),
