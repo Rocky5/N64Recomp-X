@@ -32,6 +32,17 @@
 #ifndef XRC_THREAD_TRACE
 #define XRC_THREAD_TRACE 0
 #endif
+/* osStopThread / osDestroyThread of another thread: it stops at its next
+ * block (woken there if it is blocked already) and never runs on; created
+ * and started again, it starts over at its entry (Mario Party 2 destroys
+ * its audio thread, closes the audio library and makes it again: the old
+ * thread woke on a retrace and read the freed globals). The N64 stops it at
+ * once; one CPU means it is not running then, only ready or blocked.
+ * Kill switch: -DXRC_THREAD_HALT=0 (destroy leaves it running, stop is
+ * ignored, as before). */
+#ifndef XRC_THREAD_HALT
+#define XRC_THREAD_HALT 1
+#endif
 static unsigned s_trace;
 #define TRACE(...) do { if (XRC_THREAD_TRACE && s_trace++ < 400) xhw_logf(__VA_ARGS__); } while (0)   /* the kernel thread's; the game's own stack is in RDRAM */
 
@@ -59,6 +70,7 @@ typedef struct {
     int ints_off;               /* __osDisableInt / cop0 status IE clear: holds one lock level */
     volatile int stopped;       /* in osStopThread, until an osStartThread */
     volatile int fresh;         /* osCreateThread again on this OSThread: start over at the entry */
+    volatile int halted;        /* another thread stopped or destroyed it: it stops at its next block */
     void* jb[5];                /* thread_body's restart point (__builtin_setjmp) */
     recomp_context* ctx;        /* thread_body's: its sp for interp.c's exception code */
 } Thr;
@@ -158,6 +170,8 @@ static void wake_all(uint32_t key) {
 /* under the lock: sleep until woken; every level of the lock is let go
  * meanwhile (a thread blocked with interrupts "off" lets others run, as a
  * thread switch did on the N64) and taken back after */
+static void stop_wait(Thr* me);
+
 static int pri_of(const Thr* d) { return d->t ? (int)(int32_t)rd32(d->t + TH_PRIORITY) : -1; }
 
 /* another thread already blocked on `key` at this thread's priority or above:
@@ -181,7 +195,15 @@ static void sleep_on(Thr* me, uint32_t key) {
     me->wait = key;
     running_next(me);
     for (i = 0; i < n; i++) xu_unlock();
-    xhw_event_wait(me->ev, XHW_INFINITE);
+    if (!me->halted) xhw_event_wait(me->ev, XHW_INFINITE);
+    if (XRC_THREAD_HALT && me->halted) {   /* stopped or destroyed meanwhile: no lock held here */
+        me->wait = 0;
+        me->halted = 0;
+        stop_wait(me);                     /* started again: on from here, or (created again) its entry */
+    } else if (XRC_THREAD_HALT && me->fresh && XRC_THREAD_RESUME) {
+        me->wait = 0;                      /* created and started again before it got here */
+        __builtin_longjmp(me->jb, 1);
+    }
     for (i = 0; i < n; i++) xu_lock();
     me->wait = 0;
     running_is(me->t);
@@ -272,6 +294,10 @@ ULTRA(osStartThread) {
         wr16(t + TH_STATE, OS_STATE_RUNNABLE);
         d->stopped = 0;
         xhw_event_signal(d->ev);
+    } else if (d->halted) {   /* stopped by another thread, started again before it reached its block */
+        wr16(t + TH_STATE, OS_STATE_RUNNABLE);
+        d->halted = 0;
+        xhw_event_signal(d->ev);
     }
     /* a higher N64 priority runs first, as libultra dispatches it: where the
      * kernel levels are equal (50 and 51 share one) the caller waits until
@@ -287,6 +313,19 @@ ULTRA(osStartThread) {
     }
 }
 
+/* another thread stopped: at its next block, woken if it is blocked (XRC_THREAD_HALT) */
+static void halt_other(uint32_t t, const char* what) {
+    Thr* d = find(t);
+    if (!XRC_THREAD_HALT || !XRC_THREAD_RESUME) {
+        if (what) xhw_logf("[OS] %s of another thread (%08x): not supported, ignored", what, (unsigned)t);
+        return;
+    }
+    if (!d || !d->kt || d->stopped) return;   /* never started, or stopped already */
+    wr16(t + TH_STATE, OS_STATE_STOPPED);
+    d->halted = 1;
+    xhw_event_signal(d->ev);                  /* blocked: it wakes and stops */
+}
+
 ULTRA(osStopThread) {
     uint32_t t = ARG(0);
     (void)rdram;
@@ -297,7 +336,7 @@ ULTRA(osStopThread) {
         stop_wait(me);
         return;
     }
-    xhw_logf("[OS] osStopThread of another thread (%08x): not supported, ignored", (unsigned)t);
+    halt_other(t, "osStopThread");
 }
 
 ULTRA(osDestroyThread) {
@@ -310,9 +349,10 @@ ULTRA(osDestroyThread) {
         stop_wait(self());
         return;
     }
-    /* another thread: it is stopped (HAL's object manager stops them first)
-     * and stays so until it is created again */
-    if (s_logged++ < 4) xhw_logf("[OS] osDestroyThread of another thread (%08x): it stays stopped", (unsigned)t);
+    /* another thread: stopped (HAL's object manager stops them first) or
+     * stopped now, until it is created and started again */
+    if (s_logged++ < 4) xhw_logf("[OS] osDestroyThread of another thread (%08x): it stops", (unsigned)t);
+    halt_other(t, NULL);
 }
 
 ULTRA(osSetThreadPri) {

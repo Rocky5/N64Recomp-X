@@ -228,6 +228,7 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_SAFETY_NET=0` | 1 | a call to an address with no function is the fatal card again (no interpreting, no `[LEARN]`, no `learn.txt`) |
 | `-DXRC_OVERLAYS=0` | 1 | sections that share vram are not switched on the PI DMA that loads them (ovl.c): the section entered last keeps the address |
 | `-DXRC_HW_SHADOW=0` | 1 | no shadow pages for the RCP registers through KSEG1 (mem.c): a game's own access there faults with the crash card again |
+| `-DXRC_THREAD_HALT=0` | 1 | osStopThread of another thread is ignored and osDestroyThread leaves it running, as before; otherwise it stops at its next block (woken there if blocked) until it is started again (Mario Party 2's audio thread, destroyed and made again) |
 | `-DXRC_THREAD_RESUME=0` | 1 | osStopThread(self) parks for good, osCreateThread over a stopped thread does not restart it, osStartThread never waits for a higher priority on the same kernel level (thread.c) |
 | `N64RX_OVERLAYS=0` (env, n64rx) | unset | the analyser's old segment rule: no segment whose vram overlaps a known one, no load descriptors without a caller (segments.py) |
 | `N64RX_WITHHOLD=<vram>,...` (env, n64rx) | unset | test: those functions left out of the analysis, so the safety net runs them (the learning loop's demo) |
