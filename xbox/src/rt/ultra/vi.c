@@ -23,6 +23,8 @@
 int xrc_menu_open(void);
 void xrc_menu_vi(unsigned retrace);
 void xrc_video_vi(unsigned retrace);
+/* gfx.c: the frame drawn into fb presented (weak: frames presented at their task's end) */
+__attribute__((weak)) void xrc_gfx_swap(uint32_t fb) { (void)fb; }
 
 #ifndef XRC_VI_RESERVE
 #define XRC_VI_RESERVE 2
@@ -92,6 +94,7 @@ ULTRA(osViSwapBuffer) {
     (void)rdram;
     s_next = fb;
     if (!s_cur) s_cur = fb;
+    xrc_gfx_swap(xu_phys(fb));   /* the frame drawn into fb presented (../gfx.c) */
 }
 
 ULTRA(osViGetCurrentFramebuffer) {

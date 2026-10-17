@@ -9,7 +9,11 @@
 
 /* One graphics task: interpret the display list at this N64 address and
  * present the frame. */
-void f3d_run(uint32_t dl);
+void f3d_run(uint32_t dl, int present);   /* present: 0 leaves the frame open for the next task */
+void f3d_present_frame(void);   /* the open frame presented (none open: nothing) */
+int f3d_swap(uint32_t fb);   /* osViSwapBuffer: presents the open frame if it is fb's; 1 when it did */
+unsigned f3d_presents(void);   /* frames presented so far */
+void f3d_split_frames(int on);   /* frames may span tasks: a task that draws into another swapped buffer presents the open frame */
 int f3d_last_fullsync(void);   /* the last f3d_run's list had a G_RDPFULLSYNC */
 /* The microcode the next f3d_run starts in (ucode.h; NULL: Fast3D). A
  * G_LOAD_UCODE in the list switches it for the rest of that task. */

@@ -165,7 +165,7 @@ static int near(float a, float b) { return fabsf(a - b) < 0.6f; }
 static unsigned run(const GfxUcode* uc) {
     s_nv = 0;
     f3d_set_ucode(uc);
-    f3d_run(DL_AT);
+    f3d_run(DL_AT, 1);
     return s_nv / 3;
 }
 

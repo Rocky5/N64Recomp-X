@@ -48,16 +48,17 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
 **Open, roughly by how much they block** (details in the entries below and
 `docs/analyzer.md`):
 
-1. From the first console runs of `vssb1`/`vmp1`/`vbk1`/`vmk5`: Mario
-   Party's flicker on hardware, Banjo-Kazooie's near/far clipping, Smash's
-   blurry textures, Mario Kart 64's drift boosts.
+1. From the first console runs of `vssb1`/`vmp1`/`vbk1`/`vmk5`: Smash's
+   blurry textures, Mario Kart 64's drift boosts; Mario Party's flicker and
+   Banjo-Kazooie's near/far clipping fixed in xemu, the console to confirm
+   (the last entry below).
 2. The s7 categories: NULL pointers through the TLB path (42 games), Rare's
    compressed boots before learning rounds (18), no frames (42).
 3. Per game: Ocarina of Time after START; Paper Mario's copy-protection
    chain and its flash code (no `osFlash*` rule); GoldenEye's wild jump in
    paged code; Jet Force Gemini's init reached only through decompressed
    data; Donkey Kong 64's main thread; Mario Party 2's audio thread;
-   Banjo-Kazooie's sky; Castlevania's dispatch after a TLB miss.
+   Castlevania's dispatch after a TLB miss.
 4. The 13 entries that are their own loaders (Acclaim's Turok 1-3,
    Armorines, All-Star Baseball; Army Men; two Star Wars); gzip code.
 5. Renderer: S2DEX's own commands, F3DDKR, framebuffer effects by default
@@ -999,3 +1000,36 @@ against ACPI), 64 MB console, nothing held; the ROM verified by SHA-1.
 | `vbk1` | works; serious near and far clipping (open: the depth range and clip planes) | 30 fps, dips to 5 fps on loads (one 5.6 s frame), free 13 MB; the log ends at 75 s |
 
 No crash, card or stall in any log.
+
+## 2026-10-17: the console's first results, from the decomps
+
+Work on the games with a decomp to read (`build-host/decomps`), starting
+from the console results above.
+
+- **Mario Party's flicker**: the decomp's swap-chain thread
+  (`src/engine/graphics.c`) draws one frame in several graphics tasks and
+  swaps once; the interpreter presented at every task's end, so every
+  other picture was part of a frame on black. Frames are now presented at
+  the game's swap (`docs/decisions.md` "Frames presented at the swap",
+  `XRC_PRESENT_ON_SWAP`). xemu, test builds, 60 s each: Mario Party 29-30
+  presents a second (one a frame; 60 before, two half frames), its odd-frame
+  log down to 1 line; Mario Kart 64 and Smash unchanged (30 and 53-59 fps).
+  Host tests `test_f3dex`, `test_fbfx` pass. Console: not yet.
+- **Banjo-Kazooie's near/far clipping and its black sky**: the decomp's
+  `viewport.c` forces near 750 and far 1250 unless RDRAM 0x1D8 holds a word
+  of the IPL3, which the console leaves there (the IPL3 copies its last part
+  to RDRAM 0 and runs it). The runtime now puts that part of the ROM's own
+  IPL3 at RDRAM 0 (`docs/decisions.md` "IPL3's copy of itself",
+  `XRC_IPL3_LEFT`). xemu, test build: `[GFX] perspective` (a new test-build
+  line: each loaded perspective's near and far, once) now gives the
+  decomp's values (sky 5/15609, the world far/128, the transition
+  63.6/500) instead of 750/1250; the lair's walls behind Gruntilda draw
+  (black before); triangles rejected beyond far in a 600-frame window 0
+  (694 of 789 before). The `[GFX] frame` line now splits rejected and
+  clipped triangles by far and near. Console: not yet.
+- **Mario Kart 64's drift boosts** (the decomp's `player_controller.c`,
+  read, nothing changed yet): a spark level needs the stick past -10/+10
+  after MK64's own dead zone (12 of the raw value, then clamped to 53) for
+  18 game frames, then back; two levels and R released give the boost.
+  The port maps full tilt to 80 after its own 20 % radial dead zone.
+

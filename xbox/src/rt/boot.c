@@ -136,6 +136,43 @@ static void boot_block(void) {
     for (i = 0; i < 64; i += 4) wr32(0x8000031C + i, 0);   /* osAppNMIBuffer */
 }
 
+/* The IPL3 ends by copying its own last part from SP DMEM to RDRAM 0 and
+ * running it there (`lw t5,0(t0); sw t5,0(t1)` from DMEM X to Y, t1 from
+ * 0xA0000000, then `jr 0x80000000`): DMEM 0x4C0..0x774 in the common one,
+ * 0x4C0..0x768 in Banjo-Kazooie's, other ranges in four more; all 268 ROMs
+ * of the library have the copy. Below the exception vectors' few words that
+ * osInitialize writes, the code stays in RDRAM, and games check it:
+ * Banjo-Kazooie's viewport.c reads 0xA00001D8 and, without IPL3's word
+ * there, draws with near 750 and far 1250 (its anti-tamper: the world cut
+ * off near and far; maintainer, vbk1 on the console). DMEM holds ROM
+ * 0x000..0xFFF, so the range is read from the ROM. DIVERGES: none meant
+ * (what the console leaves); -DXRC_IPL3_LEFT=0: low RDRAM left zero. */
+#ifndef XRC_IPL3_LEFT
+#define XRC_IPL3_LEFT 1
+#endif
+static uint32_t be32(const uint8_t* p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
+
+static void ipl3_left(void) {
+    static uint8_t ipl[0x1000];
+    uint32_t i, j, x, y;
+    if (!XRC_IPL3_LEFT || xu_rom_read(0, ipl, sizeof ipl)) return;   /* 0: read */
+    for (i = 0x40; i < sizeof ipl; i += 4) {
+        if (be32(ipl + i) != 0x3C09A000u) continue;   /* lui t1, 0xA000: the copy's destination */
+        x = y = 0;
+        for (j = i >= 0x68 ? i - 0x28 : 0x40; j < i; j += 4) {
+            uint32_t w = be32(ipl + j);
+            if (w >> 16 == 0x2508u) x = w & 0xFFFFu;   /* addiu t0, t0, X: the start in DMEM */
+            if (w >> 16 == 0x256Bu) y = w & 0xFFFFu;   /* addiu t3, t3, Y: the end */
+        }
+        if (x < 0x40 || y <= x || y > sizeof ipl || y - x > 0x400u || y - x > (xrc_game.entrypoint & 0x1FFFFFFFu))
+            continue;
+        xu_rom_to_rdram(x, 0x80000000u, y - x);
+        xhw_logf("[BOOT] IPL3's last part in RDRAM 0..%03x (DMEM %03x..%03x)", (unsigned)(y - x), (unsigned)x, (unsigned)y);
+        return;
+    }
+    xhw_log("[BOOT] IPL3: no copy to RDRAM found; low RDRAM left zero");
+}
+
 /* the pack's [rom] pin ranges held in the page cache (no-op when resident) */
 static void rom_pins(void) {
     uint32_t i, chunks = 0;
@@ -164,6 +201,7 @@ static void game(void) {
     xhw_splash_progress(0.3f);
     if (!xrc_mem_init(xrc_game.rdram_mb ? xrc_game.rdram_mb : 4))
         xhw_fatal("Out of memory", "No room for the N64's RAM.");
+    ipl3_left();
     boot_block();
     xrc_tlb_init();   /* a TLB miss goes to the game's refill vector or fault thread (tlb.c) */
     boot = xrc_game.boot_size;

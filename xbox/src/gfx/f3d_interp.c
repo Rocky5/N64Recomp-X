@@ -109,6 +109,7 @@
 static float s_rej_kx = 1.0f;
 static uint32_t s_epoch = 1;   /* draw state epoch: DIRTY() makes the next draw rebuild its state */
 #define DIRTY() (s_epoch++)
+static void frame_cimg(uint32_t c);   /* a frame across tasks (f3d_swap) */
 
 /* ------------------------------------------------------------------ state */
 
@@ -214,6 +215,26 @@ static void do_mtx(uint32_t w0, uint32_t w1) {
         if (p & F3D_G_MTX_LOAD) memcpy(R.proj, m, sizeof m);
         else mtx_mul(R.proj, m, R.proj);
         if ((R.proj[2][3] != 0.0f) != persp) DIRTY();   /* hor+ extends perspective draws only (pixel_state) */
+        if (XHW_TEST_BUILD && (p & F3D_G_MTX_LOAD) && m[2][3] != 0.0f) {
+            /* a perspective loaded: its near and far planes (z/w = -1, 1) and
+             * fovy, when they change (the game's clip distances, as drawn) */
+            static float s_ln[32], s_lf[32];
+            static unsigned s_nlog;
+            float a = m[2][2] + m[2][3], b = m[2][2] - m[2][3];
+            float n = a != 0.0f ? m[3][2] / a : 0.0f, f = b != 0.0f ? m[3][2] / b : 0.0f;
+            unsigned k;
+            if (n > f) { float t = n; n = f; f = t; }
+            for (k = 0; k < s_nlog; k++)   /* each pair once */
+                if (fabsf(n - s_ln[k]) <= 0.01f * fabsf(n) + 0.01f && fabsf(f - s_lf[k]) <= 0.01f * fabsf(f) + 0.01f) break;
+            if (k == s_nlog && s_nlog < 32) {
+                s_ln[s_nlog] = n;
+                s_lf[s_nlog++] = f;
+                xhw_logf("[GFX] perspective: near %d.%02d far %d fovy %d aspect %d/1000 (retrace %u)", (int)n,
+                         (int)(fabsf(n - (float)(int)n) * 100.0f), (int)f,
+                         m[1][1] != 0.0f ? (int)(2.0f * atanf(fabsf(m[2][3] / m[1][1])) * 57.29578f + 0.5f) : 0,
+                         m[0][0] != 0.0f ? (int)(1000.0f * m[1][1] / m[0][0]) : 0, xu_retrace());
+            }
+        }
     } else {
         if ((p & F3D_G_MTX_PUSH) && R.mv_top < MTX_DEPTH - 1) {
             memcpy(R.mv[R.mv_top + 1], R.mv[R.mv_top], sizeof m);
@@ -1010,6 +1031,7 @@ static void clip_tri(Vtx* const v[3], const Vtx* flat) {
     emit_poly(in, n, flat);
 }
 
+static uint32_t s_t_rej_far, s_t_rej_near, s_t_far, s_t_near;   /* rejected beyond far / near; clipped at far / near */
 static uint32_t s_t_in, s_t_rej, s_t_cull, s_t_clip, s_t_shadow, s_vtx_loads, s_mtx_loads, s_rects, s_fills, s_zclears;
 
 static void do_tri(int ia, int ib, int ic, int flag) {
@@ -1019,7 +1041,15 @@ static void do_tri(int ia, int ib, int ic, int flag) {
     if (R.cimg == R.zimg && R.cimg && !XGFX_SHADOW_VOL) return;
     if (s_shadow_pass2 && !XGFX_SHADOW_VOL) return;
     s_t_in++;
-    if (v[0]->oc & v[1]->oc & v[2]->oc & (31 | 64)) { s_t_rej++; return; }   /* all beyond one plane */
+    if (v[0]->oc & v[1]->oc & v[2]->oc & (31 | 64)) {   /* all beyond one plane */
+        uint32_t all = v[0]->oc & v[1]->oc & v[2]->oc;
+        s_t_rej++;
+        s_t_rej_far += (all & 64) != 0;
+        s_t_rej_near += (all & 16) != 0;
+        return;
+    }
+    s_t_far += ((v[0]->oc | v[1]->oc | v[2]->oc) & 64) != 0;
+    s_t_near += ((v[0]->oc | v[1]->oc | v[2]->oc) & 16) != 0;
     needs_clip = ((v[0]->oc | v[1]->oc | v[2]->oc) & 32) != 0;
     if ((R.geom & CULLMASK) && !needs_clip) {
         /* screen-space orientation, as the RSP culls: every w is > 0 here. The
@@ -1688,6 +1718,7 @@ static void run_dl(const uint32_t* pc) {
                     s_cimg_siz = (w0 >> 19) & 3u;
                     s_cimg_w = (w0 & 0xFFFu) + 1u;
                 }
+                if (c != R.zimg) frame_cimg(c);
                 if ((R.cimg == R.zimg) != (c == R.zimg)) DIRTY();
                 if (R.cimg == R.zimg && R.cimg && c != R.zimg) s_shadow_rec = 0;   /* pass 1 ended */
                 R.cimg = c;
@@ -1875,6 +1906,7 @@ void f3d_present_held(const uint32_t* img, int tw, int th, int pw, int ph, int f
     static const uint8_t corner[6] = { 0, 1, 2, 2, 1, 3 };
     if (fade < 0) fade = 0;
     if (fade > 256) fade = 256;
+    f3d_present_frame();   /* a game frame still open (its swap never came) */
     xgfx_frame_begin();
     map_setup();
     s_side_drawn = 0;
@@ -2096,7 +2128,70 @@ static void fb_stage(void) {
 
 int f3d_last_fullsync(void) { return s_fullsync; }
 
-void f3d_run(uint32_t dl) {
+/* A frame is opened by the first graphics task after a present and
+ * presented by f3d_present_frame: at the end of the task (f3d_run with
+ * present = 1), or when the game swaps (gfx.c). Mario Party draws one frame
+ * in several tasks (its swap-chain thread sends tasks until the last one's
+ * flag, then calls osViSwapBuffer: src/engine/graphics.c in the decomp);
+ * presented task by task, every other picture on the console was a part
+ * of the frame on black (maintainer, vmp1: "flickers so bad"). */
+static int s_fopen;
+static uint32_t s_open_cimg;   /* the open frame's colour image: a buffer the game swaps to (physical) */
+static uint32_t s_swapped[4];  /* the buffers the game swapped to lately */
+static int s_split;            /* the frame stays open past its task (gfx.c: present on swap) */
+static void frame_open(void);
+
+static int swap_buffer(uint32_t c) {
+    int i;
+    for (i = 0; i < 4; i++)
+        if (s_swapped[i] && s_swapped[i] == c) return 1;
+    return 0;
+}
+
+/* G_SETCIMG: the frame's buffer. A task drawing into another buffer the
+ * game swaps to has begun the next frame: the open one is complete (a
+ * scheduler that swaps at the retrace after the task, as Ocarina of Time's,
+ * may run the next frame's task first). */
+static void frame_cimg(uint32_t c) {
+    if (!s_split || !s_fopen || !swap_buffer(c)) return;
+    if (s_open_cimg && s_open_cimg != c) {
+        flush();
+        f3d_present_frame();
+        frame_open();
+        DIRTY();
+    }
+    s_open_cimg = c;
+}
+
+static void frame_open(void) {
+    if (s_fopen) return;
+    s_fopen = 1;
+    s_open_cimg = 0;
+    s_zorder = 0;   /* the depth tie-break counts on across the frame's tasks */
+    xgfx_frame_begin();
+    fb_frame_start();
+    s_cimg_maxy = 0;
+    s_side_drawn = 0;
+    side_clear();
+    hold_frame();
+}
+
+/* osViSwapBuffer(fb): the open frame presented if it is fb's (or drew
+ * into no buffer the game swaps to); 1 when it was */
+int f3d_swap(uint32_t fb) {
+    fb &= 0x1FFFFFFFu;
+    if (!swap_buffer(fb)) {
+        memmove(&s_swapped[1], &s_swapped[0], 3 * sizeof s_swapped[0]);
+        s_swapped[0] = fb;
+    }
+    if (!s_fopen || (s_open_cimg && s_open_cimg != fb)) return 0;
+    f3d_present_frame();
+    return 1;
+}
+
+void f3d_split_frames(int on) { s_split = on; }
+
+void f3d_run(uint32_t dl, int present) {
     uint64_t t0 = xhw_time_us();
     int i;
     if (!s_init) {
@@ -2104,19 +2199,13 @@ void f3d_run(uint32_t dl) {
         R.vp_sx = 160.0f; R.vp_sy = 120.0f; R.vp_tx = 160.0f; R.vp_ty = 120.0f;
         for (i = 0; i < 16; i++) R.mv[0][i >> 2][i & 3] = R.proj[i >> 2][i & 3] = (i % 5) == 0 ? 1.0f : 0.0f;
     }
-    xgfx_frame_begin();
-    fb_frame_start();
-    s_cimg_maxy = 0;
-    s_side_drawn = 0;
-    side_clear();
-    hold_frame();
+    frame_open();
     s_title = wx_game_state() == 0;
     map_setup();
     s_world = 0;
     s_anchor = 'C';
     R.mv_top = 0;
     R.mvp_dirty = 1;
-    s_zorder = 0;
     s_shadow_dl = 0;
     s_shadow_rec = s_shadow_pass2 = 0;
     s_scissor[0] = s_scissor[1] = 0.0f; s_scissor[2] = N64_W; s_scissor[3] = N64_H;
@@ -2127,6 +2216,23 @@ void f3d_run(uint32_t dl) {
     DIRTY();
     run_dl((const uint32_t*)host(dl));
     flush();
+    {
+        uint64_t t1 = xhw_time_us();
+        s_dl_us += t1 - t0;
+        xhw_perf_add(XHW_PERF_DL, t1 - t0);
+    }
+    if (present) f3d_present_frame();
+}
+
+/* the open frame's end: the port's drawing, the present, the counters */
+static unsigned s_presents;
+unsigned f3d_presents(void) { return s_presents; }
+
+void f3d_present_frame(void) {
+    int i;
+    if (!s_fopen) return;
+    s_fopen = 0;
+    s_presents++;
     if (s_title && XGFX_TITLE_FIT) {   /* the black margin around the fitted title picture (drawn last) */
         int32_t m = (int32_t)(TITLE_MARGIN * s_ch / 480.0f), mx = (int32_t)((float)m * s_cw / (s_ch * 4.0f / 3.0f)),
                 cx = (int32_t)s_cx,
@@ -2148,14 +2254,14 @@ void f3d_run(uint32_t dl) {
     wx_frame_overlay();   /* the port's own text (FPS counter, settings panel; patches/021) */
     {
         uint64_t t1 = xhw_time_us();
-        s_dl_us += t1 - t0;
-        xhw_perf_add(XHW_PERF_DL, t1 - t0);
         xgfx_present();
         xhw_perf_add(XHW_PERF_PRESENT, xhw_time_us() - t1);
     }
     if (s_frames % 600 == 0)
-        xhw_logf("[GFX] frame %u state %d: tris %u, rejected %u, culled %u, clipped %u | vtx loads %u, mtx %u",
-                 s_frames, wx_game_state(), s_t_in, s_t_rej, s_t_cull, s_t_clip, s_vtx_loads, s_mtx_loads);
+        xhw_logf("[GFX] frame %u state %d: tris %u, rejected %u (far %u, near %u), culled %u, clipped %u (far %u, near %u) | "
+                 "vtx loads %u, mtx %u",
+                 s_frames, wx_game_state(), s_t_in, s_t_rej, s_t_rej_far, s_t_rej_near, s_t_cull, s_t_clip, s_t_far,
+                 s_t_near, s_vtx_loads, s_mtx_loads);
     {   /* frames that drew next to nothing: what they did (the in-game flashing) */
         static unsigned s_nthin;
         if (XHW_TEST_BUILD && s_t_in < 20 && !s_hold_tex && s_nthin < 40) {
@@ -2180,6 +2286,7 @@ void f3d_run(uint32_t dl) {
     }
     s_rects = s_fills = s_zclears = 0;
     s_t_in = s_t_rej = s_t_cull = s_t_clip = s_vtx_loads = s_mtx_loads = 0;
+    s_t_rej_far = s_t_rej_near = s_t_far = s_t_near = 0;
     if (++s_frames % 600 == 0) {
         xhw_logf("[GFX] frame %u: display lists %u us a frame (avg over 600)", s_frames, (unsigned)(s_dl_us / 600));
         if (XGFX_FB_READBACK)

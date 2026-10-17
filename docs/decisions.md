@@ -694,3 +694,35 @@ miss runs the refill code and the fault path). Only games that map KSEG2/3
 pay. Rejected: decoding the faulting x86 instruction in the crash handler
 and emulating it (every load and store form the compiler emits). Override
 `N64RX_HIGH_TLB=0/1`.
+
+## Frames presented at the swap (2026-10-17, `gfx.c`, `XRC_PRESENT_ON_SWAP`)
+
+The interpreter presented a frame at the end of every graphics task. Mario
+Party draws one frame in several tasks (its swap-chain thread sends tasks
+until the last one's flag, then calls osViSwapBuffer: `src/engine/graphics.c`
+in the decomp), so every other picture was part of a frame on black: on
+the console it flickered too badly to play (`vmp1`). Chosen: once the game
+has called osViSwapBuffer, a task's frame stays open after it; it is
+presented at the swap to the buffer it drew into, or when a task starts
+drawing into another buffer the game swaps to (a scheduler that swaps at
+the retrace after the task, as Ocarina of Time's, can run the next frame's
+task first). A game that never swaps, or 16 tasks with no present on a
+swap, goes back to a present per task. Rejected: presenting from the VI
+thread at the retrace that latches the swap (the frame would wait up to a
+retrace more, and the back end's present is not the VI thread's to make).
+
+## IPL3's copy of itself left in low RDRAM (2026-10-17, `boot.c`, `XRC_IPL3_LEFT`)
+
+The IPL3 ends by copying its last part from SP DMEM to RDRAM 0 and running
+it there; the console then keeps those words below the boot segment, save
+the few that osInitialize overwrites with its exception preamble.
+Banjo-Kazooie checks one (`viewport.c`: the word at 0xA00001D8 must be
+0xAC2B0010) and otherwise draws with near 750 and far 1250 (the console's
+"serious near and far clipping", `vbk1`; the sky, drawn with 5 and 15000,
+disappeared with it). Chosen: at boot the runtime finds the copy in the
+ROM's own IPL3 (`addiu t0,t0,X` and `addiu t3,t3,Y` before `lui t1,0xA000`)
+and puts ROM X..Y at RDRAM 0. All 268 ROMs of the library have the copy, in
+six variants (0x4C0..0x774 in 240 of them). No game's bytes or addresses
+are in the runtime: the ROM supplies them. Rejected: running the IPL3 in
+the interpreter (it initialises RDRAM and the RCP through registers the
+runtime does not model).
