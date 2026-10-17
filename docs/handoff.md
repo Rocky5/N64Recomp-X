@@ -1381,8 +1381,17 @@ got its code out of the interpreter, each from the decomp:
 Functions interpreted: 158 (round 20) -> 26; refused by the recompiler:
 134 -> 8 (cop0 and `trunc.l` only). Interpreted instructions in the
 menus: 7.5 million per 300 retraces (round 26) -> about 4000 (round 27);
-the menus at 45-50 fps. The level itself with this build: round 28.
-`[MEM]` free 18608 KB; `[CLOCK]` cpu 733 MHz (xemu).
+the menus at 45-50 fps. But in the level that build drew a black world
+under a frozen "PP7 (SILENCED)" banner, or (paused) the watch without its
+model. Bisected by interpreting ranges (`N64RX_CAPTURED_INTERP`, now over
+`tlb_` segments too; `build-host/gebis.sh`): the black world goes with
+0x7F038000-0x7F054000, the watch model with 0x7F054000-0x7F05B000, outside
+0x7F0568F4-0x7F056F08 (`get_status_of_objective` at 0x7F057238 alone is
+not it). Every switch checked there has its `sltiu` bound's case count
+and a `nop` delay slot. The walker's RDRAM tables are off by default for
+now (`N64RX_WALK_RDRAM=1` turns them on): GoldenEye builds as round 26,
+the level drawn, its level code partly interpreted. `[MEM]` free 18608 KB;
+`[CLOCK]` cpu 733 MHz (xemu).
 
 **Staged for the console, the current set (red still off; supersedes
 every earlier staged build).** ThinLTO releases at `bec34b3`-`7b05f79`

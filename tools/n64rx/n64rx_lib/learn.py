@@ -256,7 +256,11 @@ def _table_sources(a, runs, notes):
         notes.append(f'rdram_{blk:08X}: {len(data):#x} bytes at {blk:08X} from RDRAM, unlike the ROM segment '
                      f'there (decompressed at boot): read for jump tables only, at {off:#x}')
     a.img.rom = rom
-    a.img.table_sources = a.table_sources
+    # the walker reads jump tables there too (funcs.Image.word): GoldenEye's 0x7F000000 functions with
+    # their tables at 0x8005xxxx then recompile, and its level drew black or its watch without its model
+    # (being narrowed down): off until that is found. N64RX_WALK_RDRAM=1: on
+    if os.environ.get('N64RX_WALK_RDRAM', '0') == '1':
+        a.img.table_sources = a.table_sources
 
 
 def _code_runs(code):

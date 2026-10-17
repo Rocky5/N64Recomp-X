@@ -113,7 +113,7 @@ def make(rom, bdir, base=None, learnt=None):
     ci = os.environ.get('N64RX_CAPTURED_INTERP', '0')   # 1, or a range lo-hi (hex) of vram
     if ci != '0':
         lo, hi = (int(v, 16) for v in ci.split('-')) if '-' in ci else (0, 1 << 32)
-        interp.update({x: nm[x] for seg in a.img.segments if seg.name.startswith('code_')
+        interp.update({x: nm[x] for seg in a.img.segments if seg.name.startswith(('code_', 'tlb_'))
                        for x in a.funcs.get(seg.name, {}) if x in live and nm[x] not in ignored and x != a.entry
                        and nm[x] not in replaced and lo <= x < hi})
     # what N64Recomp would crash on (a jump table outside the function's segment) or refuse one run at a
