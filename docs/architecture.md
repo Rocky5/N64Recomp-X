@@ -142,7 +142,15 @@ docs/look/           baseline shots: the loading screen (xemu, STILL); the BACK 
   (Mario Party's processes) run as coroutines (`strand.c`): each context a
   host thread of its own, the same N64 thread to the runtime, one running
   at a time; n64rx turns each call to setjmp into a host `__builtin_setjmp`
-  in the caller (`XRC_SETJMP`).
+  in the caller (`XRC_SETJMP`). A destroyed or returned thread's record
+  and host thread serve the next new OSThread (`XRC_THREAD_REUSE`).
+- Boot: the ROM's IPL3 copy of itself is put in low RDRAM as the console
+  leaves it (`boot.c`, `XRC_IPL3_LEFT`: Banjo-Kazooie's and Donkey Kong
+  64's anti-tamper checks read it).
+- RSP tasks by type (`ultra/sp.c`): graphics to the interpreter, audio to
+  the HLE, Ocarina of Time's JPEG decoder task to `jpeg.c`; others logged
+  and not run. Frames are presented at the game's swap once it swaps
+  (`gfx.c`, `XRC_PRESENT_ON_SWAP`: a frame may span several tasks).
 - Code the TLB maps: a miss (a fault at a KUSEG host address) runs the
   game's own refill vector or `__osException` in the interpreter, then
   libultra's fault path (the game's fault thread pages it in); KSEG2/3
