@@ -279,6 +279,31 @@ draws since (2026-10-17): the analyser finds a game's own setjmp/longjmp
 by shape and the runtime runs the contexts they switch as coroutines
 (`strand.c`, `docs/decisions.md`).
 
+### The library again: s7 (2026-10-17, xemu, commit `fbe2fa1`)
+
+Built in a git worktree pinned to the commit (s6 was built from a working
+tree that changed under it and is not comparable). 245 of 246 build; 139
+present frames (s5: 130), 121 still presenting when the 30 s run ends.
+Against s5: 12 gained (Donkey Kong 64, Rat Attack, Paperboy, Donald Duck,
+Mario Party among them), 3 lost (Offroad Challenge, Robotron 64, Mario no
+Photopie: open).
+
+| in xemu (s7) | games |
+|---|---|
+| frames | 121 |
+| no frames | 42 |
+| crash: read/write KUSEG (TLB-mapped): mostly a NULL pointer | 42 |
+| fatal: the boot code came back (Rare's compressed boots: the learning rounds take them further) | 18 |
+| fatal: no function at an address | 9 |
+| crash: KSEG0/KSEG1/PIF and the rest | 13 |
+
+Popular titles in s7: Ocarina of Time 627 frames (its title demo), Super
+Smash Bros. 1501, Super Mario 64 927, Mario Kart 64 913, Mario Party 1853,
+Pokémon Snap 1576, Diddy Kong Racing 857, WWF No Mercy 849, F-Zero X 42,
+Pokémon Stadium 20, Kirby 64 9. After s7 (not in it): the overlay
+precheck (Mario Party 3 builds), XRC_HIGH_TLB, the controller query names
+(Ocarina of Time's title sees the controller).
+
 ## Known gaps
 
 - Code loaded with computed addresses (overlay tables, compressed code) is

@@ -16,12 +16,12 @@ The newest state first; the entries below are the record, oldest first.
 | Pokémon Snap | the ROM alone (overlays sharing a vram) | its intro (the Jack and Beans logo scene, F3DEX2), past the main menu's load since the thread-stack fix | `vsnap1` (before the fix): the crash xemu had |
 | Ridge Racer 64 | the ROM alone + one `--learn` round | the first F3DEX2 game drawn: its save screen at ~42 fps; A not taken yet | - |
 | Forsaken 64 | the ROM alone | builds and boots (aspMain), stops later | - |
-| Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (32 -> 53 MB) | builds; the 53 MB ROM through the page cache inside the budget; stopped at its RAM-size probe (KSEG1, since modelled) | - |
 | Super Smash Bros. | the ROM alone | intro, title, 1P character select, a 1P match (Link vs Link, Hyrule Castle) at ~50 fps with scripted input | - |
 | Mario Party | the ROM alone | the Hudson logo, the intro's 3D scene, the story text at ~58 fps; audio tasks run (53 a second); its processes run as coroutines (`strand.c`) | - |
 | Mario Party 2 / 3 | the ROM alone | 60 fps from boot (intro, menus); 2: the audio thread dies after a restart (open) | - |
 | Dr. Mario 64 | the ROM alone | links, boots; its gzip main segment is not found | - |
-| the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s2: 143 build, 17 present frames; s4 (all of today's work): see `docs/analyzer.md` | - |
+| the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s7: 245 build, 139 present frames, 121 still presenting at 30 s (`docs/analyzer.md`) | - |
+| Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated | the title demo and logo (the controller seen since the query names); START: the file select's load stalls (open) | - |
 
 Built and merged on 2026-10-16 (each with host tests and a kill switch; the
 entries below say how each was verified): the ROM inside the XBE; the ROM
