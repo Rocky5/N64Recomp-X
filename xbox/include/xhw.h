@@ -157,6 +157,9 @@ void xhw_file_close(void* file);
 /* Whole-file write through a temp file, read back and renamed over `path`
  * (power-cut safe). 1 on success. */
 int xhw_write_file_atomic(const char* path, const void* data, uint32_t len);
+int xhw_append_file(const char* path, const void* data, uint32_t len);   /* made when missing */
+/* a blob over COM1 as base64 lines "[tag] ..." between "[tag] BEGIN <len>" and "[tag] END" (test builds' logs) */
+void xhw_dump_blob(const char* tag, const void* data, uint32_t len);
 
 /* ---- controllers ---- */
 typedef struct xhw_pad {

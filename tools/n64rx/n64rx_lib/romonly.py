@@ -52,6 +52,26 @@ def make(rom, bdir, base=None, learnt=None):
     ids.pop(a.entry, None)   # the entry code is the game's own, whatever it looks like (South Park's clears the TLB)
     lists = emit.recomp_lists(ROOT)
     replaced = lists['reimplemented_funcs'] | lists['ignored_funcs']
+    # code captured from RDRAM (learn.py) carries the game's own libultra, a second copy beside the boot
+    # loader's (Rare's games): named on its own, a name the loader's copy has becomes <name>__2, left out of
+    # the recompile and given a body that calls the runtime's (gen/xrc_alias.c, pipeline.py)
+    aliases = {}
+    code_keys = {k for seg in a.img.segments if seg.name.startswith('code_') for k in a.funcs.get(seg.name, {})}
+    if code_keys:
+        have = _runtime_ultra()
+        ids2, _N2 = libultra.identify(a.img, {k: f for k, f in a.all_funcs().items() if k in code_keys})
+        taken = {n for n, _w in ids.values()}
+        for k, (n, why) in ids2.items():
+            if k in ids or k == a.entry:
+                continue
+            if n not in taken:
+                ids[k] = (n, why + " (the game's own copy)")
+                taken.add(n)
+            elif n in have and f'{n}__2' not in taken:
+                ids[k] = (f'{n}__2', why + " (the game's own copy, beside the loader's)")
+                aliases[f'{n}__2'] = n
+                taken.add(f'{n}__2')
+        replaced = replaced | set(aliases)
     nm = emit.names(a, ids)
     live = emit.reachable(a, nm, replaced)
     pdir = pathlib.Path(bdir) / 'pack'
@@ -64,6 +84,8 @@ def make(rom, bdir, base=None, learnt=None):
     # dead code is not recompiled: libultra's internals that only the
     # replaced functions reached (they call registers and each other)
     ignored |= {n for x, n in nm.items() if x not in live and n not in replaced}
+    ignored |= set(aliases)   # the runtime's, through gen/xrc_alias.c
+    (pdir / 'aliases.txt').write_text(''.join(f'{d} {b}\n' for d, b in sorted(aliases.items())), encoding='utf-8')
     # hand-written code the recompiler cannot express (a return through a
     # register other than ra, a jump through a register with no table): the
     # runtime's interpreter runs it (xbox/src/rt/interp.c)
@@ -99,8 +121,17 @@ def make(rom, bdir, base=None, learnt=None):
                  boot_size=0x100000, rdram_mb=4, gpr='auto', compressed='none',
                  save_type=('eep16k' if code[:3] in EEP16K else 'eep4k') if uses_eep else 'none', stage='planned',
                  test=False, raw={})
-    info = {'live': live, 'names': nm, 'analysis': a, 'ids': ids}
+    info = {'live': live, 'names': nm, 'analysis': a, 'ids': ids,
+            'recomp_rom': a.img.rom if len(a.img.rom) != len(rom.data) else None}   # learnt code appended
     return p, info
+
+
+def _runtime_ultra():
+    """the libultra entry points the runtime provides: ULTRA(name) in xbox/src/rt"""
+    have = set()
+    for c in (ROOT / 'xbox/src/rt').rglob('*.c'):
+        have.update(re.findall(r'^ULTRA\((\w+)\)', c.read_text(encoding='utf-8', errors='replace'), re.M))
+    return have
 
 
 def _from_base(base, a, nm):

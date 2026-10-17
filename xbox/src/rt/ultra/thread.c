@@ -457,9 +457,11 @@ ULTRA(__osGetCause) {
 
 /* test builds (vi.c, Wings64-X's stall watch): what every N64 thread waits
  * on, with the queue's fill; the addresses are the game's data symbols */
+void xrc_trace_dump(void);   /* trace.c */
 void xu_stall_report(const char* why) {
     int i;
     xhw_logf("[OS] stall: %s (retrace %u)", why, xu_retrace());
+    xrc_trace_dump();   /* what ran last (interpreted calls in every build; a trace build's functions) */
     for (i = 0; i < s_nthr; i++) {
         uint32_t w = s_thr[i].wait, q = w & ~1u;
         if (!s_thr[i].t && !w) continue;

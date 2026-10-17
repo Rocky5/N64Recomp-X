@@ -27,13 +27,14 @@ static const char B64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0
 
 /* each line is one log call, so lines from other threads land between
  * lines, never inside one */
-static void emit_b64(const unsigned char* p, size_t n) {
-    char line[9 + 76 + 1];
+static void emit_b64_tag(const char* tag, const unsigned char* p, size_t n) {
+    char line[24 + 76 + 1];
     size_t i = 0;
+    int t = snprintf(line, 24, "[%s] ", tag);
+    if (t < 0 || t > 23) t = 23;
     while (i < n) {
-        int k = 9;
-        memcpy(line, "[FBDUMP] ", 9);
-        while (i < n && k < 9 + 76) {
+        int k = t;
+        while (i < n && k < t + 76) {
             unsigned v = (unsigned)p[i] << 16;
             int m = 1;
             if (i + 1 < n) {
@@ -53,6 +54,17 @@ static void emit_b64(const unsigned char* p, size_t n) {
         line[k] = '\0';
         xhw_log_com1_line(line);
     }
+}
+
+static void emit_b64(const unsigned char* p, size_t n) { emit_b64_tag("FBDUMP", p, n); }
+
+void xhw_dump_blob(const char* tag, const void* data, uint32_t len) {
+    char line[48];
+    snprintf(line, sizeof line, "[%s] BEGIN %u", tag, (unsigned)len);
+    xhw_log_com1_line(line);
+    emit_b64_tag(tag, (const unsigned char*)data, len);
+    snprintf(line, sizeof line, "[%s] END", tag);
+    xhw_log_com1_line(line);
 }
 
 static voidpf z_alloc(voidpf o, uInt n, uInt sz) {

@@ -119,6 +119,45 @@ static void emit(const char* line) {
     if (!xhw_write_file_atomic(path, s_text, s_tlen)) xhw_logf("[LEARN] could not write %s", path);
 }
 
+/* ---- code no ROM DMA put there (decompressed: Rare's games, gzip ones) ----
+ * The 64 KB block of RDRAM that holds it is saved as it is the first time the
+ * net runs code in it: learn_code.bin beside learn.txt (records of vram,
+ * size, then the bytes in N64 order; test builds also send it over COM1 as
+ * [LEARNCODE] base64), so n64rx --learn can recompile what no ROM holds.
+ * -DXRC_LEARN_CODE=0: not captured. */
+#ifndef XRC_LEARN_CODE
+#define XRC_LEARN_CODE 1
+#endif
+#define CODE_BLOCK 0x10000u
+static uint8_t s_captured[(8u << 20) / CODE_BLOCK];
+
+static void capture(uint32_t vram) {
+    static uint8_t buf[8 + CODE_BLOCK];
+    char path[96], line[64];
+    uint32_t phys, base, blk, i;
+    if (!XRC_LEARN_CODE) return;
+    phys = (int32_t)vram >= 0 ? xrc_tlb_to_phys(vram) : (vram & 0x1FFFFFFFu);
+    if (phys == ~0u || phys >= xrc_rdram_size) return;
+    blk = phys / CODE_BLOCK;
+    if (blk >= sizeof s_captured || s_captured[blk]) return;
+    s_captured[blk] = 1;
+    base = vram & ~(CODE_BLOCK - 1);
+    for (i = 0; i < 4; i++) {
+        buf[i] = (uint8_t)(base >> (24 - 8 * i));
+        buf[4 + i] = (uint8_t)(CODE_BLOCK >> (24 - 8 * i));
+    }
+    for (i = 0; i < CODE_BLOCK; i += 4) {
+        uint32_t w = xrc_word(0x80000000u | (blk * CODE_BLOCK + i));
+        buf[8 + i] = (uint8_t)(w >> 24), buf[9 + i] = (uint8_t)(w >> 16);
+        buf[10 + i] = (uint8_t)(w >> 8), buf[11 + i] = (uint8_t)w;
+    }
+    snprintf(path, sizeof path, "%slearn_code.bin", xhw_save_dir());
+    if (!xhw_append_file(path, buf, sizeof buf)) xhw_logf("[LEARN] could not write %s", path);
+    if (XHW_TEST_BUILD) xhw_dump_blob("LEARNCODE", buf, sizeof buf);
+    snprintf(line, sizeof line, "code %08x %x", (unsigned)base, (unsigned)CODE_BLOCK);
+    emit(line);
+}
+
 static void log_one(Learnt* e) {
     char line[80];
     uint32_t phys = e->vram & 0x1FFFFFFFu;
@@ -133,6 +172,7 @@ static void log_one(Learnt* e) {
             break;
         }
     }
+    if (i == k) capture(e->vram);   /* no DMA from the ROM put it there: its bytes, from RDRAM */
     snprintf(line, sizeof line, "func %08x %x from %08x", (unsigned)e->vram, (unsigned)e->len, (unsigned)e->caller);
     emit(line);
 }

@@ -30,7 +30,8 @@ void xrc_trace_vram(uint32_t vram) {
 }
 
 /* the crash guard's extra report (xhw_crash_set_extra): the last 64, oldest first */
-static void dump(void) {
+void xrc_trace_dump(void);
+void xrc_trace_dump(void) {
     unsigned n = s_n, k, first = n > 64 ? n - 64 : 0;
     if (!n) return;
     xhw_logf("[TRACE] the last %u functions entered (of %u), oldest first:", n - first, n);
@@ -41,4 +42,4 @@ static void dump(void) {
     }
 }
 
-void xrc_trace_init(void) { xhw_crash_set_extra(dump); }
+void xrc_trace_init(void) { xhw_crash_set_extra(xrc_trace_dump); }

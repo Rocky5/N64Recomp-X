@@ -640,6 +640,19 @@ void xhw_file_close(void* file) {
     if (file) CloseHandle((HANDLE)file);
 }
 
+/* bytes added at the end of `path` (made when missing); 1 on success */
+int xhw_append_file(const char* path, const void* data, uint32_t len) {
+    HANDLE h = CreateFileA(path, GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    DWORD w = 0;
+    int ok;
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    SetFilePointer(h, 0, NULL, FILE_END);
+    ok = WriteFile(h, data, len, &w, NULL) && w == len;
+    xhw_flush_handle(h);
+    CloseHandle(h);
+    return ok;
+}
+
 /* <path>.tmp written and flushed, read back and compared, then renamed over
  * <path> (xhw_replace_file): a full E: or a power cut leaves the old file. */
 int xhw_write_file_atomic(const char* path, const void* data, uint32_t len) {

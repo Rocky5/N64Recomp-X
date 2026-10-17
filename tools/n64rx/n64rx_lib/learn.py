@@ -29,16 +29,54 @@ LINE = re.compile(r'^(?:.*\[LEARN\]\s+)?(func|dma)\s+([0-9A-Fa-fx]+)\s+([0-9A-Fa
 class Learnt:
     funcs: dict = field(default_factory=dict)   # vram -> (bytes seen, caller)
     dmas: list = field(default_factory=list)    # (rom offset, ram, size), file order
+    code: dict = field(default_factory=dict)    # block vram -> its bytes, from RDRAM (no ROM DMA put them there)
 
     def __bool__(self):
-        return bool(self.funcs or self.dmas)
+        return bool(self.funcs or self.dmas or self.code)
+
+
+def _code_records(data, out):
+    """learn_code.bin: records of (vram, size) big-endian, then the bytes"""
+    i = 0
+    while i + 8 <= len(data):
+        v = int.from_bytes(data[i:i + 4], 'big')
+        n = int.from_bytes(data[i + 4:i + 8], 'big')
+        if not n or i + 8 + n > len(data):
+            break
+        out.code.setdefault(v, bytes(data[i + 8:i + 8 + n]))
+        i += 8 + n
+
+
+def _code_from_log(text, out):
+    """a test build's serial log: [LEARNCODE] BEGIN n, base64 lines, END"""
+    import base64
+    buf, inside = [], False
+    for line in text.splitlines():
+        j = line.find('[LEARNCODE] ')
+        if j < 0:
+            continue
+        rest = line[j + 12:].strip()
+        if rest.startswith('BEGIN'):
+            buf, inside = [], True
+        elif rest == 'END':
+            if inside:
+                _code_records(base64.b64decode(''.join(buf)), out)
+            inside = False
+        elif inside:
+            buf.append(rest)
 
 
 def read(paths):
     """the learn files (or serial logs) at `paths`, merged"""
     out = Learnt()
     for p in paths:
-        for line in pathlib.Path(p).read_text(encoding='utf-8', errors='replace').splitlines():
+        p = pathlib.Path(p)
+        side = p.with_name('learn_code.bin')   # the console's: beside learn.txt
+        if side.is_file():
+            _code_records(side.read_bytes(), out)
+        text = p.read_text(encoding='utf-8', errors='replace')
+        _code_from_log(text, out)
+        for line in text.splitlines():
             m = LINE.match(line.strip())
             if not m:
                 continue
@@ -83,6 +121,20 @@ def apply(a, learnt, rom_len):
         # where overlays share the address, the one the newest DMA put there
         seg = next((s for s in a.img.segments if s.has(x) and d and s.rom - s.vram == d[0] - d[1]), None) or \
             next((s for s in a.img.segments if s.has(x) and not d), None)
+        if seg is None and d is None:   # code no ROM DMA put there: the bytes the console saved
+            blk = next((v for v in learnt.code if v <= x < v + len(learnt.code[v])), None)
+            if blk is not None:
+                name = f'code_{blk:08X}'
+                seg = next((s for s in a.img.segments if s.name == name), None)
+                if seg is None:
+                    data = learnt.code[blk]
+                    off = (len(a.img.rom) + 0xF) & ~0xF   # appended to the build's copy of the ROM
+                    a.img.rom = bytes(a.img.rom) + bytes(off - len(a.img.rom)) + data
+                    seg = F.Segment(name, off, blk, len(data))
+                    a.img.segments.append(seg)
+                    a.funcs[seg.name] = {}
+                    notes.append(f'{name}: {len(data):#x} bytes at {blk:08X} from RDRAM (learnt: no ROM DMA put '
+                                 f'them there; the recompiler reads them past the ROM\'s end, at {off:#x})')
         if seg is None:
             if d is None or d[0] + d[2] > rom_len:
                 notes.append(f'learnt {x:08X}: no segment and no DMA covers it (skipped)')
@@ -126,6 +178,11 @@ def extend_live(a, live, starts, nm, replaced):
     funcs = a.all_funcs()
     bv = a.by_vram(funcs)
     todo = [k for x in starts for k in bv.get(x, ())]   # an overlay address: each overlay's function
+    # code captured from RDRAM is the game's own, reached mostly through pointers the analysis
+    # cannot follow: every function found in it is live
+    for seg in a.img.segments:
+        if seg.name.startswith('code_'):
+            todo += [k for k in a.funcs.get(seg.name, {}) if k in funcs]
     before = len(live)
     while todo:
         x = todo.pop()
