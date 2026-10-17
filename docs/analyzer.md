@@ -91,6 +91,22 @@ machine and stays in their build folder.
    `build-xbox/<id>/pack/learned.txt`; the cache key follows the pack
    folder, so the rebuild recompiles.
 
+4. **Code no ROM DMA put there** (decompressed: Rare's games, gzip and the
+   like): the first time the net runs code in a 64 KB block of RDRAM that
+   no logged DMA covers, `learn.c` saves the block as it is
+   (`E:\UDATA\<id>\learn_code.bin`: records of vram, size, the bytes in N64
+   order; a `code` line in learn.txt; test builds also send it over COM1 as
+   `[LEARNCODE]` base64). `--learn` makes each captured block a segment
+   `code_<vram>`, appended to the build's own copy of the ROM
+   (`rom_learnt.z64`, what N64Recomp reads; the XBE still holds the user's
+   ROM); every function found in captured code is live. The game's own
+   second copy of libultra (beside a boot loader's) is named separately: a
+   name the loader's copy already has becomes `<name>__2`, left out of the
+   recompile and forwarded to the runtime's by `gen/xrc_alias.c`.
+   Banjo-Kazooie (xemu): nine rounds, 4838 functions in 20 captured
+   segments, 96 libultra functions named, its audio running; it stops on
+   a heap block reused while still in its spawnable-actor list (open).
+
 `N64RX_WITHHOLD=<vram>,...` (a test switch) takes functions out of the
 analysis as if it had missed them; a function the learn file names is never
 withheld. Pilotwings 64 (xemu): its app thread's entry withheld, the net ran

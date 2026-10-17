@@ -761,3 +761,41 @@ and Pilotwings 64 rebuilt and booted in xemu after the runtime changes:
   graphics task; the mmio agent's register model takes over snap's shadow
   pages (the RSP memories' boot values kept).
 - **Not verified on a console**: everything in this entry.
+
+### Rare's games and code the TLB maps (2026-10-16, night, orchestrator)
+
+The maintainer: "Rare games should be a focus"; "focus on games people
+actually wanna play".
+
+- **Code captured from RDRAM** (`docs/analyzer.md`, the learning loop's
+  step 4) and the game's own libultra copies (`<name>__2`). Banjo-Kazooie
+  (xemu, `build-host/learnloop.sh`): nine rounds to a fixed point, 4838
+  functions, audio (`n_aspMain`); stops on a heap block reused while still
+  listed in `sSpawnableActorList` (found with `-DXRC_WATCH`; the decomp,
+  `build-host/decomps/banjo`, names the functions by their addresses).
+  Threads now start with libultra's Status (Banjo halts on purpose
+  without IM4).
+- **Code a game maps with its own TLB**: the function table is two-level
+  over the whole address space; the runtime's RDRAM helpers translate a
+  KUSEG address through the TLB (physical addresses are passed as KSEG0);
+  the safety net and the capture take TLB-mapped code; `osUnmapTLBAll`
+  keeps entry 31 (libultra's NTLBENTRIES); a refused entry is interpreted
+  through `xrc_entry_interp` with no entrypoint given to N64Recomp. Turok 2
+  runs its main and stops past the 2 MB its TLB entry maps; Conker
+  (0x10000000) and GoldenEye (0x70000000) build, map their code and stop
+  on its interpreted libultra (an eret), the learning loop's next rounds.
+- **Analyser**: entries that jr to a loader or call main before a break;
+  the TLB template first; the entry and main never named libultra; the
+  memory-size probes (KSEG1 RDRAM) interpreted; osGetMemSize,
+  osGetThreadId/osGetThreadPri, the later osSetEventMesg and
+  osCreatePiManager named; a function's trailing delay slot kept; the
+  jump-table addend N64Recomp declares twice deduplicated.
+- **Diagnosis**: `N64RX_TRACE=1` (N64Recomp's trace_mode; the last 64
+  functions, recompiled by name and interpreted by address, logged with a
+  crash or a stall), `-DXRC_WATCH=<address>` (x86 DR0 write watch).
+- **Games**: Ocarina of Time gets past its probes and presents 2 frames,
+  then its threads all wait (the IRQ manager's retrace queue empty: open);
+  F-Zero X stalls with no frames; Diddy Kong Racing runs but draws grey
+  boxes (its F3DDKR microcode is not decoded: renderer work); Ridge Racer
+  64 draws (F3DEX2) but takes no A press.
+- Not verified on a console: everything in this entry.
