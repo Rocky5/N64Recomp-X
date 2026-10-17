@@ -1156,3 +1156,11 @@ freed. A destroyed or returned thread's record and host thread, parked in
 runs on into Professor Oak's lab (the menu, Oak, his dialogue) at 60 s.
 Open: a run of glyphs missing in Oak's text ("t____").
 
+**Dr. Mario 64, the same day.** The analysis misses its main segment
+(`test_analyze.py`: 262 of 270 boot functions, main_segment missed), so
+most of it ran through the safety net. Three `--learn` rounds (xemu slot
+13, `build-host/drm-learn*.log`, never committed): 263 → 560 → 751
+functions, the last round learning 3 code ranges and 4 functions. Round 3
+presents for ~28 s, then sends no graphics task (its main thread busy;
+open).
+
