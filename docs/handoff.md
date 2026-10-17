@@ -48,8 +48,9 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
 **Open, roughly by how much they block** (details in the entries below and
 `docs/analyzer.md`):
 
-1. Console runs of what xemu now shows (Smash, Mario Party, the RCP-event
-   and thread changes on Mario Kart 64): staged as `vssb1`, `vmp1`, `vmk5`.
+1. From the first console runs of `vssb1`/`vmp1`/`vbk1`/`vmk5`: Mario
+   Party's flicker on hardware, Banjo-Kazooie's near/far clipping, Smash's
+   blurry textures, Mario Kart 64's drift boosts.
 2. The s7 categories: NULL pointers through the TLB path (42 games), Rare's
    compressed boots before learning rounds (18), no frames (42).
 3. Per game: Ocarina of Time after START; Paper Mario's copy-protection
@@ -985,3 +986,16 @@ MX_TITLE_ID=<id> MX_APP=<folder> python tools/xbox/console.py deploy <name>`
 
 From each `boot.log`: the `[MEM]` and `[CLOCK]` lines, `[PERF]`, any
 `[CRASH]`/card, and whether the 64 MB budget holds (free KB in `[BEAT]`).
+
+**Console results (red, 2026-10-17; the maintainer's play and the pulled
+logs in `C:/xemu/hw/logs<name>`).** All four: `[CLOCK]` 733 MHz (TSC
+against ACPI), 64 MB console, nothing held; the ROM verified by SHA-1.
+
+| build | maintainer | log |
+|---|---|---|
+| `vmk5` | the same as `vmk4`; drift boosts (mini-turbos) seem not to work (open: the stick's wiggle through the dead zone, or the boost itself) | races 29.9 fps (display lists 2.6-5 ms, longest frame 34-38 ms), nead audio 59 tasks/s, free 19 MB; quit with L+R+BACK+BLACK |
+| `vssb1` | plays well; textures look blurry (open: filtering or LOD) | **59.9 fps** (display lists 2.4-2.8 ms, game logic 12.7 ms), `n_aspMain` 59 tasks/s, free 12.5 MB; quit with L+R+BACK+BLACK |
+| `vmp1` | plays into the intro; flickers so badly it was switched off (open: console only, xemu showed no flicker; the swap/present timing first) | 60 fps, present 12.7-15.3 ms in GPU and flip waits, page cache 4 MB held, free 23.5 MB; the log ends at 30 s (power off) |
+| `vbk1` | works; serious near and far clipping (open: the depth range and clip planes) | 30 fps, dips to 5 fps on loads (one 5.6 s frame), free 13 MB; the log ends at 75 s |
+
+No crash, card or stall in any log.
