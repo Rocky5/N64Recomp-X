@@ -582,6 +582,7 @@ void xu_log_regs(void) {
 /* strand.c: the contexts a game switches with setjmp/longjmp run on host
  * threads of their own, each the same N64 thread to the runtime */
 void* xu_self_thr(void) { return self(); }
+uint32_t xu_thr_t(void* thr) { return thr ? ((const Thr*)thr)->t : 0; }
 int xu_thr_blocked(void* thr) { const Thr* d = (const Thr*)thr; return d->wait || d->stopped; }
 void xu_adopt_thr(void* thr) {
     if (s_tls == 0xFFFFFFFFu) s_tls = xhw_tls_alloc();

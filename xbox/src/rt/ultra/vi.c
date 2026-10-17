@@ -66,6 +66,15 @@ static void vi_thread(void* arg) {
             else if ((++s_still == 60 || (s_still % 1800 == 0 && s_still <= 7200)) && g)
                 xu_stall_report(s_still == 60 ? "no graphics task for 60 retraces" : "still no graphics task (30 s more)");
             else if (s_still == 300 && !g) xu_stall_report("no graphics task at all after 300 retraces");
+            {   /* audio tasks that stop after running: say once what everyone waits on */
+                static unsigned s_aseen, s_astill, s_asaid;
+                unsigned a = xu_aud_tasks();
+                if (a != s_aseen) s_aseen = a, s_astill = 0;
+                else if (++s_astill == 300 && a && s_asaid < 3) {
+                    s_asaid++;
+                    xu_stall_report("audio tasks stopped (none for 300 retraces)");
+                }
+            }
             if (s_retrace % 1800 == 0)   /* every 30 s */
                 xhw_logf("[VI] retrace %u: %u gfx tasks, queue %08x %u/%u", s_retrace, g, (unsigned)s_mq,
                          s_mq ? (unsigned)rd32(s_mq + MQ_VALIDCOUNT) : 0u, s_mq ? (unsigned)rd32(s_mq + MQ_MSGCOUNT) : 0u);

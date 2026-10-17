@@ -120,7 +120,9 @@ void xrc_audio_task(uint32_t task) {
     if (s_silent) return;
     cmds = (const uint32_t*)xrc_host(list, bytes);
     if (!cmds) {
-        if (s_tasks <= 3) xhw_logf("[AUDIO] task %u: list %08x (%u bytes) outside RDRAM", s_tasks, (unsigned)list, (unsigned)bytes);
+        static unsigned s_bad;
+        if (++s_bad <= 3)
+            xhw_logf("[AUDIO] task %u: list %08x (%u bytes) outside RDRAM: skipped", s_tasks, (unsigned)list, (unsigned)bytes);
         return;
     }
     t0 = xhw_time_us();

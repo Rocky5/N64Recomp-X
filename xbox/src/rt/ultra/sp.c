@@ -22,6 +22,7 @@
 static unsigned s_gfx, s_aud;
 
 unsigned xu_gfx_tasks(void) { return s_gfx; }
+unsigned xu_aud_tasks(void) { return s_aud; }
 
 /* until the interpreter and the audio HLE are linked: count and log */
 __attribute__((weak)) void xrc_gfx_task(uint32_t task) {
@@ -111,6 +112,14 @@ ULTRA(osSpTaskStartGo) {
     uint32_t task = ARG(0), type = rd32(task + TK_TYPE);
     int gfx = type == M_GFXTASK;
     (void)rdram;
+#ifdef XRC_LOG_SP_STARTS
+    {   /* diagnosis: the first SP starts, their type and thread */
+        static unsigned s_n;
+        if (s_n++ < (unsigned)(XRC_LOG_SP_STARTS))
+            xhw_logf("[SP] start %u: type %u task %08x by N64 thread %08x (retrace %u)", s_n, (unsigned)type,
+                     (unsigned)task, (unsigned)xu_thr_t(xu_self_thr()), xu_retrace());
+    }
+#endif
     if (gfx) {
         s_gfx++;
         xrc_gfx_task(task);

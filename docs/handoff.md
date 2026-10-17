@@ -1134,3 +1134,16 @@ game's fault path stalls (its fault thread shows stopped; open). Not yet:
 the same for the interpreter's and the generated code's data accesses in
 that band, and recompiling the 0x7000xxxx code at its own addresses.
 
+**Donkey Kong 64, the same day (xemu, test builds).** With the IPL3 copy it
+reaches its file screen ("GAME 1", drawn right). Its audio (n_aspMain,
+identified) stops: `XRC_LOG_SP_STARTS` shows 30 audio tasks during boot,
+then only graphics tasks. Its scheduler (the decomp's `code_131B0.c`)
+starts an audio task when the RSP is idle (`func_8060F208`) or, with a
+graphics task current, asks it to yield (`func_8060FA5C`: state 3,
+`osSpTaskYield`) and starts the audio task when that task's SP done comes
+(`func_8060F54C`). The audio thread then waits on its done queue
+0x8076D6D0 for good, and the scheduler on 0x80767A40 with nothing queued.
+Next: where the order of the graphics task's SP/DP done (held for the
+scheduler's thread, `sp.c`) and the audio thread's 0x29E request breaks
+that path.
+

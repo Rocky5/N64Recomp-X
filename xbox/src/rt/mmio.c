@@ -168,6 +168,13 @@ static void sp_status(uint32_t w) {
     }
     {
         uint32_t task = 0x80000000u | s_task, type = rd32(task + TK_TYPE);
+#ifdef XRC_LOG_SP_STARTS
+        {
+            static unsigned s_n;
+            if (s_n++ < (unsigned)(XRC_LOG_SP_STARTS))
+                xhw_logf("[MMIO] SP start %u: type %u task block %08x", s_n, (unsigned)type, (unsigned)task);
+        }
+#endif
         if (type == M_GFXTASK) {
             xrc_gfx_task(task);
             xu_post_event_first(OS_EVENT_DP);
