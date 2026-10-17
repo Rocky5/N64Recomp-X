@@ -19,8 +19,10 @@ def recomp_lists(root):
     """the recompiler's reimplemented and ignored names, read from its source at the pin"""
     src = pathlib.Path(root) / 'tools/recomp/src/symbol_lists.cpp'
     out = {}
-    if not src.exists():
-        return {'reimplemented_funcs': set(), 'ignored_funcs': set()}
+    if not src.exists():   # without them the config names functions N64Recomp then refuses (a worktree with no submodule)
+        from .. import N64rxError
+        raise N64rxError("The recompiler's source (tools/recomp) is missing: its symbol lists decide what N64Recomp skips.",
+                         'run: git submodule update --init tools/recomp')
     text = src.read_text(encoding='utf-8', errors='replace')
     for name in ('reimplemented_funcs', 'ignored_funcs'):
         at = text.find(name)
