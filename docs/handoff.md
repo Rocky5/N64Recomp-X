@@ -966,7 +966,7 @@ On a console: everything in this section. In xemu: the sound itself
 the first seconds of a match. xemu slot 10 sometimes stalls reading the
 ROM at boot (the same XBE boots on another slot): an emulator matter.
 
-### Staged for the console (2026-10-17, commit `e9c907c`, not yet run)
+### On the console (2026-10-17, commit `e9c907c`, deployed to red, not yet run)
 
 Release builds (ThinLTO, `-O2`, no test flags), the ROM inside each XBE,
 staged in `C:/xemu/hw/stage-<name>` with the map at
