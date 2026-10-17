@@ -17,7 +17,7 @@ The decomps are the answer keys that make the ROM-only path stable
 **Status (`docs/handoff.md`, "Where things stand"): M1 done; M2 mostly
 done. From the ROM alone, on the console: Mario Kart 64 (30 fps races,
 sound, Controller Pak, the BACK menu and Paks page), Smash Bros. (60 fps),
-Banjo-Kazooie and Mario Party (fixes for their clipping and flicker staged).
+Banjo-Kazooie and Mario Party (fixes for their clipping and flicker deployed, to confirm).
 In xemu: Ocarina of Time past its title into Kokiri Forest with music,
 Super Mario 64 the castle grounds, Donkey Kong 64 its file screen, Pokémon
 Snap Oak's lab, Paper Mario past its copy-protection boot. The library
