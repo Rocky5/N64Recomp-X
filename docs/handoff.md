@@ -967,6 +967,12 @@ START/A), the sound itself (tasks run; not listened to), a console.
   a hash over ROM words read through the PI sets a jump target) runs off the
   end of a function and stores to address 0. Its flash code is not named
   either (the runtime has `osFlash*`; no analyser rule yet).
+- **Jet Force Gemini** (open): the main thread (`func_80044B50` ->
+  `func_8004665C` -> `func_8006B9CC` -> `func_8006C230`) writes through the
+  pointer at `0x80102DB0`, still NULL. Only `func_8006B8C4` sets it
+  (`malloc(0x580)`), and nothing in the ROM calls it or holds its address:
+  the call comes through a table in data the game decompresses, so it is
+  either later in the boot than the crash or the table is wrong.
 - xemu slot 10 stalls reading the ROM at boot now and then (Mario Party 2
   on slot 9 once, Mario Party 3 twice on 10); the same XBE boots on
   another slot. An emulator matter.
