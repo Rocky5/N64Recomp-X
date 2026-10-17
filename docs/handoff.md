@@ -855,8 +855,12 @@ earlier pieces (osCicId, 64-bit registers):
 Later the same night: its faces textured (a tile inside a larger LOADBLOCK),
 and with START and A pressed it reaches its title screen (the logo, Banjo
 dancing, the copyright lines; 30 fps in xemu) and goes on into the lair
-scenes. Not verified on a console. Next: the sky draws black; the variants
-of its overlays recompiled instead of interpreted.
+scenes. With A pressed every few seconds it reaches the file select in
+Banjo's house ("Game 1: Empty", 28 fps) and starts a game: the intro
+cutscene in the lair, Banjo and Kazooie; after it the N64 logo shows again
+(a reset or the attract loop: open). Not verified on a console. Next: the
+sky draws black; what follows the intro; the variants of its overlays
+recompiled instead of interpreted.
 
 ### Blast Corps plays its attract demo (2026-10-17, xemu)
 
