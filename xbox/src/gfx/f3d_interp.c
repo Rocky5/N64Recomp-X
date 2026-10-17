@@ -136,7 +136,10 @@ typedef struct {
     uint16_t dxt;
     uint8_t valid, tile;
     uint16_t rows, row_bytes, stride;
+    uint16_t tmem;   /* where the load started, in 64-bit words */
+    uint32_t seq;    /* load order: the latest load over an address is what TMEM holds */
 } TmemLoad;
+static uint32_t s_load_seq;
 
 static struct {
     uint32_t seg[16];
@@ -519,6 +522,10 @@ static TexEntry* tex_evict_slot(unsigned slot) {
 static struct { uint32_t frame, addr, key; TexEntry* e; } s_memo[MEMO];
 #endif
 
+/* a tile inside a bigger LOADBLOCK finds it (Banjo-Kazooie); -DXGFX_TMEM_WITHIN=0: a miss, as before */
+#ifndef XGFX_TMEM_WITHIN
+#define XGFX_TMEM_WITHIN 1
+#endif
 static void tex_miss(const char* why, int tidx);
 static void fb_touch(uint32_t addr, uint32_t bytes);
 static uint32_t s_cimg_w, s_cimg_siz, s_cimg_maxy;   /* the colour image's width and pixel size; the frame's lowest scissor row */
@@ -530,12 +537,34 @@ static TexEntry* texture_for_tile(int tidx) {
     static uint32_t conv[1024 * 64];
     Tile* t = &R.tile[tidx];
     TmemLoad* ld = &R.loads[(t->tmem >> 3) & 63];
+    TmemLoad within;
     unsigned w = ((t->lrs - t->uls) >> 2) + 1, h = ((t->lrt - t->ult) >> 2) + 1;
     /* RGBA32 splits each texel across TMEM's two banks: SETTILE's line covers half a row */
     unsigned line = t->line * 8u * (t->siz == 3 ? 2u : 1u), bytes, pw, ph, slot, i;
     uint32_t key, sample;
     uint64_t tex_t0;
     TexEntry* e;
+    if (!ld->valid && XGFX_TMEM_WITHIN) {
+        /* a tile inside a bigger LOADBLOCK that started lower in TMEM (Banjo-
+         * Kazooie loads several textures, or a texture and its palette, with
+         * one block and points tiles into it): that load, from the tile's
+         * offset on */
+        int k;
+        const TmemLoad* best = NULL;
+        for (k = ((t->tmem >> 3) & 63) - 1; k >= 0; k--) {
+            const TmemLoad* c = &R.loads[k];
+            if (!c->valid || c->tile || c->tmem > t->tmem || (uint32_t)(t->tmem - c->tmem) * 8u >= c->bytes) continue;
+            if (!best || c->seq > best->seq) best = c;
+        }
+        if (best) {
+            uint32_t off = (uint32_t)(t->tmem - best->tmem) * 8u;
+            within = *best;
+            within.addr += off;
+            within.bytes -= off;
+            within.tmem = t->tmem;
+            ld = &within;
+        }
+    }
     if (!ld->valid || t->line == 0) { tex_miss("no load", tidx); return NULL; }
     if (t->masks && (1u << t->masks) < w) w = 1u << t->masks;
     if (t->maskt && (1u << t->maskt) < h) h = 1u << t->maskt;
@@ -642,6 +671,13 @@ static void tex_miss(const char* why, int tidx) {
              "addr %08x bytes %u dxt %d",
              why, tidx, t->fmt, t->siz, t->line, t->tmem, t->uls >> 2, t->lrs >> 2, t->ult >> 2, t->lrt >> 2, t->masks,
              t->maskt, ld->valid, (unsigned)ld->addr, (unsigned)ld->bytes, ld->dxt);
+    if (s_n <= 4) {   /* what TMEM holds then */
+        int k;
+        for (k = 0; k < 64; k++)
+            if (R.loads[k].valid)
+                xhw_logf("[GFX]   load at tmem %u: addr %08x bytes %u %s", (unsigned)R.loads[k].tmem,
+                         (unsigned)R.loads[k].addr, (unsigned)R.loads[k].bytes, R.loads[k].tile ? "tile" : "block");
+    }
 }
 
 static float shift_scale(int sh) {
@@ -1561,6 +1597,8 @@ static void run_dl(const uint32_t* pc) {
                 ld->dxt = dxt;
                 ld->valid = 1;
                 ld->tile = 0;
+                ld->tmem = R.tile[tile & 7].tmem;
+                ld->seq = ++s_load_seq;
                 if (R.timg_siz == 0) ld->bytes = (lrs + 2u) / 2;
                 break;
             }
@@ -1571,6 +1609,8 @@ static void run_dl(const uint32_t* pc) {
                 unsigned x0, y0, x1, y1, bpp2;   /* bpp2: bytes per texel x 2 */
                 f3d_loadtile_decode(w0, w1, &tile, &uls, &ult, &lrs, &lrt);
                 ld = &R.loads[(R.tile[tile & 7].tmem >> 3) & 63];
+                ld->tmem = R.tile[tile & 7].tmem;
+                ld->seq = ++s_load_seq;
                 bpp2 = R.timg_siz == 3 ? 8 : R.timg_siz == 2 ? 4 : R.timg_siz == 1 ? 2 : 1;
                 x0 = uls >> 2; y0 = ult >> 2; x1 = lrs >> 2; y1 = lrt >> 2;
                 if (x1 < x0 || y1 < y0) break;

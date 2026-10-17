@@ -475,26 +475,45 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
 
 static uint32_t fetch(uint8_t* rdram, uint32_t pc) { return (uint32_t)MEM_W(0, pc); }
 
-/* the last instruction the interpreter started, and its registers (any
- * thread): the crash report's (trace.c) */
-volatile uint32_t xrc_interp_pc;
-static St* volatile s_last_st;
+/* each thread's last interpreted instruction and its registers: the crash
+ * report's (trace.c), for the thread that crashed */
+typedef struct {
+    void* thread;
+    volatile uint32_t pc;
+    St* volatile st;
+} Last;
+static Last s_last[24];
+static Last* last_of(void) {
+    void* me = xhw_thread_self();
+    unsigned i;
+    for (i = 0; i < 24; i++)
+        if (s_last[i].thread == me) return &s_last[i];
+    for (i = 0; i < 24; i++)
+        if (!s_last[i].thread && __sync_bool_compare_and_swap(&s_last[i].thread, NULL, me)) return &s_last[i];
+    return &s_last[23];
+}
 void xrc_interp_crash_report(void);
 void xrc_interp_crash_report(void) {
-    St* st = s_last_st;
-    int i;
-    if (!xrc_interp_pc) return;
-    xhw_logf("[INTERP] last pc %08x", (unsigned)xrc_interp_pc);
-    if (st)
-        for (i = 0; i < 32; i += 4)
-            xhw_logf("[INTERP]   r%-2d %08x  r%-2d %08x  r%-2d %08x  r%-2d %08x", i, (unsigned)st->r[i], i + 1,
-                     (unsigned)st->r[i + 1], i + 2, (unsigned)st->r[i + 2], i + 3, (unsigned)st->r[i + 3]);
+    void* me = xhw_thread_self();
+    unsigned i;
+    int k;
+    for (i = 0; i < 24; i++) {
+        St* st = s_last[i].st;
+        if (s_last[i].thread != me || !s_last[i].pc) continue;
+        xhw_logf("[INTERP] this thread's last pc %08x", (unsigned)s_last[i].pc);
+        if (st)
+            for (k = 0; k < 32; k += 4)
+                xhw_logf("[INTERP]   r%-2d %08x  r%-2d %08x  r%-2d %08x  r%-2d %08x", k, (unsigned)st->r[k], k + 1,
+                         (unsigned)st->r[k + 1], k + 2, (unsigned)st->r[k + 2], k + 3, (unsigned)st->r[k + 3]);
+    }
 }
 
 static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learning, uint32_t caller, int exc) {
     St st;
     gpr saved_ra = ctx->r31;
     uint32_t pc = entry, steps = 0;
+    Last* last = last_of();
+    St* outer = last->st;
     regs_in(&st, ctx);
     st.fcc = 0, st.learning = learning, st.nframes = 0, st.exc = exc;
     st.r[31] = SX32(SENTINEL);
@@ -503,7 +522,7 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
     while (pc != SENTINEL) {
         Br br = {0}, ds = {0};
         uint32_t w;
-        xrc_interp_pc = pc, s_last_st = &st;
+        last->pc = pc, last->st = &st;
         w = fetch(rdram, pc);
         if (++steps > STEP_LIMIT && !learning) stop(&st, "Interpreted code never returned", pc, entry);
         if (st.nframes && pc > st.fr[st.nframes - 1].top && pc - st.fr[st.nframes - 1].entry < 0x10000u)
@@ -564,6 +583,7 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
     frames_report(&st, 0);
     regs_out(&st, ctx);
     ctx->r31 = saved_ra;   /* back as the caller had it */
+    last->st = outer;      /* an enclosing run's registers, not this frame's gone ones */
 }
 
 /* tlb.c: a TLB miss runs the game's own exception code, as the CPU would,

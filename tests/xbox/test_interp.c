@@ -55,6 +55,7 @@ static struct { uint32_t vram, len, caller; } s_learnt[8];
 static int s_nlearnt;
 void xrc_trace_vram(uint32_t vram) { (void)vram; }   /* trace.c: nothing to record on the host */
 void xhw_sleep_ms(uint32_t ms) { (void)ms; }
+xhw_thread* xhw_thread_self(void) { return (xhw_thread*)0; }
 int xu_fault_wait(uint32_t vaddr, int store) { (void)vaddr; (void)store; return 0; }   /* ultra/thread.c */
 void xhw_crash_set_fixup(int (*fn)(uint32_t host, int write)) { (void)fn; }
 void xrc_learn_kuseg(uint32_t va, int aliased) { (void)va, (void)aliased; }

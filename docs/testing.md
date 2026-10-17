@@ -234,6 +234,7 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `N64RX_YAZ0=0` (env, n64rx) | 1 | a ROM-only build of a Yaz0 game (the Zeldas) uses the ROM as it is instead of the inflated image |
 | `-DXRC_THREAD_TRACE=1` | 0 | diagnosis: the first 400 osCreateThread / osStartThread / osStopThread / osDestroyThread calls logged with the calling thread |
 | `-DXHW_THREAD_NOBOOST=1` | 0 | the runtime's threads at absolute levels run without the kernel's wait boost (experiment; not on a console) |
+| `-DXGFX_TMEM_WITHIN=0` | 1 | a tile whose TMEM address no load started at is a texture miss, as before; otherwise the latest LOADBLOCK that covers it, from the tile's offset |
 | `-DXHW_LOG_BOOST=0` | 1 | the log lock's holder keeps its own priority; otherwise it runs at 15 while holding it (an idle-priority N64 thread logging was preempted for good and stopped every thread that logs, the VI thread among them: Donkey Kong 64's retraces froze at 300) |
 | `N64RX_XBRANCH_INTERP=0` (env, n64rx) | 1 | a function with a branch or j into another function's body is recompiled anyway (the compile then fails: "use of undeclared label") instead of interpreted |
 | `-DXRC_THREAD_SP16=0` | 1 | threads start at the sp the game gives instead of 16 bytes below it, as libultra does |
