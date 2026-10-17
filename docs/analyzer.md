@@ -113,6 +113,17 @@ machine and stays in their build folder.
    ROM plus the captured code): Banjo-Kazooie's `bkmemcpy64` copies with
    `ld`/`sd`, and on 32-bit registers every `bk_realloc` lost half of each
    doubleword (the heap block found reused under its spawnable-actor list).
+   Code a game pages in with its own TLB (Conker's 0x15000000) is saved a
+   4 KB page at a time, read through the TLB, keyed by its virtual page
+   (neighbouring virtual pages sit in any frames). The console also writes
+   down the KUSEG regions its TLB maps (`kuseg <va> <1 if the host could
+   not alias it>`); when one could not be, the next build puts RDRAM's
+   KSEG0 at a user address that holds them all (`-DXRC_RDRAM_USER`,
+   `learn.rdram_user`). A game that compares osMemSize with 8 MB gets 8 MB
+   (Donkey Kong 64's "Expansion Pak" screen; `romonly._wants_8mb`).
+   Open: a captured block can be saved before all of it is loaded (Donkey
+   Kong 64 then calls a "function" of stale bytes); captured code needs a
+   check of its bytes before its recompiled form is trusted.
 
 `N64RX_WITHHOLD=<vram>,...` (a test switch) takes functions out of the
 analysis as if it had missed them; a function the learn file names is never

@@ -70,7 +70,8 @@ static inline void xrc_ctx_init(recomp_context* ctx, uint32_t sp) {
 #endif
 recomp_func_t* xrc_learn_lookup(uint32_t vram, uintptr_t host_caller);
 void xrc_learn_dma(uint32_t rom, uint32_t ram, uint32_t size);
-void xrc_learn_want(uint32_t lo, uint32_t hi);   /* captured code's jump table: save the RDRAM between (learn.c) */
+void xrc_learn_want(uint32_t lo, uint32_t hi);
+void xrc_learn_kuseg(uint32_t va, int aliased);   /* a KUSEG region the TLB maps (learn.c) */   /* captured code's jump table: save the RDRAM between (learn.c) */
 void xrc_ovl_dma(uint32_t rom, uint32_t ram, uint32_t size);   /* ovl.c: overlays by their DMA source */
 void xrc_learn_inval(uint32_t ram, uint32_t size);
 

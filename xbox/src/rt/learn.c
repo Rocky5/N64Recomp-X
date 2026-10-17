@@ -131,30 +131,76 @@ static void emit(const char* line) {
 #define CODE_BLOCK 0x10000u
 static uint8_t s_captured[(8u << 20) / CODE_BLOCK];
 
-static void capture(uint32_t vram) {
+/* code a game maps with its own TLB and pages in on demand (Conker's
+ * 0x15000000): the physical frames behind neighbouring virtual pages are
+ * anywhere, so such code is saved a 4 KB page at a time, read through the
+ * TLB, keyed by its virtual page */
+#define VPAGE 0x1000u
+#define MAX_VPAGES 2048
+static uint32_t s_vpages[MAX_VPAGES];
+static unsigned s_nvpages;
+
+static void save(uint32_t base, uint32_t size, uint32_t (*word)(uint32_t)) {
     static uint8_t buf[8 + CODE_BLOCK];
     char path[96], line[64];
-    uint32_t phys, base, blk, i;
-    if (!XRC_LEARN_CODE) return;
-    phys = (int32_t)vram >= 0 ? xrc_tlb_to_phys(vram) : (vram & 0x1FFFFFFFu);
-    if (phys == ~0u || phys >= xrc_rdram_size) return;
-    blk = phys / CODE_BLOCK;
-    if (blk >= sizeof s_captured || s_captured[blk]) return;
-    s_captured[blk] = 1;
-    base = vram & ~(CODE_BLOCK - 1);
+    uint32_t i;
     for (i = 0; i < 4; i++) {
         buf[i] = (uint8_t)(base >> (24 - 8 * i));
-        buf[4 + i] = (uint8_t)(CODE_BLOCK >> (24 - 8 * i));
+        buf[4 + i] = (uint8_t)(size >> (24 - 8 * i));
     }
-    for (i = 0; i < CODE_BLOCK; i += 4) {
-        uint32_t w = xrc_word(0x80000000u | (blk * CODE_BLOCK + i));
+    for (i = 0; i < size; i += 4) {
+        uint32_t w = word(base + i);
         buf[8 + i] = (uint8_t)(w >> 24), buf[9 + i] = (uint8_t)(w >> 16);
         buf[10 + i] = (uint8_t)(w >> 8), buf[11 + i] = (uint8_t)w;
     }
     snprintf(path, sizeof path, "%slearn_code.bin", xhw_save_dir());
-    if (!xhw_append_file(path, buf, sizeof buf)) xhw_logf("[LEARN] could not write %s", path);
-    if (XHW_TEST_BUILD) xhw_dump_blob("LEARNCODE", buf, sizeof buf);
-    snprintf(line, sizeof line, "code %08x %x", (unsigned)base, (unsigned)CODE_BLOCK);
+    if (!xhw_append_file(path, buf, 8 + size)) xhw_logf("[LEARN] could not write %s", path);
+    if (XHW_TEST_BUILD) xhw_dump_blob("LEARNCODE", buf, 8 + size);
+    snprintf(line, sizeof line, "code %08x %x", (unsigned)base, (unsigned)size);
+    emit(line);
+}
+
+static uint32_t s_kseg0_base;   /* save()'s reader for a KSEG0 block: the frame's own address */
+static uint32_t word_kseg0(uint32_t v) { return xrc_word(0x80000000u | (s_kseg0_base + (v & (CODE_BLOCK - 1)))); }
+static uint32_t word_mapped(uint32_t v) { return xrc_word(0x80000000u | xrc_tlb_to_phys(v)); }
+
+static void capture(uint32_t vram) {
+    uint32_t phys, blk, i;
+    if (!XRC_LEARN_CODE) return;
+    if ((int32_t)vram >= 0) {   /* KUSEG: through the TLB, a page at a time */
+        uint32_t vp = vram & ~(VPAGE - 1);
+        if (xrc_tlb_to_phys(vp) == ~0u || xrc_tlb_to_phys(vp + VPAGE - 4) == ~0u) return;
+        for (i = 0; i < s_nvpages; i++)
+            if (s_vpages[i] == vp) return;
+        if (s_nvpages == MAX_VPAGES) return;
+        s_vpages[s_nvpages++] = vp;
+        save(vp, VPAGE, word_mapped);
+        return;
+    }
+    phys = vram & 0x1FFFFFFFu;
+    if (phys >= xrc_rdram_size) return;
+    blk = phys / CODE_BLOCK;
+    if (blk >= sizeof s_captured || s_captured[blk]) return;
+    s_captured[blk] = 1;
+    s_kseg0_base = blk * CODE_BLOCK;
+    save(vram & ~(CODE_BLOCK - 1), CODE_BLOCK, word_kseg0);
+}
+
+/* the KUSEG regions the TLB maps, once per 1 MB, and whether the host could
+ * alias them (tlb.c: one that lands on the kernel's map of physical memory
+ * cannot): the next build puts RDRAM where all of them can (n64rx
+ * -DXRC_RDRAM_USER, from the lowest region, when any failed) */
+void xrc_learn_kuseg(uint32_t va, int aliased) {
+    static uint32_t s_seen[64];
+    static unsigned s_n;
+    char line[48];
+    uint32_t key = (va >> 20) << 1 | (aliased ? 0u : 1u);
+    unsigned i;
+    for (i = 0; i < s_n; i++)
+        if (s_seen[i] == key) return;
+    if (s_n == 64) return;
+    s_seen[s_n++] = key;
+    snprintf(line, sizeof line, "kuseg %08x %x", (unsigned)(va & 0xFFF00000u), aliased ? 0u : 1u);
     emit(line);
 }
 

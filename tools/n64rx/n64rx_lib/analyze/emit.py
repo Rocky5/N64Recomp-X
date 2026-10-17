@@ -303,6 +303,13 @@ def recomp_hazards(a: Analysis, live, nm, replaced):
                 if ins.op == 16 and ins.rs in (0, 4) and ins.rd != 12:   # mfc0/mtc0: N64Recomp takes Status only
                     why = f'{"mfc0" if ins.rs == 0 else "mtc0"} of cop0 register {ins.rd}'
                     break
+                if (ins.is_branch and not ins.is_link_branch) or ins.is_j:
+                    t = ins.target if ins.is_j else ins.branch_target
+                    if not seg.has(t) and t not in starts:   # past the segment: a label C cannot have
+                        why = f'branch to {t:08X}, past its segment'
+                        if seg.name.startswith('code_') and 0x80000000 <= t < 0x80800000:
+                            want = (f.start, t + 4)   # the rest of the function, in RDRAM no capture holds
+                        break
             if why is None:
                 for t in _n64recomp_tables(ws, f.start):
                     r = (t - f.start + off) & 0xFFFFFFFF

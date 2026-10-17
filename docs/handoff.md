@@ -799,3 +799,34 @@ actually wanna play".
   boxes (its F3DDKR microcode is not decoded: renderer work); Ridge Racer
   64 draws (F3DEX2) but takes no A press.
 - Not verified on a console: everything in this entry.
+
+### Rare's games, second pass (2026-10-16, night)
+
+All xemu; nothing new on the console.
+
+- **Banjo-Kazooie**: the heap corruption was the register width: the
+  64-bit scan read the ROM without the captured code, so the build had
+  32-bit registers and `bkmemcpy64` (ld/sd) broke every `bk_realloc`.
+  osCicId is now the chip's (6103: its model code checks it). 7032
+  functions; it now crashes in `anSeq_update` on an actor whose animation
+  sequence pointer holds code bytes (open; the crash report now carries
+  the N64 registers).
+- **Conker**: osCicId 6105 starts its main thread; `__osRunningThread` kept
+  in RDRAM; N64Recomp's segfault (a jump table outside the function's
+  segment) avoided by the precheck; its code at 0x15000000 pages in
+  through its own `__osException` handler on a TLB miss (`tlb.c`), and is
+  captured a page at a time. Stalls before its first graphics task (the
+  learning loop goes on).
+- **GoldenEye**: its refill vector and its fault thread (`crashMain`) map
+  0x7F000000 pages (xemu aliased them at the default layout); then a read
+  of 0x00002024 (a NULL pointer, open).
+- **Donkey Kong 64**: the 6105 boot magic at 0x2FE1C0, 8 MB, into its main
+  code; then a captured block's stale bytes (a `syscall`): captured code
+  needs a content check (open, `docs/analyzer.md`).
+- **Blast Corps** presents frames (clears only) and stalls; **Jet Force
+  Gemini** no longer writes through NULL (running thread), stalls before
+  its first graphics task.
+- Not verified on a console: everything in this entry; whether the kernel
+  map at a KUSEG host address can be aliased on a 64 MB console (xemu runs
+  128 MB).
+

@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 from .analyze import funcs as F
 
-LINE = re.compile(r'^(?:.*\[LEARN\]\s+)?(func|dma)\s+([0-9A-Fa-fx]+)\s+([0-9A-Fa-fx]+)(?:\s+(?:from\s+)?([0-9A-Fa-fx]+))?\s*$')
+LINE = re.compile(r'^(?:.*\[LEARN\]\s+)?(func|dma|kuseg)\s+([0-9A-Fa-fx]+)\s+([0-9A-Fa-fx]+)(?:\s+(?:from\s+)?([0-9A-Fa-fx]+))?\s*$')
 
 
 @dataclass
@@ -30,9 +30,10 @@ class Learnt:
     funcs: dict = field(default_factory=dict)   # vram -> (bytes seen, caller)
     dmas: list = field(default_factory=list)    # (rom offset, ram, size), file order
     code: dict = field(default_factory=dict)    # block vram -> its bytes, from RDRAM (no ROM DMA put them there)
+    kuseg: dict = field(default_factory=dict)   # 1 MB KUSEG regions the TLB mapped -> 1 if the host could not alias one
 
     def __bool__(self):
-        return bool(self.funcs or self.dmas or self.code)
+        return bool(self.funcs or self.dmas or self.code or self.kuseg)
 
 
 def _code_records(data, out):
@@ -84,6 +85,8 @@ def read(paths):
             if kind == 'func' and x & 3 == 0 and not 0x80800000 <= x < 0xC0000000:   # KSEG0, or TLB-mapped
                 n, c = out.funcs.get(x, (0, 0))
                 out.funcs[x] = (max(n, y), c or (int(z, 16) if z else 0))
+            elif kind == 'kuseg' and x < 0x80000000:
+                out.kuseg[x & ~0xFFFFF] = out.kuseg.get(x & ~0xFFFFF, 0) | (y & 1)
             elif kind == 'dma' and z and 0 < int(z, 16) <= 0x800000:
                 d = (x, (y & 0x1FFFFFFF) | 0x80000000, int(z, 16))
                 if d not in out.dmas:
@@ -240,3 +243,18 @@ def extend_live(a, live, starts, nm, replaced):
     a.notes.append(f'learnt on the console: {len(starts)} functions, {len(live) - before} of them (with what they '
                    f'call) live only through it')
     return live
+
+
+def rdram_user(learnt):
+    """-DXRC_RDRAM_USER=<va>: where the runtime puts RDRAM's KSEG0 when the
+    game maps KUSEG pages whose host address (rdram + vaddr) would land on
+    the kernel's map (rt/mem.c): rdram = va - 0x80000000, chosen so the
+    lowest such region lands at 16 MB (above the XBE) and every region up to
+    0x80000000 in user space below KSEG0; KSEG1 then sits 512 MB above."""
+    if not learnt or not any(learnt.kuseg.values()):
+        return []
+    low = min(learnt.kuseg)
+    va = (0x01000000 - low + 0x80000000) & 0xFFFFFFFF
+    if not 0x01000000 < va < 0x5F000000:   # KSEG1's alias must stay in user space too
+        return []
+    return [f'-DXRC_RDRAM_USER=0x{va:08X}u']

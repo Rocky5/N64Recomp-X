@@ -78,6 +78,7 @@ static void alias(Ent* e, unsigned idx) {
         ok = 0, (void)host, (void)xpa;
 #endif
         if (ok) e->host[k] = host, e->bytes[k] = sz;
+        if (XRC_TLB && host && va < 0x80000000u) xrc_learn_kuseg(va, ok);
         if (s_logged < 24) {
             s_logged++;
             xhw_logf("[TLB] %u: %08x-%08x -> %08x%s", idx, (unsigned)va, (unsigned)(va + sz - 1), (unsigned)pa,
@@ -197,6 +198,10 @@ int xrc_tlb_miss(uint32_t vaddr, int store) {
 static int fixup(uint32_t host, int write) {
     uint32_t v = host - (uint32_t)(uintptr_t)xrc_rdram;
     if (v >= 0x80000000u) return 0;   /* KSEG0/1 are always there: a real crash */
+    /* DIVERGES: the first 64 KB of KUSEG is never a page a game maps; an access
+     * there is a NULL pointer, reported as a crash rather than handed to the
+     * game's fault thread (which would hang, as on the N64) */
+    if (v < 0x10000u) return 0;
     return xrc_tlb_miss(v, write);
 }
 

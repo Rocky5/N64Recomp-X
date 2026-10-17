@@ -69,7 +69,7 @@ def cache_key(rom, pack, gpr=None, pin=None):
     """the recompile step is skipped when this is unchanged: the ROM, every
     file of the pack, the recompiler's pin, what n64rx writes, the width"""
     return hashlib.sha256(json.dumps([rom.sha1, pack.file_hash(), pin or engines.recompiler_pin(), GEN_VERSION,
-                                      gpr or '', os.environ.get('N64RX_TRACE', '')]).encode()).hexdigest()
+                                      gpr or '', os.environ.get('N64RX_TRACE', ''), pack.rdram_mb]).encode()).hexdigest()
 
 
 def decide_gpr(pack, rom, override, prog, data=None):
@@ -509,6 +509,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     flags += saves.running_thread(pack, recomp_bytes)   # __osRunningThread, kept by thread.c
     flags += saves.faulted_thread(recomp_bytes)         # libultra's fault path, for a TLB miss (tlb.c)
     flags += saves.os_exception(recomp_bytes)           # the game's exception code, for a TLB miss (interp.c)
+    flags += learnmod.rdram_user(learnt)                 # RDRAM's home when KUSEG lands on the kernel's (mem.c)
     env = {
         'XBOX_BUILD_DIR': engines.msys_path(bdir / 'xbox') if engines.IS_WINDOWS else str(bdir / 'xbox'),
         'XRC_GEN_DIR': engines.msys_path(gen) if engines.IS_WINDOWS else str(gen),

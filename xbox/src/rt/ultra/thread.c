@@ -437,6 +437,20 @@ static void post(int e, int jam) {
 
 void xu_post_event(int e) { post(e, 0); }
 
+/* the crash report's tail (trace.c): the crashing N64 thread's registers as
+ * its context last held them (the generated code keeps them there) */
+void xu_crash_regs(void) {
+    Thr* me = self();
+    const gpr* r;
+    int i;
+    if (!me->ctx) return;
+    r = &me->ctx->r0;
+    xhw_logf("[REGS] thread %d (N64 thread %08x):", me->t ? (int)(int32_t)rd32(me->t + TH_ID) : -1, (unsigned)me->t);
+    for (i = 0; i < 32; i += 4)
+        xhw_logf("[REGS]   r%-2d %08x  r%-2d %08x  r%-2d %08x  r%-2d %08x", i, (unsigned)r[i], i + 1, (unsigned)r[i + 1],
+                 i + 2, (unsigned)r[i + 2], i + 3, (unsigned)r[i + 3]);
+}
+
 /* the calling N64 thread's stack pointer as its context last held it (0 for
  * a runtime thread): interp.c runs the game's exception code below it */
 uint32_t xu_self_sp(void) {
@@ -454,6 +468,7 @@ uint32_t xu_self_sp(void) {
  * thread, or it never let the thread go. */
 int xu_fault_wait(uint32_t vaddr, int store) {
 #if defined(XRC_FAULTED_THREAD) && defined(XRC_TH_BADVADDR)
+    static unsigned s_faults;
     Thr* me = self();
     uint32_t t = me->t;
     int n, i, ms;
@@ -467,6 +482,11 @@ int xu_fault_wait(uint32_t vaddr, int store) {
     me->wait = 1;
     running_next(me);
     post(OS_EVENT_FAULT, 0);
+    if (s_faults < 16)
+        xhw_logf("[OS] fault: thread %d at %08x, OS_EVENT_FAULT to %08x (%u of %u)", (int)(int32_t)rd32(t + TH_ID),
+                 (unsigned)vaddr, (unsigned)s_events[OS_EVENT_FAULT].mq,
+                 (unsigned)rd32(s_events[OS_EVENT_FAULT].mq + MQ_VALIDCOUNT),
+                 (unsigned)rd32(s_events[OS_EVENT_FAULT].mq + MQ_MSGCOUNT));
     n = s_depth;
     for (i = 0; i < n; i++) xu_unlock();
     for (ms = 0; ms < 10000; ms++) {
@@ -479,6 +499,8 @@ int xu_fault_wait(uint32_t vaddr, int store) {
     wr16(t + TH_FLAGS, 0);
     running_is(t);
     xu_unlock();
+    if (s_faults < 16) s_faults++, xhw_logf("[OS] fault: thread %d %s after %d ms", (int)(int32_t)rd32(t + TH_ID),
+                                            ms < 10000 ? "runnable again" : "never let go", ms);
     return ms < 10000;
 #else
     (void)vaddr, (void)store;

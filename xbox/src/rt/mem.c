@@ -76,6 +76,19 @@ int xrc_mem_init(uint32_t mb) {
     xrc_rdram_host = p;
     xrc_rdram_size = bytes;
     xrc_rdram = p - 0x80000000u;
+#ifdef XRC_RDRAM_USER
+    /* a game that maps KUSEG high up with its own TLB (GoldenEye's 0x7F000000):
+     * rdram + vaddr would land on the kernel's map of physical memory, which
+     * cannot be aliased; the window's frames are aliased at a user address
+     * instead (n64rx picks it from the TLB ranges the console logged), so
+     * KSEG0 is there and the high KUSEG pages below it, in user space too.
+     * DIVERGES from the default layout: 4 KB pages for RDRAM, not the kernel's
+     * large ones (more x86 TLB misses). Not aliased there: the default. */
+    if (xhw_alias_map((uint32_t)(XRC_RDRAM_USER), (uint32_t)(uintptr_t)p & 0x7FFFFFFFu, bytes))
+        xrc_rdram = (uint8_t*)(uintptr_t)(uint32_t)(XRC_RDRAM_USER) - 0x80000000u;
+    else
+        xhw_logf("[MEM] rdram not aliased at %08x (in use): the kernel's window", (unsigned)(XRC_RDRAM_USER));
+#endif
     xhw_logf("[RECOMP] window: %u MB, physical %08x, rdram base %08x", (unsigned)mb,
              (unsigned)((uintptr_t)p & 0x7FFFFFFFu), (unsigned)(uintptr_t)xrc_rdram);
     if (HW_SHADOW) hw_shadow(p, bytes);
