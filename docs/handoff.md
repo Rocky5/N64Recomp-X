@@ -1079,3 +1079,11 @@ interpreted overlay code is hot (up to 11 million instructions a
 300-retrace window: the actors' relocated code); runs with a 640x480
 SHOT stop logging in xemu some seconds later.
 
+**Staged for the console (not yet deployed: red's FTP did not answer):**
+`vzel1`, Ocarina of Time 1.2, the code of `9d51f31` (ThinLTO release, the
+inflated ROM inside, 57 MB XBE), xbe sha1 7a99522d5478, title ID 4E52B837,
+folder `/F/Applications/N64Recomp-X-ZEL` (both folders made by hand on the
+first deploy). 45 s in xemu first: no crash, 1141 frames. To check: the
+title, a new file, the intro, Kokiri Forest with Link under control, music,
+fps, the free memory (`[BEAT]`).
+
