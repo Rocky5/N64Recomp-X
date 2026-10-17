@@ -17,9 +17,10 @@ The decomps are the answer keys that make the ROM-only path stable
 **Status (`docs/handoff.md`, "Where things stand"): M1 done; M2 mostly
 done. From the ROM alone: Mario Kart 64 plays on the console (30 fps races,
 sound, Controller Pak, the BACK menu and Paks page, the ROM inside the XBE);
-in xemu Super Mario 64 reaches the castle grounds, Pokémon Snap plays its
-intro, Ridge Racer 64 draws (F3DEX2), Ocarina of Time builds (Yaz0, page
-cache). The library sweep (`tools/xbox/sweep.py`) ranks what blocks the
+in xemu Super Smash Bros. plays a match, Mario Party 1-3 run (coroutines),
+Banjo-Kazooie reaches its new-game intro, Super Mario 64 the castle
+grounds, Ocarina of Time its title. The library sweep (s7: 139 of 246
+present frames) (`tools/xbox/sweep.py`) ranks what blocks the
 rest (`docs/analyzer.md`). CI is manual-only (free minutes).** `docs/PLAN.md` is binding on
 the approach (§1), the architecture (§3), the build, game packs and tests
 (§4), the feature specs (§5), the milestone order and exit checks (§6).

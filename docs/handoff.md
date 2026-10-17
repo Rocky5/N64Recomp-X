@@ -4,7 +4,7 @@ One entry per milestone: what was verified, how, and where ("xemu" results
 are emulator-only; timing, audio, memory and HDD latency are judged on the
 console).
 
-## Where things stand (2026-10-16, evening)
+## Where things stand (2026-10-17)
 
 The newest state first; the entries below are the record, oldest first.
 
