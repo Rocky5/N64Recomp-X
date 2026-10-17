@@ -1288,3 +1288,16 @@ it again (`[OS] thread 0 started again`); audio now runs on after it:
 3518 tasks by the end, 58 a second, peak 30893 (the old open item, "dies
 some time after the game restarts it", not seen).
 
+**"The boot code came back" (19 games in s8, mostly Rare's compressed
+boots), first boot from the ROM alone.** Blast Corps: the analysis sees 54
+functions before the boot decompresses the game; the game's own
+`osStartThread` then runs interpreted and its `__osDispatchThread` ends in
+an `eret` into the new thread, which the interpreter took as a return, so
+no game thread ever started. Now the thread being dispatched (k0 when EPC
+was written from its context) is started by the runtime from that context
+(`XRC_DISPATCH_START`), and a boot returning after that parks. Blast Corps
+now starts its main thread and its PI manager on the first boot; it then
+waits on its own (unnamed) VI manager, whose events go through its own
+libultra, which the learning rounds name. The retrace thread now also
+starts when a game registers `OS_EVENT_VI` (`XRC_VI_ON_EVENT`).
+

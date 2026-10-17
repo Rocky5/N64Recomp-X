@@ -80,6 +80,7 @@ typedef struct {
     recomp_context* ctx;        /* thread_body's: its sp for interp.c's exception code */
 } Thr;
 static Thr s_thr[MAX_THREADS];
+static volatile int s_started;   /* game threads the runtime runs (osStartThread, a dispatch: xu_start_dispatched) */
 static volatile int s_nthr;
 static uint32_t s_tls = 0xFFFFFFFFu;
 
@@ -308,6 +309,7 @@ ULTRA(osStartThread) {
         wr16(t + TH_STATE, OS_STATE_RUNNABLE);
         d->kt = xhw_thread_spawn(thread_body, d, xu_level_of(pri), HOST_STACK);
         if (!d->kt) xrc_fatal_vram("osStartThread: no kernel thread", t, 0);
+        s_started++;
         xhw_logf("[OS] thread %d started: entry %08x, sp %08x, N64 priority %d -> level %d",
                  (int)(int32_t)rd32(t + TH_ID), (unsigned)d->entry, (unsigned)d->sp, pri, xu_level_of(pri));
     } else if (XRC_THREAD_RESUME && d->stopped) {
@@ -331,6 +333,49 @@ ULTRA(osStartThread) {
         xhw_log("[OS] boot code done: the boot thread parks");
         park();
     }
+}
+
+/* interp.c: an eret outside the game's exception code, with k0 an OSThread
+ * the runtime does not run: the game's own (unnamed) osStartThread
+ * dispatching a thread it made with its own osCreateThread (a compressed
+ * boot's libultra, before learning names it: Blast Corps). That thread is
+ * started here from its context, as its first dispatch would run it: pc
+ * (the entry), sp, a0 (the argument). 1 when it was.
+ * DIVERGES: none meant. -DXRC_DISPATCH_START=0: the eret is only a return. */
+#ifndef XRC_DISPATCH_START
+#define XRC_DISPATCH_START 1
+#endif
+enum { TH_CTX_A0 = 0x3C, TH_CTX_SP = 0xF4, TH_CTX_PC = 0x11C };
+int xu_threads_started(void) { return s_started; }
+
+int xu_start_dispatched(uint32_t t) {
+    Thr* d;
+    uint32_t pc, sp;
+    int pri;
+    if (!XRC_DISPATCH_START || (t & 0xE0000003u) != 0x80000000u || (t & 0x1FFFFFFFu) + 0x130u > xrc_rdram_size)
+        return 0;
+    pc = rd32(t + TH_CTX_PC);
+    sp = rd32(t + TH_CTX_SP);
+    if ((pc & 0xE0000003u) != 0x80000000u || (sp & 0xE0000000u) != 0x80000000u) return 0;
+    xu_lock();
+    d = find(t);
+    if (d && d->kt) {   /* the runtime runs it already: the eret only returns */
+        xu_unlock();
+        return 0;
+    }
+    if (!d) d = add(t);
+    d->entry = pc;
+    d->arg = rd32(t + TH_CTX_A0);
+    d->sp = sp;
+    pri = (int)(int32_t)rd32(t + TH_PRIORITY);
+    wr16(t + TH_STATE, OS_STATE_RUNNABLE);
+    d->kt = xhw_thread_spawn(thread_body, d, xu_level_of(pri), HOST_STACK);
+    xu_unlock();
+    if (!d->kt) return 0;
+    s_started++;
+    xhw_logf("[OS] thread %d dispatched by the game's own code: started at %08x, sp %08x, N64 priority %d",
+             (int)(int32_t)rd32(t + TH_ID), (unsigned)pc, (unsigned)sp, pri);
+    return 1;
 }
 
 /* another thread stopped: at its next block, woken if it is blocked (XRC_THREAD_HALT) */
@@ -536,11 +581,17 @@ ULTRA(osRecvMesg) {
 /* ---- events ---- */
 static struct { uint32_t mq, msg; } s_events[OS_NUM_EVENTS];
 
+#ifndef XRC_VI_ON_EVENT
+#define XRC_VI_ON_EVENT 1   /* -DXRC_VI_ON_EVENT=0: retraces only after the runtime's osCreateViManager */
+#endif
+void xu_vi_start(void);   /* vi.c */
+
 ULTRA(osSetEventMesg) {
     uint32_t e = ARG(0);
     (void)rdram;
     if (e < OS_NUM_EVENTS) {
         s_events[e].mq = ARG(1);
+        if (e == OS_EVENT_VI && XRC_VI_ON_EVENT) xu_vi_start();   /* a game's own VI manager: the retraces it waits for */
         s_events[e].msg = ARG(2);
         if (XHW_TEST_BUILD) xhw_logf("[OS] osSetEventMesg %d: queue %08x message %08x", e, (unsigned)ARG(1),
                                      (unsigned)ARG(2));

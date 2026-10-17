@@ -84,13 +84,20 @@ static void vi_thread(void* arg) {
     }
 }
 
-ULTRA(osCreateViManager) {
-    (void)rdram;
-    (void)ctx;
+/* the retrace thread; also when a game registers for OS_EVENT_VI with its
+ * own VI manager (thread.c: a compressed boot's libultra, unnamed, waits on
+ * the event the N64's VI interrupt posts) */
+void xu_vi_start(void) {
     if (s_up) return;
     s_up = 1;
     xu_spawn(vi_thread, NULL, 14, 32 * 1024);
     xhw_log("[OS] VI manager up");
+}
+
+ULTRA(osCreateViManager) {
+    (void)rdram;
+    (void)ctx;
+    xu_vi_start();
 }
 
 /* osViSetEvent(mq, msg, retraceCount) */

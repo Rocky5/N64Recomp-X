@@ -192,6 +192,8 @@ static void rom_pins(void) {
                  xhw_rom_resident() ? " (resident ROM: nothing to do)" : "");
 }
 
+int xu_threads_started(void);   /* ultra/thread.c */
+
 static void game(void) {
     xrom_target t;
     xrom_info info;
@@ -244,6 +246,10 @@ static void game(void) {
     set_cop1_cs(0);
     xhw_logf("[RECOMP] entrypoint %08x, %d-bit registers", (unsigned)xrc_game.entrypoint, xrc_game.gpr_bits);
     xrc_game.entry(xrc_rdram, &ctx);
+    if (xu_threads_started()) {   /* threads run (the game's own dispatch started them): the boot code is done */
+        xhw_log("[OS] boot code returned after starting the game's threads: the boot thread parks");
+        for (;;) xhw_sleep_ms(1000);
+    }
     xhw_fatal("The game returned", "The boot code came back; the game's threads never started.");
 }
 

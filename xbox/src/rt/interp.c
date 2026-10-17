@@ -75,6 +75,7 @@ typedef struct {
     int fcc;
     int learning;          /* entered by the safety net: log the functions it runs */
     int exc;               /* the refill vector (xrc_interp_refill): eret returns */
+    uint32_t epc_k0;       /* k0 when EPC was last written (__osDispatchThread: the thread it restores) */
     int nframes;
     Frame fr[MAX_FRAMES];
 } St;
@@ -321,6 +322,8 @@ static void mmio(recomp_context* ctx, St* st, uint32_t pc, uint32_t w, uint32_t 
 #endif
 uint32_t xrc_tlb_resolve(uint32_t vaddr, int store);   /* tlb.c */
 
+int xu_start_dispatched(uint32_t t);   /* ultra/thread.c */
+
 static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint32_t w, Br* br) {
     uint32_t op = w >> 26, rs = (w >> 21) & 31, rt = (w >> 16) & 31, rd = (w >> 11) & 31, sa = (w >> 6) & 31, fn = w & 63;
     int16_t imm = (int16_t)(w & 0xFFFF);
@@ -450,6 +453,7 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
         if (rs == 4) {
             if (rd == 12 && !st->exc) cop0_status_write(ctx, (gpr)t);
             else s_cop0[rd] = (uint32_t)t;
+            if (rd == 14) st->epc_k0 = (uint32_t)st->r[26];
             return;
         }
         if (rs == 16 && (fn == 1 || fn == 2 || fn == 6 || fn == 8)) { tlb_op(fn); return; }   /* tlbr, tlbwi, tlbwr, tlbp */
@@ -460,7 +464,15 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
          * threads itself. -DXRC_ERET_RETURN=0: an instruction it does not run. */
         if (rs == 16 && fn == 24 && XRC_ERET_RETURN) {
             static unsigned s_n;
-            if (s_n++ < 4) xhw_logf("[INTERP] eret at %08x outside exception code: a return", (unsigned)pc);
+            /* the thread __osDispatchThread restored: k0 when it wrote EPC from
+             * the thread's context (k0 is reused for MI_INTR_MASK after) */
+            int started = (st->epc_k0 & 0xE0000003u) == 0x80000000u &&
+                                  (uint32_t)MEM_W(0x11C, st->epc_k0) == s_cop0[14]
+                              ? xu_start_dispatched(st->epc_k0)
+                              : 0;
+            if (s_n++ < 4)
+                xhw_logf("[INTERP] eret at %08x outside exception code: a return%s", (unsigned)pc,
+                         started ? " (the thread it dispatched started)" : "");
             br->ret = 1;
             return;
         }
@@ -600,7 +612,7 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
     Last* last = last_of();
     St* outer = last->st;
     regs_in(&st, ctx);
-    st.fcc = 0, st.learning = learning, st.nframes = 0, st.exc = exc;
+    st.fcc = 0, st.learning = learning, st.nframes = 0, st.exc = exc, st.epc_k0 = 0;
     st.r[31] = SX32(SENTINEL);
     if (learning) st.fr[st.nframes++] = (Frame){entry, SENTINEL, entry, caller};
     xrc_trace_vram(entry);   /* trace.c: what the crash report names */

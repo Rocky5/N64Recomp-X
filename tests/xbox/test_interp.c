@@ -46,6 +46,7 @@ uint32_t xrc_mmio_read(uint32_t vaddr) { (void)vaddr; return 0; }
 void xrc_mmio_write(uint32_t vaddr, uint32_t v) { (void)vaddr, (void)v; }
 void do_break(uint32_t vram) { s_breaks++, s_fatal_pc = vram; }
 void recomp_syscall_handler(uint8_t* rdram, recomp_context* ctx, int32_t vram) { (void)rdram, (void)vram, ctx->r2 = 0x5C, s_syscalls++; }
+int xu_start_dispatched(uint32_t t) { (void)t; return 0; }
 void pause_self(uint8_t* rdram) { (void)rdram; xrc_fatal_vram("pause_self", 0, 0); }
 
 static void known_fn(uint8_t* rdram, recomp_context* ctx) { (void)rdram; ctx->r2 = (gpr)(ctx->r4 * 3); }
