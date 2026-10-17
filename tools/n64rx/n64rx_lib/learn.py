@@ -168,15 +168,23 @@ def apply(a, learnt, rom_len):
 
 def _code_runs(code):
     """captured blocks that follow each other in RDRAM, joined: one segment
-    each, so a function crossing a 64 KB boundary is whole"""
+    each, so a function crossing a page boundary is whole. Records overlap
+    (64 KB blocks from older consoles' captures, 4 KB pages from newer):
+    the smaller one's bytes win (a page is saved when code in it first runs,
+    a block could hold parts not loaded yet)."""
+    pages = {}
+    for v in sorted(code, key=lambda v: -len(code[v])):
+        b = code[v]
+        for off in range(0, len(b) - 0xFFF, 0x1000):
+            pages[(v + off) & ~0xFFF] = b[off:off + 0x1000]
     runs, cur, end = {}, None, None
-    for v in sorted(code):
-        if cur is not None and v == end:
-            runs[cur] += code[v]
+    for vp in sorted(pages):
+        if cur is not None and vp == end:
+            runs[cur] += pages[vp]
         else:
-            cur = v
-            runs[v] = code[v]
-        end = v + len(code[v])
+            cur = vp
+            runs[vp] = pages[vp]
+        end = vp + 0x1000
     return runs
 
 

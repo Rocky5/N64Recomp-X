@@ -250,6 +250,9 @@ static void divu32(St* st, uint32_t a, uint32_t b) {
  * DIVERGES: tlbwr's Random counts down from 31 to Wired, one step a write
  * (the CPU's counts every cycle). -DXRC_TLBWR_RANDOM=0: tlbwr writes the
  * entry at Wired, as before. */
+#ifndef XRC_ERET_RETURN
+#define XRC_ERET_RETURN 1
+#endif
 #ifndef XRC_TLBWR_RANDOM
 #define XRC_TLBWR_RANDOM 1
 #endif
@@ -438,6 +441,16 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
         }
         if (rs == 16 && (fn == 1 || fn == 2 || fn == 6 || fn == 8)) { tlb_op(fn); return; }   /* tlbr, tlbwi, tlbwr, tlbp */
         if (rs == 16 && fn == 24 && st->exc) { br->ret = 1; return; }   /* eret, from the refill vector */
+        /* DIVERGES: eret outside the exception code (a game's own libultra
+         * the analyser did not name: __osDispatchThread's restore of the next
+         * thread) returns from the interpreted function: the runtime switches
+         * threads itself. -DXRC_ERET_RETURN=0: an instruction it does not run. */
+        if (rs == 16 && fn == 24 && XRC_ERET_RETURN) {
+            static unsigned s_n;
+            if (s_n++ < 4) xhw_logf("[INTERP] eret at %08x outside exception code: a return", (unsigned)pc);
+            br->ret = 1;
+            return;
+        }
         break;
     case 17: cop1(ctx, st, pc, w, br); return;
     case 24: case 25: SET(rt, s + (uint64_t)(int64_t)imm); return;
