@@ -85,6 +85,9 @@
 #ifndef XGFX_TEX_MEMO
 #define XGFX_TEX_MEMO 1        /* per-frame (load address, tile key) -> texture memo */
 #endif
+#ifndef XGFX_TEXRECT_SNAP
+#define XGFX_TEXRECT_SNAP 1    /* 1/2-cycle texrects cover every pixel row and column they touch */
+#endif
 #ifndef XGFX_TILE_WRAP
 #define XGFX_TILE_WRAP 1       /* tile sizes wrap in 12 bits (a scrolling tile with lrs < uls) */
 #endif
@@ -1223,6 +1226,11 @@ static void do_texrect(uint32_t w0, uint32_t w1) {
     f3d_texrect_half2_decode(R.half2, &dsdx, &dtdy);
     x0 = xl * 0.25f; y0 = yl * 0.25f; x1 = xh * 0.25f; y1 = yh * 0.25f;
     if (cycle >= 2) { x1 += 1.0f; y1 += 1.0f; }
+    /* the RDP draws a pixel row (column) in 1/2-cycle mode when any of its
+     * subscanlines (subpixels) is inside the rectangle: (y << 2) to
+     * ((y + 1) << 2) - 1 fills one whole row, which upscaled would leave a
+     * quarter-pixel gap a row (GoldenEye's 440x1 background lines) */
+    if (XGFX_TEXRECT_SNAP && cycle < 2) { x1 = ceilf(x1); y1 = ceilf(y1); }
     fs = s / 32.0f;
     ft = t / 32.0f;
     fdx = dsdx / 1024.0f;
