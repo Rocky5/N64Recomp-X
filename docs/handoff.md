@@ -14,12 +14,12 @@ console. Everything since `vmk4`/`vsnap1` is xemu only.
 |---|---|---|---|
 | Pilotwings 64 | its pack, or the ROM alone (`--analyze`): the same | title to results, saves, sound, 720p + hor+, the BACK menu | `vnrx1`: plays, sound, EEPROM saves, the BACK menu, the combos; 53-59 fps |
 | Mario Kart 64 | the ROM alone | title, menus, races (F3DEX), sound (nead), Controller Pak, 720p 16:9 | `vmk2`/`vmk4`: races at 29.9 fps (display lists 2-3 ms), sound, the ROM inside the XBE, the BACK menu and its Paks page, EEPROM and pak files; the map screen's TV (a framebuffer read) wrong |
-| Super Smash Bros. | the ROM alone | intro, title, 1P character select, a 1P match (Link vs Link, Hyrule Castle) at 47-50 fps with scripted input | - |
-| Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text; one present a frame (its frames are several tasks; presented at the swap), audio; its processes run as coroutines | `vmp1`: 60 fps but flickering (two half frames a frame); `vmp2` (the fix) deployed |
+| Super Smash Bros. | the ROM alone | intro, title, 1P character select, a 1P match (Link vs Link, Hyrule Castle) at 47-50 fps with scripted input; 720p 16:9 at 45-57 fps (11.7 MB free) | - |
+| Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text; one present a frame (its frames are several tasks; presented at the swap), audio; its processes run as coroutines; 720p at 29-30 fps | `vmp1`: 60 fps but flickering (two half frames a frame); `vmp2` (the fix) deployed |
 | Mario Party 2 / 3 | the ROM alone | intro, menus; 2: its audio thread, destroyed and made again by the game, plays on (58 tasks a second, 2026-10-17) | - |
-| Super Mario 64 | the ROM alone (+ three `--learn` rounds before) | head screen, Lakitu intro, castle grounds and Lakitu's text drawn right (scripted, 2026-10-17) | `vsm1` staged |
+| Super Mario 64 | the ROM alone (+ three `--learn` rounds before) | head screen, Lakitu intro, castle grounds and Lakitu's text drawn right (scripted, 2026-10-17); 720p hor+ at 29-30 fps (the skybox stays in the 4:3 box) | `vsm1` staged |
 | Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, main menu, Professor Oak's lab and his dialogue (threads reused; a glyph run missing) | `vsnap1` (before the thread-stack fix): the crash xemu had then |
-| Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro with the lair drawn whole, Banjo's house (~28 fps); near/far now the game's (the IPL3 copy) | `vbk1`: works, near/far clipping; `vbk2` (the fix) deployed |
+| Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro with the lair drawn whole, Banjo's house (~28 fps); near/far now the game's (the IPL3 copy); 720p hor+ at ~28 fps, 10 MB free (geometry the game culls shows as void at the far edges) | `vbk1`: works, near/far clipping; `vbk2` (the fix) deployed |
 | Blast Corps | the ROM alone + 15 `--learn` rounds | Rare logo, title, profile screen, the attract demo (50-56 fps) | - |
 | Majora's Mask | the ROM alone | title, file select, name entry, audio (2026-10-17) | - |
 | Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (53 MB, page cache) | title, file select, name entry, a new file, the intro text, Kokiri Forest's HUD, the Deku Tree's intro drawn, music (nead) | - |
@@ -27,7 +27,7 @@ console. Everything since `vmk4`/`vsnap1` is xemu only.
 | Donkey Kong 64 | the ROM alone + `--learn` rounds | its file screen ("GAME 1"), drawing on (the IPL3 copy at RDRAM 4); audio stops once graphics start (open) | - |
 | Diddy Kong Racing, Wave Race 64, WWF No Mercy, Dr. Mario 64 | the ROM alone | present frames for the whole 30 s sweep run (DKR's microcode not decoded: grey boxes) | - |
 | Paper Mario | the ROM alone + `--learn` rounds | past its obfuscated boot (KSEG2 DMA), 321 frames, then a map's textures (open) | - |
-| GoldenEye | the ROM alone + `--learn` rounds | its paged code faults in; draws (1047 frames in 55 s, ~14 fps, main code interpreted) | - |
+| GoldenEye | the ROM alone + `--learn` rounds | Nintendo and Rare logos, the gun barrel intro, the legal screen, file select (four folders) and the mode select at 440x330; 46-58 fps after 19 learning rounds (2026-10-17) | - |
 | Conker, Jet Force Gemini, Castlevania | the ROM alone + `--learn` rounds | boot and stop (the entries below) | - |
 | the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s7: 245 build, 139 present frames, 121 still presenting at 30 s (`docs/analyzer.md`) | - |
 
@@ -1311,3 +1311,51 @@ the crash. Its learn build places RDRAM's window at 0x91000000, so KUSEG
 kernel-band test now computes in 64 bits (it wrapped there). Open: where
 its boot maps 0x70000000.
 
+
+**GoldenEye's front end (xemu, test builds, 19-20 learning rounds,
+2026-10-17 evening).** Four fixes, each from its decomp:
+- The striped background: `titleRenderFolderMenuBackgroundLines`
+  (`title2.c`) draws its 440x299 backdrop as 299 one-row texrects, `(y <<
+  2)` to `((y + 1) << 2) - 1`. The RDP fills the row whole; upscaled, each
+  left a quarter-row gap. 1/2-cycle texrects now cover every pixel row and
+  column they touch (`XGFX_TEXRECT_SNAP`).
+- Its menus draw at 440x330 (`fr.c` sets the VI's scales from the buffer);
+  the renderer mapped 320x240, so the folders and the legal text were off
+  the right edge. The screen's size now comes from the buffer the game
+  swaps to (`XGFX_HIRES`; `[GFX] screen 440x330`).
+- Its microcode (Fast3D 2.0G) has Rare's `G_TRI4` at 0xB1 (four triangles
+  of 4-bit indices, `gbi_extension.h`): every model drew one triangle in
+  ten (a frame: 9 triangles, now 1018). `XGFX_TRI4`, host test `tri4`.
+- It evicts its 0x7F000000 code pages at random (90 frames of 8 KB,
+  `tlb_manage.c`) and calls into them through pointers; the runtime's
+  lookup said "no function at 7f01f53c". A call into an unmapped KUSEG page
+  now runs the game's refill code and fault path first (`XRC_LOOKUP_TLB`).
+Seen: the Nintendo logo, the Rare logo (fading), the gun barrel and its
+blood, the legal screen, the file select with four folders, A into the
+mode select ("1. SELECT MISSION", "2. MULTIPLAYER"). 46-58 fps with
+round 19's code (14 fps before it). Not yet: a mission. `[MEM]` free 20956
+KB; `[CLOCK]` cpu 733 MHz (xemu).
+
+**720p on the working games (xemu slot 10, its HD eeprom: 480p, 720p,
+widescreen; test builds at `42a1fd3`, `build-host/hd720.sh`).** 720p asked
+for 32 MB free before pbkit; Smash Bros. (31376 KB) and Banjo-Kazooie
+(29600) fell back to 480p. It costs about 3 MB (Mario Kart 64: 21020 KB
+free after nv2a at 480i, 17964 at 720p), so the gate is now 24 MB
+(`XHW_VIDEO_720P_KB`, decisions.md). At 720p 16:9:
+
+| game | free at runtime | fps (xemu) | picture |
+|---|---|---|---|
+| Super Smash Bros. | 11.7 MB | 45-57 | title in the 4:3 box, its fill to the edges |
+| Mario Kart 64 | 17.0 MB | 25-30 | title in the box |
+| Banjo-Kazooie | 10.1 MB | ~28 | hor+; geometry the game culls shows as void at the far edges |
+| Mario Party | 20.1 MB | 29-30 | the letterboxed intro in the box |
+| Super Mario 64 | 21.1 MB | 29-30 | head screen in the box; the attract demo hor+, its skybox (an ortho draw) only in the box |
+| Ocarina of Time | 18.7 MB | 20 | title hor+ with two moons and skybox seams (open) |
+
+Ocarina of Time stops presenting when A is pressed during its opening
+(at frame 36 or 231 of the boot, before the logo has settled): at 480p
+too, with the evening's switches off, and at `vzel5`'s commit
+(`2d3b29d`), so not a regression. One thread then loops through seven
+interpreted functions (8007e64c, 80218194, 8008fe7c, 8008faf8, 8008f408,
+800902e8) and no graphics task goes out. START at 40 s, once the logo
+has settled, reaches the name entry as before (`ootlate`). Open.
