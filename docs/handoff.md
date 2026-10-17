@@ -1277,4 +1277,8 @@ thread is now taken off the game's run queue when the fault is let go
 below `__osFaultedThread`, matching the decomp's 0x80027728). It now
 presents 1047 frames in 55 s (0 before), ~14 fps in xemu with its main
 code all interpreted.
+A scripted run (START/A, shots at 50 s and 90 s) shows a dark background
+with the red aim cursor, the same at both shots; every other line of the
+background is dark (open: a row stride or copy-mode rule in its large
+background draws, or the menu waiting on input it does not get).
 
