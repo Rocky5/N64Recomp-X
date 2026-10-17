@@ -1383,3 +1383,30 @@ Functions interpreted: 158 (round 20) -> 26; refused by the recompiler:
 menus: 7.5 million per 300 retraces (round 26) -> about 4000 (round 27);
 the menus at 45-50 fps. The level itself with this build: round 28.
 `[MEM]` free 18608 KB; `[CLOCK]` cpu 733 MHz (xemu).
+
+**Staged for the console, the current set (red still off; supersedes
+every earlier staged build).** ThinLTO releases at `bec34b3`-`7b05f79`
+(the analyser's later changes touch only games with captured RDRAM: of
+these, Banjo-Kazooie, built last), each booted 35-40 s in xemu with no
+crash (`build-host/hwsmoke.sh`). New since the last set: 720p from 24 MB
+free (Smash Bros. and Banjo-Kazooie now get it), the texrect, hi-res,
+TRI4 and fill fixes (GoldenEye's, harmless elsewhere), the VI framebuffer
+at K0BASE before the first swap. Mario Party's first build of this set
+(`vmp4`) called a wild pointer at 15 s (a jump table read from another
+overlay); fixed before `vmp5`.
+
+| build | game | xbe sha1 | xemu (40 s, 480i) | title ID / folder |
+|---|---|---|---|---|
+| `vssb6` | Super Smash Bros. | 0ca60d9d9f33 | 42 fps, 14.7 MB free | 4E520101, `/F/Applications/N64Recomp-X-SSB` |
+| `vbk6` | Banjo-Kazooie | b9dac8872136 | 20 fps, 12.9 MB | 4E52E3F7, `/F/Applications/N64Recomp-X-BK` |
+| `vmk9` | Mario Kart 64 | ec2677a6e263 | 28 fps, 19.9 MB | 4E520DF7, `/F/Applications/N64Recomp-X-MK64` |
+| `vmp5` | Mario Party | 01b62e7f20f8 | 28 fps, 23.2 MB | 4E52376A, `/F/Applications/N64Recomp-X-MP` |
+| `vsm6` | Super Mario 64 | 3d4735b2627f | 29 fps, 24.0 MB | 4E52B0E2, `/F/Applications/N64Recomp-X-SM64` (new folders) |
+| `vzel7` | Ocarina of Time 1.2 | cefa56962924 | 20 fps, 21.6 MB | 4E52B837, `/F/Applications/N64Recomp-X-ZEL` (new folders) |
+| `vmm3` | Majora's Mask | e83c420d2b36 | 17 fps, 18.1 MB | 4E52510E, `/F/Applications/N64Recomp-X-MM` (new folders) |
+
+To test on red: 720p on Smash Bros. and Banjo-Kazooie (the `[MEM]` and
+`[BEAT]` free lines; the 24 MB rule is xemu-measured); Mario Party's
+flicker and Banjo's clipping (the earlier fixes, never confirmed); Smash's
+portraits; in Ocarina of Time, wait for the title logo to settle before
+START (an earlier press stalls it, open).
