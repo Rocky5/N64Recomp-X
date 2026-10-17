@@ -742,3 +742,26 @@ them). No game's bytes or addresses
 are in the runtime: the ROM supplies them. Rejected: running the IPL3 in
 the interpreter (it initialises RDRAM and the RCP through registers the
 runtime does not model).
+
+## 720p from 24 MB free (2026-10-17, `xhw_video.c`, `XHW_VIDEO_720P_KB`)
+
+PLAN.md 3.10 gated 720p on 32 MB free before pbkit starts. Measured in
+xemu, 720p costs about 3 MB over 480 (Mario Kart 64: 21020 KB free after
+nv2a at 480i, 17964 at 720p; the ROM cache also takes its 720p cap), and
+the rule turned down Smash Bros. (31376 KB free at that point) and
+Banjo-Kazooie (29600), which run with 14-15 and 13 MB free at 480.
+Chosen: 24 MB, which leaves them 10-12 MB at 720p. To confirm on the
+console (`[MEM]` and `[BEAT]` free lines at 720p). `-DXHW_VIDEO_720P_KB=32768`:
+the old rule.
+
+## The screen's size from the buffer the game swaps to (2026-10-17, `f3d_interp.c`, `XGFX_HIRES`)
+
+The renderer mapped N64 coordinates as 320x240 always. GoldenEye's front
+end draws into 440x330 buffers (its decomp's `fr.c`: the VI's xScale and
+yScale set from the buffer's size), so the right part of every menu
+(the folders, the legal text) fell off the screen. Chosen: when the game
+sets a colour image it swaps to (osViSwapBuffer's addresses), its width is
+the screen's, and the height 3/4 of it unless the VI mode's rows (field 0's
+yScale over its lines) say otherwise (640x240). A 320-wide game maps as
+before. The colour image's width is what the RDP draws to; the VI mode
+only settles the height.

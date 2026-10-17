@@ -285,6 +285,23 @@ static void test_fast3d(void) {
     }
 }
 
+/* Rare's G_TRI4 (GoldenEye, Perfect Dark): x and y nibbles in w1, z in w0;
+ * a triangle of three 0s is skipped */
+static void test_tri4(void) {
+    unsigned t;
+    s_pc = DL_AT;
+    head_f3d();
+    cmd(0x04000000u | ((3u - 1u) << 20) | (0u << 16) | 48u, VTX_AT);   /* G_VTX 3 at 0 */
+    cmd(0xB1000002u, 0x00120010u);   /* TRI4: (0 1 2), (0 0 0), (2 1 0), (0 0 0) */
+    cmd(0xB8000000u, 0);
+    t = run(NULL);
+    CHECK(t == 2, "tri4 tris %u (want 2)", t);
+    if (t == 2) {
+        CHECK(near(s_v[0].x, sx(-200)) && near(s_v[2].x, sx(-100)), "tri4 first %.1f %.1f", s_v[0].x, s_v[2].x);
+        CHECK(near(s_v[3].x, sx(-100)) && near(s_v[5].x, sx(-200)), "tri4 second %.1f %.1f", s_v[3].x, s_v[5].x);
+    }
+}
+
 static void test_f3dex(void) {
     GfxUcode u = uc_of("RSP Gfx ucode F3DEX       fifo 1.23 Yoshitaka Yasumoto 1997 Nintendo.");
     unsigned t;
@@ -462,6 +479,7 @@ int main(void) {
     test_parse();
     test_decoders();
     test_fast3d();
+    test_tri4();
     test_f3dex();
     test_f3dex2();
     test_fast3d();   /* and Fast3D again after the others: nothing left over */

@@ -341,10 +341,21 @@ static uint32_t s_pending;
 static void host_thunk(uint8_t* rdram, recomp_context* ctx) { xrc_safety_run(rdram, ctx, s_pending); }
 #endif
 
+/* a call into a KUSEG page the TLB does not map: the CPU would miss on the
+ * fetch, and the game's refill code and fault path page it in (GoldenEye
+ * evicts its 0x7F000000 code pages at random, tlb_manage.c in its decomp,
+ * and calls through pointers into them). -DXRC_LOOKUP_TLB=0: no function,
+ * as before. */
+#ifndef XRC_LOOKUP_TLB
+#define XRC_LOOKUP_TLB 1
+#endif
+uint32_t xrc_tlb_resolve(uint32_t vaddr, int store);   /* tlb.c */
+
 static int holds_code(uint32_t vram) {
     uint32_t off = vram - 0x80000000u;
     if ((int32_t)vram >= 0) {   /* KUSEG: code the game maps with its own TLB (Turok 2), by its physical page */
         uint32_t p = xrc_tlb_to_phys(vram);
+        if (p == ~0u && XRC_LOOKUP_TLB && vram >= 0x10000u && !(vram & 3)) p = xrc_tlb_resolve(vram, 0);
         if (p == ~0u || p + 8 > xrc_rdram_size || (vram & 3)) return 0;
         return (xrc_word(0x80000000u | p) | xrc_word(0x80000000u | (p + 4))) != 0;
     }

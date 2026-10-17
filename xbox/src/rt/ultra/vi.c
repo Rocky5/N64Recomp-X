@@ -40,6 +40,25 @@ unsigned xu_retrace(void) { return s_retrace; }
 uint32_t xu_vi_mode(void) { return s_mode; }
 uint32_t xu_vi_framebuffer(void) { return s_cur; }
 
+/* the rows of the framebuffer the mode shows (the renderer's screen size,
+ * f3d_interp.c): field 0's yScale (2.10) over its lines, (vEnd - vStart) / 2
+ * taken as 240 or 288 when that close (NTSC 0x25..0x1FF is 237); 0 when no
+ * mode is set. OSViMode: type, 9 common registers from +4, then the fields
+ * (origin +0x28, yScale +0x2C, vStart +0x30) */
+unsigned xu_vi_rows(void);
+unsigned xu_vi_rows(void) {
+    uint32_t m = s_mode, ys, vs;
+    unsigned lines;
+    if (!m) return 0;
+    ys = rd32(m + 0x2C) & 0xFFFu;
+    vs = rd32(m + 0x30);
+    lines = (unsigned)(((vs & 0x3FFu) - ((vs >> 16) & 0x3FFu)) & 0x3FFu) / 2u;
+    if (lines >= 230u && lines <= 250u) lines = 240u;
+    else if (lines >= 278u && lines <= 298u) lines = 288u;
+    if (!ys || !lines) return 0;
+    return (ys * lines + 512u) >> 10;
+}
+
 static void vi_thread(void* arg) {
     (void)arg;
     for (;;) {

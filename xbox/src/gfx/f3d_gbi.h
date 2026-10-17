@@ -31,6 +31,7 @@
 #define F3D_G_RDPHALF_1           0xB4 /* gbi.h:149  G_IMMFIRST-11 */
 #define F3D_G_RDPHALF_2           0xB3 /* gbi.h:150  G_IMMFIRST-12 */
 #define F3D_G_RDPHALF_CONT        0xB2 /* gbi.h:157  G_IMMFIRST-13 (#else of F3DEX_GBI/F3DLP_GBI) */
+#define F3D_G_TRI4                0xB1 /* Rare's Fast3D (GoldenEye's gbi_extension.h): G_IMMFIRST-14, unused in Nintendo's */
 /* Aliases overloaded onto CULLDL/POPMTX in the non-F3DEX branch (gbi.h:163-164). */
 #define F3D_G_SPRITE2D_SCALEFLIP  0xBE /* gbi.h:163  alias of G_CULLDL */
 #define F3D_G_SPRITE2D_DRAW       0xBD /* gbi.h:164  alias of G_POPMTX */

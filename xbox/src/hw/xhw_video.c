@@ -4,7 +4,7 @@
  * The dashboard allows, the settings choose:
  *   480i  640x480x32, always available (the safe mode)
  *   480p  640x480x32, HDTV/VGA pack, dashboard 480p flag, NTSC
- *   720p  1280x720 R5G6B5, HDTV/VGA pack, dashboard 720p flag, >= 32 MB free
+ *   720p  1280x720 R5G6B5, HDTV/VGA pack, dashboard 720p flag, >= 24 MB free (XHW_VIDEO_720P_KB)
  *   1080i 1920x1080 R5G6B5, HDTV/VGA pack, dashboard 1080i flag, >= 40 MB free
  * Auto takes the highest the dashboard allows. A mode that can't be set
  * falls to the next one down; xhw_video_fallback_480 is the renderer's way
@@ -109,6 +109,16 @@ void xhw_video_confirm(void) {
 
 const xhw_video_mode* xhw_video(void) { return &s_mode; }
 
+/* free memory 720p asks for before pbkit starts. It costs about 3 MB more
+ * than 480 (Mario Kart 64 in xemu: 21020 KB free after nv2a at 480i, 17964
+ * at 720p) and the ROM cache takes its 720p cap; 32 MB (the plan's first
+ * rule) turned Smash Bros. (31376 KB) and Banjo-Kazooie (29600) down, which
+ * keep 10-12 MB free at 720p. DIVERGES (PLAN.md 3.10): 24 MB.
+ * -DXHW_VIDEO_720P_KB=32768: the old rule. */
+#ifndef XHW_VIDEO_720P_KB
+#define XHW_VIDEO_720P_KB (24u * 1024u)
+#endif
+
 static int hd_pack(void) {
     DWORD pack = XVideoGetEncoderSettings() & VIDEO_ADAPTER_MASK;
     return pack == AV_PACK_HDTV || pack == AV_PACK_VGA;
@@ -184,7 +194,7 @@ void xhw_video_predict(xhw_video_plan* p) {
         return;
     }
     if (out == XHW_OUT_AUTO) {
-        if (xhw_video_720p_allowed() && xhw_mem_free_kb() >= 32 * 1024) {
+        if (xhw_video_720p_allowed() && xhw_mem_free_kb() >= XHW_VIDEO_720P_KB) {
             name = "720p";
             why = "the dashboard allows 720p";
         } else if (xhw_video_480p_allowed() && s_pref_480p) {
@@ -195,7 +205,7 @@ void xhw_video_predict(xhw_video_plan* p) {
             why = "the dashboard's mode";
         }
     } else if (out >= XHW_OUT_720P) {
-        if (xhw_video_720p_allowed() && xhw_mem_free_kb() >= 32 * 1024) {
+        if (xhw_video_720p_allowed() && xhw_mem_free_kb() >= XHW_VIDEO_720P_KB) {
             name = "720p";
             why = "settings.ini";
         } else {
@@ -263,7 +273,7 @@ void xhw_video_boot(void) {
         if (XHW_VIDEO_CONFIRM && probation_ok && want && strcmp(want, s_confirmed)) pending_write(want);
     }
     if (!((out == XHW_OUT_1080I && xhw_video_1080i_allowed() && try_hd(1920, 1080, 40 * 1024)) ||
-          (out >= XHW_OUT_720P && xhw_video_720p_allowed() && try_hd(1280, 720, 32 * 1024))))
+          (out >= XHW_OUT_720P && xhw_video_720p_allowed() && try_hd(1280, 720, XHW_VIDEO_720P_KB))))
         set_mode_480(out != XHW_OUT_480I && s_pref_480p);
     xhw_logf("[VIDEO] %dx%d %d-bit%s%s", s_mode.width, s_mode.height, s_mode.bpp,
              s_mode.progressive ? " progressive" : " interlaced", s_mode.widescreen ? " 16:9 dashboard" : " 4:3 dashboard");

@@ -85,6 +85,12 @@
 #ifndef XGFX_TEX_MEMO
 #define XGFX_TEX_MEMO 1        /* per-frame (load address, tile key) -> texture memo */
 #endif
+#ifndef XGFX_TRI4
+#define XGFX_TRI4 1            /* Fast3D's 0xB1 as Rare's G_TRI4 */
+#endif
+#ifndef XGFX_HIRES
+#define XGFX_HIRES 1           /* the screen's size from the swapped buffer's width and the VI mode */
+#endif
 #ifndef XGFX_TEXRECT_SNAP
 #define XGFX_TEXRECT_SNAP 1    /* 1/2-cycle texrects cover every pixel row and column they touch */
 #endif
@@ -98,8 +104,12 @@
 #define XGFX_DXT_EXACT 1       /* LOADBLOCK dxt not sized for the line: the RDP's odd-line rule */
 #endif
 
-#define N64_W 320.0f
-#define N64_H 240.0f
+/* the game's screen in N64 pixels: 320x240, or the size of the buffer it
+ * swaps to when that is another (screen_size: GoldenEye's 440x330 front
+ * end, 640x480 games) */
+static float s_n64w = 320.0f, s_n64h = 240.0f;
+#define N64_W s_n64w
+#define N64_H s_n64h
 #define MTX_DEPTH 11           /* 10 pushes + current (Birdman64 gfx.md) */
 #define DL_DEPTH 18
 #define VC_MAX 80              /* the largest vertex buffer of the families (F3DLP); Fast3D uses 16 */
@@ -119,6 +129,7 @@ static float s_rej_kx = 1.0f;
 static uint32_t s_epoch = 1;   /* draw state epoch: DIRTY() makes the next draw rebuild its state */
 #define DIRTY() (s_epoch++)
 static void frame_cimg(uint32_t c);   /* a frame across tasks (f3d_swap) */
+static void screen_size(uint32_t c, uint32_t w);
 
 /* ------------------------------------------------------------------ state */
 
@@ -426,10 +437,10 @@ static void map_setup(void) {
 
 /* SUBSCREEN edges in N64 pixels, 2 pixels of slack (the HUD fade box lands
  * at 18.0x, the fade-out quad at 15.4; wings64-dc traps.md) */
-#define SUB_X0 12.0f
-#define SUB_X1 308.0f
-#define SUB_Y0 10.0f
-#define SUB_Y1 220.0f
+#define SUB_X0 (12.0f * N64_W / 320.0f)
+#define SUB_X1 (308.0f * N64_W / 320.0f)
+#define SUB_Y0 (10.0f * N64_H / 240.0f)
+#define SUB_Y1 (220.0f * N64_H / 240.0f)
 
 /* ------------------------------------------------------------- draw state */
 
@@ -439,7 +450,7 @@ static uint32_t s_st_epoch;
 static int s_textured, s_tex1, s_decal, s_overlay, s_shadow_pass2;
 static float s_u_scale[2], s_u_off[2], s_v_scale[2], s_v_off[2];
 static unsigned s_zorder;
-static float s_scissor[4] = { 0.0f, 0.0f, 320.0f, 240.0f };
+static float s_scissor[4] = { 0.0f, 0.0f, 320.0f, 240.0f };   /* N64_W x N64_H at each frame's start */
 static int s_sc_on;
 static float s_sc[4];            /* the clip rectangle when s_sc_on, N64 pixels */
 
@@ -448,6 +459,9 @@ static XgfxVtx s_batch[BATCH_TRIS * 3];
 static uint32_t s_nb;
 
 static int s_trace;   /* -DXGFX_TRACE_FRAME=<n>: frame n's draws as [DRAW] lines */
+#ifndef XGFX_TRACE_MS     /* -DXGFX_TRACE_MS=<ms>: the first frame that long after the first, instead */
+#define XGFX_TRACE_MS 0
+#endif
 #ifndef XGFX_TRACE_FRAME
 #define XGFX_TRACE_FRAME 0
 #endif
@@ -1204,8 +1218,8 @@ static void do_fillrect(uint32_t w0, uint32_t w1) {
     scissor_x();
     if (s_overlay && ulx <= SUB_X0 && lrx >= SUB_X1 && uly <= SUB_Y0 && lry >= SUB_Y1) {
         ulx = uly = 0;
-        lrx = 320;
-        lry = 240;
+        lrx = (uint16_t)N64_W;
+        lry = (uint16_t)N64_H;
     }
     if (s_trace) xhw_logf("[DRAW] fillrect %d,%d-%d,%d cyc %d cimg %08x zimg %08x", ulx, uly, lrx, lry, cycle,
                           (unsigned)R.cimg, (unsigned)R.zimg);
@@ -1281,8 +1295,9 @@ static void do_texrect(uint32_t w0, uint32_t w1) {
  * the RSP clips to the viewport anyway, so a small viewport alone clips */
 static void clip_rect_update(void) {
     float x0 = s_scissor[0], y0 = s_scissor[1], x1 = s_scissor[2], y1 = s_scissor[3];
-    int sc_small = x1 - x0 < 280.0f || y1 - y0 < 190.0f;
-    int vp_small = R.vp_sx < 140.0f || R.vp_sy < 95.0f;
+    float kx = N64_W / 320.0f, ky = N64_H / 240.0f;
+    int sc_small = x1 - x0 < 280.0f * kx || y1 - y0 < 190.0f * ky;
+    int vp_small = R.vp_sx < 140.0f * kx || R.vp_sy < 95.0f * ky;
     if (!sc_small) { x0 = 0.0f; y0 = 0.0f; x1 = N64_W; y1 = N64_H; }
     if (vp_small) {
         if (R.vp_tx - R.vp_sx > x0) x0 = R.vp_tx - R.vp_sx;
@@ -1566,6 +1581,17 @@ static void run_dl(const uint32_t* pc) {
                 if (a < 16 && b < 16 && c < 16) do_tri(a, b, c, f);
                 break;
             }
+            case F3D_G_TRI4:   /* Rare's Fast3D (GoldenEye, Perfect Dark): 4-bit indices, x and y in w1, z in w0 */
+                if (XGFX_TRI4 && s_fam == GFX_UC_F3D) {
+                    int i;
+                    for (i = 0; i < 4; i++) {
+                        int x = (int)(w1 >> (8 * i)) & 15, y = (int)(w1 >> (8 * i + 4)) & 15, z = (int)(w0 >> (4 * i)) & 15;
+                        if (x | y | z) do_tri(x, y, z, 0);   /* all three 0: no triangle */
+                    }
+                } else {
+                    s_unknown[0xB1]++;
+                }
+                break;
             case F3D_G_DL: {
                 uint8_t push;
                 uint32_t addr;
@@ -1751,6 +1777,7 @@ static void run_dl(const uint32_t* pc) {
                     s_cimg_w = (w0 & 0xFFFu) + 1u;
                 }
                 if (c != R.zimg) frame_cimg(c);
+                if (c != R.zimg) screen_size(c, s_cimg_w);
                 if ((R.cimg == R.zimg) != (c == R.zimg)) DIRTY();
                 if (R.cimg == R.zimg && R.cimg && c != R.zimg) s_shadow_rec = 0;   /* pass 1 ended */
                 R.cimg = c;
@@ -2184,6 +2211,33 @@ static int swap_buffer(uint32_t c) {
  * game swaps to has begun the next frame: the open one is complete (a
  * scheduler that swaps at the retrace after the task, as Ocarina of Time's,
  * may run the next frame's task first). */
+/* vi.c: the rows the VI mode shows of the framebuffer (its yScale over the
+ * field's lines); 0 when no mode is known (weak: the host tests) */
+__attribute__((weak)) unsigned xu_vi_rows(void) { return 0; }
+
+/* a buffer the game swaps to, drawn at width w: the screen's size in N64
+ * pixels (the height from the VI mode when it is not 3/4 of the width:
+ * 640x240) and the map to the output. 320x240 maps as before.
+ * DIVERGES: none (the VI scales such a buffer to the whole screen).
+ * -DXGFX_HIRES=0: 320x240 always (a wider buffer's left part shown). */
+static void screen_size(uint32_t c, uint32_t w) {
+    float fw, fh;
+    unsigned rows;
+    if (!XGFX_HIRES || w < 256u || w > 1024u || !swap_buffer(c)) return;
+    fw = (float)w;
+    fh = (float)(w * 3u / 4u);
+    rows = xu_vi_rows();
+    if (rows >= 120u && rows <= 1024u && (rows > (unsigned)fh * 17u / 16u || rows < (unsigned)fh * 15u / 16u))
+        fh = (float)rows;
+    if (fw == s_n64w && fh == s_n64h) return;
+    flush();
+    xhw_logf("[GFX] screen %ux%u (a buffer %u wide)", (unsigned)fw, (unsigned)fh, (unsigned)w);
+    s_n64w = fw, s_n64h = fh;
+    map_setup();
+    s_scissor[0] = s_scissor[1] = 0.0f; s_scissor[2] = N64_W; s_scissor[3] = N64_H;
+    clip_rect_update();
+}
+
 static void frame_cimg(uint32_t c) {
     if (!s_split || !s_fopen || !swap_buffer(c)) return;
     if (s_open_cimg && s_open_cimg != c) {
@@ -2246,6 +2300,12 @@ void f3d_run(uint32_t dl, int present) {
     s_frame_no++;
     s_fullsync = 0;
     s_trace = XGFX_TRACE_FRAME && s_frames == XGFX_TRACE_FRAME;
+    if (XGFX_TRACE_MS) {
+        static int s_traced;
+        static uint64_t s_first;   /* ms from the first frame */
+        if (!s_first) s_first = t0;
+        if (!s_traced && t0 - s_first >= (uint64_t)XGFX_TRACE_MS * 1000u) s_traced = s_trace = 1;
+    }
     DIRTY();
     run_dl((const uint32_t*)host(dl));
     flush();
