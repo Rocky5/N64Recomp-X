@@ -528,6 +528,44 @@ void xrc_interp_crash_report(void) {
     }
 }
 
+/* test builds: what the interpreter spends its time on, every 5 s (300
+ * retraces): instructions run per entry address, the top 6 ([INTERP] hot) */
+unsigned xu_retrace(void);   /* ultra/vi.c */
+#define HOT_N 64
+static struct { uint32_t entry; unsigned steps, calls; } s_hot[HOT_N];
+static volatile long s_hot_busy;
+static unsigned s_hot_at;
+
+static void hot_note(uint32_t entry, unsigned steps) {
+    unsigned i, h = (entry >> 2) % HOT_N, now;
+    if (__sync_lock_test_and_set(&s_hot_busy, 1)) return;   /* another thread logs: this one is dropped */
+    for (i = 0; i < HOT_N; i++) {
+        unsigned k = (h + i) % HOT_N;
+        if (s_hot[k].entry == entry || !s_hot[k].entry) {
+            s_hot[k].entry = entry, s_hot[k].steps += steps, s_hot[k].calls++;
+            break;
+        }
+    }
+    now = xu_retrace();
+    if (now - s_hot_at >= 300) {
+        unsigned total = 0, n, j;
+        for (i = 0; i < HOT_N; i++) total += s_hot[i].steps;
+        xhw_logf("[INTERP] hot: %u instructions in %u retraces", total, now - s_hot_at);
+        for (n = 0; n < 6; n++) {   /* the top 6, taken out one at a time */
+            unsigned best = HOT_N;
+            for (j = 0; j < HOT_N; j++)
+                if (s_hot[j].entry && (best == HOT_N || s_hot[j].steps > s_hot[best].steps)) best = j;
+            if (best == HOT_N) break;
+            xhw_logf("[INTERP]   %08x: %u instructions, %u calls", (unsigned)s_hot[best].entry, s_hot[best].steps,
+                     s_hot[best].calls);
+            s_hot[best].entry = 0;
+        }
+        memset(s_hot, 0, sizeof s_hot);
+        s_hot_at = now;
+    }
+    __sync_lock_release(&s_hot_busy);
+}
+
 static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learning, uint32_t caller, int exc) {
     St st;
     gpr saved_ra = ctx->r31;
@@ -601,6 +639,7 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
         pc = br.target;
     }
     frames_report(&st, 0);
+    if (XHW_TEST_BUILD) hot_note(entry, steps);
     regs_out(&st, ctx);
     ctx->r31 = saved_ra;   /* back as the caller had it */
     last->st = outer;      /* an enclosing run's registers, not this frame's gone ones */
