@@ -32,8 +32,10 @@ void xrc_trace_vram(uint32_t vram) {
 /* the crash guard's extra report (xhw_crash_set_extra): the last 64, oldest first */
 void xrc_trace_dump(void);
 void xu_crash_regs(void);   /* ultra/thread.c */
+void xrc_interp_crash_report(void);   /* interp.c */
 static void crash_report(void) {
     xu_crash_regs();
+    xrc_interp_crash_report();
     xrc_trace_dump();
 }
 void xrc_trace_dump(void) {

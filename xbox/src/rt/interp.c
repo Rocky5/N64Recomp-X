@@ -475,6 +475,22 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
 
 static uint32_t fetch(uint8_t* rdram, uint32_t pc) { return (uint32_t)MEM_W(0, pc); }
 
+/* the last instruction the interpreter started, and its registers (any
+ * thread): the crash report's (trace.c) */
+volatile uint32_t xrc_interp_pc;
+static St* volatile s_last_st;
+void xrc_interp_crash_report(void);
+void xrc_interp_crash_report(void) {
+    St* st = s_last_st;
+    int i;
+    if (!xrc_interp_pc) return;
+    xhw_logf("[INTERP] last pc %08x", (unsigned)xrc_interp_pc);
+    if (st)
+        for (i = 0; i < 32; i += 4)
+            xhw_logf("[INTERP]   r%-2d %08x  r%-2d %08x  r%-2d %08x  r%-2d %08x", i, (unsigned)st->r[i], i + 1,
+                     (unsigned)st->r[i + 1], i + 2, (unsigned)st->r[i + 2], i + 3, (unsigned)st->r[i + 3]);
+}
+
 static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learning, uint32_t caller, int exc) {
     St st;
     gpr saved_ra = ctx->r31;
@@ -486,7 +502,9 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
     xrc_trace_vram(entry);   /* trace.c: what the crash report names */
     while (pc != SENTINEL) {
         Br br = {0}, ds = {0};
-        uint32_t w = fetch(rdram, pc);
+        uint32_t w;
+        xrc_interp_pc = pc, s_last_st = &st;
+        w = fetch(rdram, pc);
         if (++steps > STEP_LIMIT && !learning) stop(&st, "Interpreted code never returned", pc, entry);
         if (st.nframes && pc > st.fr[st.nframes - 1].top && pc - st.fr[st.nframes - 1].entry < 0x10000u)
             st.fr[st.nframes - 1].top = pc;

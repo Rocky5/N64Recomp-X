@@ -307,7 +307,7 @@ def recomp_hazards(a: Analysis, live, nm, replaced):
                     t = ins.target if ins.is_j else ins.branch_target
                     if not seg.has(t) and t not in starts:   # past the segment: a label C cannot have
                         why = f'branch to {t:08X}, past its segment'
-                        if seg.name.startswith('code_') and 0x80000000 <= t < 0x80800000:
+                        if seg.name.startswith('code_') and 0x80000000 <= f.start < t < 0x80800000 and t - f.start <= 0x100000:
                             want = (f.start, t + 4)   # the rest of the function, in RDRAM no capture holds
                         break
             if why is None:
@@ -315,8 +315,9 @@ def recomp_hazards(a: Analysis, live, nm, replaced):
                     r = (t - f.start + off) & 0xFFFFFFFF
                     if not seg.has(t) or r + 4 > len(rom):
                         why = f'jump table at {t:08X}, outside its segment'
-                        if seg.name.startswith('code_') and 0x80000000 <= t < 0x80800000:
-                            want = (min(f.start, t), max(f.end, t + 4))
+                        lo, hi = min(f.start, t), max(f.end, t + 4)
+                        if seg.name.startswith('code_') and 0x80000000 <= lo and hi <= 0x80800000 and hi - lo <= 0x100000:
+                            want = (lo, hi)
                         break
             if why:
                 out[x] = (nm[x], why, want)

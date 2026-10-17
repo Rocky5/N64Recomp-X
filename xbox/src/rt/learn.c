@@ -120,7 +120,7 @@ static void emit(const char* line) {
 }
 
 /* ---- code no ROM DMA put there (decompressed: Rare's games, gzip ones) ----
- * The 64 KB block of RDRAM that holds it is saved as it is the first time the
+ * The 4 KB page of RDRAM that holds it is saved as it is the first time the
  * net runs code in it: learn_code.bin beside learn.txt (records of vram,
  * size, then the bytes in N64 order; test builds also send it over COM1 as
  * [LEARNCODE] base64), so n64rx --learn can recompile what no ROM holds.
@@ -128,8 +128,8 @@ static void emit(const char* line) {
 #ifndef XRC_LEARN_CODE
 #define XRC_LEARN_CODE 1
 #endif
-#define CODE_BLOCK 0x10000u
-static uint8_t s_captured[(8u << 20) / CODE_BLOCK];
+#define CODE_BLOCK 0x1000u   /* a record's largest size */
+static uint8_t s_captured[(8u << 20) / 0x1000u];   /* KSEG0 pages saved */
 
 /* code a game maps with its own TLB and pages in on demand (Conker's
  * 0x15000000): the physical frames behind neighbouring virtual pages are
@@ -160,13 +160,20 @@ static void save(uint32_t base, uint32_t size, uint32_t (*word)(uint32_t)) {
     emit(line);
 }
 
-static uint32_t s_kseg0_base;   /* save()'s reader for a KSEG0 block: the frame's own address */
-static uint32_t word_kseg0(uint32_t v) { return xrc_word(0x80000000u | (s_kseg0_base + (v & (CODE_BLOCK - 1)))); }
+static uint32_t word_kseg0(uint32_t v) { return xrc_word(0x80000000u | (v & 0x1FFFFFFFu)); }
 static uint32_t word_mapped(uint32_t v) { return xrc_word(0x80000000u | xrc_tlb_to_phys(v)); }
 
-static void capture(uint32_t vram) {
-    uint32_t phys, blk, i;
+static void capture_locked(uint32_t vram);
+static void capture(uint32_t vram) {   /* one at a time: two threads' dumps would interleave on COM1 */
+    static volatile long s_busy;
     if (!XRC_LEARN_CODE) return;
+    while (__sync_lock_test_and_set(&s_busy, 1)) xhw_sleep_ms(0);
+    capture_locked(vram);
+    __sync_lock_release(&s_busy);
+}
+
+static void capture_locked(uint32_t vram) {
+    uint32_t phys, blk, i;
     if ((int32_t)vram >= 0) {   /* KUSEG: through the TLB, a page at a time */
         uint32_t vp = vram & ~(VPAGE - 1);
         if (xrc_tlb_to_phys(vp) == ~0u || xrc_tlb_to_phys(vp + VPAGE - 4) == ~0u) return;
@@ -177,13 +184,15 @@ static void capture(uint32_t vram) {
         save(vp, VPAGE, word_mapped);
         return;
     }
+    /* KSEG0: the 4 KB page, when code in it first runs (a 64 KB block could be
+     * saved before the rest of it is loaded: Donkey Kong 64 then ran stale
+     * bytes) */
     phys = vram & 0x1FFFFFFFu;
     if (phys >= xrc_rdram_size) return;
-    blk = phys / CODE_BLOCK;
+    blk = phys / VPAGE;
     if (blk >= sizeof s_captured || s_captured[blk]) return;
     s_captured[blk] = 1;
-    s_kseg0_base = blk * CODE_BLOCK;
-    save(vram & ~(CODE_BLOCK - 1), CODE_BLOCK, word_kseg0);
+    save(0x80000000u | (phys & ~(VPAGE - 1)), VPAGE, word_kseg0);
 }
 
 /* the KUSEG regions the TLB maps, once per 1 MB, and whether the host could
@@ -210,7 +219,7 @@ void xrc_learn_kuseg(uint32_t va, int aliased) {
  * loaded with it) */
 void xrc_learn_want(uint32_t lo, uint32_t hi) {
     uint32_t v;
-    for (v = lo & ~(CODE_BLOCK - 1); v < hi; v += CODE_BLOCK) capture(v);
+    for (v = lo & ~(VPAGE - 1); v < hi; v += VPAGE) capture(v);
 }
 
 static void log_one(Learnt* e) {

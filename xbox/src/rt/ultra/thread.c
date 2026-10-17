@@ -449,6 +449,13 @@ void xu_crash_regs(void) {
     for (i = 0; i < 32; i += 4)
         xhw_logf("[REGS]   r%-2d %08x  r%-2d %08x  r%-2d %08x  r%-2d %08x", i, (unsigned)r[i], i + 1, (unsigned)r[i + 1],
                  i + 2, (unsigned)r[i + 2], i + 3, (unsigned)r[i + 3]);
+    if ((uint32_t)r[29] - 0x80000000u < xrc_rdram_size - 0x100u)   /* the N64 stack: the frames above */
+        for (i = 0; i < 64; i += 8) {
+            uint32_t a = (uint32_t)r[29] + 4u * (uint32_t)i;
+            xhw_logf("[REGS]   sp+%03x: %08x %08x %08x %08x %08x %08x %08x %08x", 4 * i, (unsigned)rd32(a),
+                     (unsigned)rd32(a + 4), (unsigned)rd32(a + 8), (unsigned)rd32(a + 12), (unsigned)rd32(a + 16),
+                     (unsigned)rd32(a + 20), (unsigned)rd32(a + 24), (unsigned)rd32(a + 28));
+        }
 }
 
 /* the calling N64 thread's stack pointer as its context last held it (0 for
