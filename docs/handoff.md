@@ -17,6 +17,7 @@ The newest state first; the entries below are the record, oldest first.
 | Ridge Racer 64 | the ROM alone + one `--learn` round | the first F3DEX2 game drawn: its save screen at ~42 fps; A not taken yet | - |
 | Forsaken 64 | the ROM alone | builds and boots (aspMain), stops later | - |
 | Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (32 -> 53 MB) | builds; the 53 MB ROM through the page cache inside the budget; stopped at its RAM-size probe (KSEG1, since modelled) | - |
+| Super Smash Bros. | the ROM alone | intro, title, 1P character select, a 1P match (Link vs Link, Hyrule Castle) at ~50 fps with scripted input | - |
 | Mario Party | the ROM alone | the Hudson logo, the intro's 3D scene, the story text at ~58 fps; audio tasks run (53 a second); its processes run as coroutines (`strand.c`) | - |
 | Mario Party 2 / 3 | the ROM alone | 60 fps from boot (intro, menus); 2: the audio thread dies after a restart (open) | - |
 | Dr. Mario 64 | the ROM alone | links, boots; its gzip main segment is not found | - |
@@ -978,3 +979,15 @@ START/A), the sound itself (tasks run; not listened to), a console.
   another slot. An emulator matter.
 
 Not verified on a console. `[MEM]`/`[CLOCK]`: not recorded (xemu).
+
+### Super Smash Bros. plays a match (2026-10-17, xemu)
+
+From the ROM alone, no learning rounds: 1P mode, Link picked on the
+character select, START, and the match on Hyrule Castle against a CPU Link
+at 47-50 fps; the scripted stick moves Link. The earlier "A does not drop
+the token" was the script: the game reads no pads while it loads (56-69 s
+into the boot here), a screenshot dump over COM1 freezes it for seconds,
+and a second A picks the token up again. Script presses for after the
+screen is up, and leave 10 s or more between SHOTs. Not verified on a
+console.
+

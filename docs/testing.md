@@ -159,7 +159,7 @@ drops for no reason.
 `t<ms> <buttons> [for <ms>]` counted from the moment the controllers are up
 (the loading screen presents no frames). Buttons: `A B X Y START BACK WHITE
 BLACK UP DOWN LEFT RIGHT`, triggers `L R`, sticks `SL SR SU SD CL CR CU CD`,
-`SHOT` for an `[FBDUMP]`. M0's scenarios:
+`SHOT` for an `[FBDUMP]`. A dump over COM1 stalls the game for seconds in xemu: SHOTs closer than that all land on one frame, and presses during it are missed; events only reach a game while it reads its pads. M0's scenarios:
 
 | script | expect |
 |---|---|
