@@ -6,7 +6,7 @@
 #include "rt.h"
 #include "xhw.h"
 
-#define RING 256
+#define RING 4096   /* deep enough that a thread looping beside the crashing one does not push its entries out */
 
 static const char* volatile s_name[RING];
 static void* volatile s_thread[RING];
@@ -46,6 +46,20 @@ void xrc_trace_dump(void) {
         unsigned i = k & (RING - 1);
         if (s_name[i]) xhw_logf("[TRACE]   %s (thread %p)", s_name[i], s_thread[i]);
         else if (s_vram[i]) xhw_logf("[TRACE]   %08x, interpreted (thread %p)", (unsigned)s_vram[i], s_thread[i]);
+    }
+    {   /* the calling (crashing) thread's own last 48, which another thread's loop can crowd out above */
+        void* me = xhw_thread_self();
+        unsigned idx[48], m = 0, lim = n > RING ? n - RING : 0;
+        for (k = n; k > lim && m < 48; k--) {
+            unsigned i = (k - 1) & (RING - 1);
+            if (s_thread[i] == me && k - 1 < first) idx[m++] = i;
+        }
+        if (m) xhw_logf("[TRACE] this thread (%p), before those, oldest first:", me);
+        while (m--) {
+            unsigned i = idx[m];
+            if (s_name[i]) xhw_logf("[TRACE]   %s", s_name[i]);
+            else if (s_vram[i]) xhw_logf("[TRACE]   %08x, interpreted", (unsigned)s_vram[i]);
+        }
     }
 }
 
