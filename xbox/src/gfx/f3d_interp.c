@@ -85,6 +85,9 @@
 #ifndef XGFX_TEX_MEMO
 #define XGFX_TEX_MEMO 1        /* per-frame (load address, tile key) -> texture memo */
 #endif
+#ifndef XGFX_TILE_WRAP
+#define XGFX_TILE_WRAP 1       /* tile sizes wrap in 12 bits (a scrolling tile with lrs < uls) */
+#endif
 #ifndef XGFX_DESWIZZLE32
 #define XGFX_DESWIZZLE32 1     /* LOADBLOCK dxt 0 of RGBA32: odd rows swap texel pairs (TMEM's two banks) */
 #endif
@@ -572,7 +575,11 @@ static TexEntry* texture_for_tile(int tidx) {
     Tile* t = &R.tile[tidx];
     TmemLoad* ld = &R.loads[(t->tmem >> 3) & 63];
     TmemLoad within;
-    unsigned w = ((t->lrs - t->uls) >> 2) + 1, h = ((t->lrt - t->ult) >> 2) + 1;
+    /* the tile's 10.2 coordinates wrap in 12 bits, as the RDP's: a scrolling
+     * tile may have lrs below uls (Ocarina of Time's file select and water),
+     * and its mask gives the size. -DXGFX_TILE_WRAP=0: unwrapped, as before */
+    unsigned w = XGFX_TILE_WRAP ? ((((unsigned)t->lrs - t->uls) & 0xFFFu) >> 2) + 1 : ((t->lrs - t->uls) >> 2) + 1,
+             h = XGFX_TILE_WRAP ? ((((unsigned)t->lrt - t->ult) & 0xFFFu) >> 2) + 1 : ((t->lrt - t->ult) >> 2) + 1;
     /* RGBA32 splits each texel across TMEM's two banks: SETTILE's line covers half a row */
     unsigned line = t->line * 8u * (t->siz == 3 ? 2u : 1u), bytes, pw, ph, slot, i;
     uint32_t key, sample;

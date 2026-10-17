@@ -1182,3 +1182,10 @@ in xemu with no crash.
 | `vzel2` | Ocarina of Time 1.2 | 41935c861b7d | 4E52B837, `/F/Applications/N64Recomp-X-ZEL` (new: make both folders) | title, new file, the intro, Kokiri Forest, music, fps, free memory |
 | `vsm2` | Super Mario 64 | eb5eb4bf6999 | 4E52B0E2, `/F/Applications/N64Recomp-X-SM64` (new: make both folders) | intro, castle grounds, a course, fps, sound, EEPROM save |
 
+**Ocarina of Time's texture misses.** Its scrolling tiles (2-cycle TEXEL1,
+the file select's boxes) set `lrs`/`lrt` below `uls`/`ult`; the
+interpreter's size came out 0 and the tile was dropped (`texture miss
+(size)`, hundreds a run; the name-entry boxes drew solid cyan). Tile sizes
+now wrap in 12 bits as the RDP's (`XGFX_TILE_WRAP`): 0 misses in the same
+run.
+
