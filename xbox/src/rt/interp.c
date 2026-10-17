@@ -316,6 +316,11 @@ static void mmio(recomp_context* ctx, St* st, uint32_t pc, uint32_t w, uint32_t 
     stop(st, "Interpreter: a hardware register access it does not model", pc, w);
 }
 
+#ifndef XRC_FETCH_TLB
+#define XRC_FETCH_TLB 1
+#endif
+uint32_t xrc_tlb_resolve(uint32_t vaddr, int store);   /* tlb.c */
+
 static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint32_t w, Br* br) {
     uint32_t op = w >> 26, rs = (w >> 21) & 31, rt = (w >> 16) & 31, rd = (w >> 11) & 31, sa = (w >> 6) & 31, fn = w & 63;
     int16_t imm = (int16_t)(w & 0xFFFF);
@@ -330,6 +335,14 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
             mmio(ctx, st, pc, w, ea);
             return;
         }
+    }
+    /* KSEG2/3, and KUSEG where rdram + ea is the Xbox kernel's space (fetch):
+     * through the game's TLB to the KSEG0 alias. -DXRC_FETCH_TLB=0: as before */
+    if (XRC_FETCH_TLB && op >= 32 && op != 47 &&
+        (ea >= 0xC0000000u || ((int32_t)ea >= 0 && (uintptr_t)rdram + ea >= 0x80000000u))) {
+        int store = (op >= 40 && op <= 46) || op >= 56;
+        uint32_t p = xrc_tlb_resolve(ea, store);
+        if (p != ~0u && p < xrc_rdram_size) ea = 0x80000000u | p;
     }
     switch (op) {
     case 0:
@@ -494,10 +507,6 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
  * fetched as garbage, a wild jump to 0x7F5C40EC. There the fetch goes
  * through the game's TLB (a refill on a miss) to the KSEG0 alias.
  * DIVERGES: none meant. -DXRC_FETCH_TLB=0: the host alias, as before. */
-#ifndef XRC_FETCH_TLB
-#define XRC_FETCH_TLB 1
-#endif
-uint32_t xrc_tlb_resolve(uint32_t vaddr, int store);   /* tlb.c */
 static uint32_t fetch(uint8_t* rdram, uint32_t pc) {
     if (XRC_FETCH_TLB && (int32_t)pc >= 0 && (uintptr_t)rdram + pc >= 0x80000000u) {
         uint32_t p = xrc_tlb_resolve(pc, 0);
