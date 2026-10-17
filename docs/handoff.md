@@ -1249,7 +1249,7 @@ in xemu with no crash. All but `vmm1` at `521a389`; `vmm1` at `80a7fd5`
 | build | game | xbe sha1 | title ID / folder |
 |---|---|---|---|
 | `vssb4` | Super Smash Bros. | d02ebd103ae7 | 4E520101, `/F/Applications/N64Recomp-X-SSB` |
-| `vzel4` | Ocarina of Time 1.2 | 117872f11f3f | 4E52B837, `/F/Applications/N64Recomp-X-ZEL` (new folders) |
+| `vzel5` | Ocarina of Time 1.2 | 177d064477d6 | 4E52B837, `/F/Applications/N64Recomp-X-ZEL` (new folders; at `2d3b29d`, with the JPEG task; its title demo at OoT's own 20 fps in xemu) |
 | `vsm4` | Super Mario 64 | 3ea43f35bc49 | 4E52B0E2, `/F/Applications/N64Recomp-X-SM64` (new folders) |
 | `vbk4` | Banjo-Kazooie | b3f0c538d696 | 4E52E3F7, `/F/Applications/N64Recomp-X-BK` |
 | `vmk7` | Mario Kart 64 | 3ce0973d05e2 | 4E520DF7, `/F/Applications/N64Recomp-X-MK64` |
