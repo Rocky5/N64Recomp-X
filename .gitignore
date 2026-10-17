@@ -45,3 +45,4 @@ __pycache__/
 # agent worktrees, editors
 /.claude/
 .DS_Store
+build-sweep/

@@ -106,6 +106,12 @@ def _syms_path(pack):
     return pack.dir / cfg['input']['symbols_file_path']
 
 
+def BUILD_ROOT():
+    """where a game's build folder goes: build-xbox/, or N64RX_BUILD_ROOT (the library sweep's own,
+    so it does not build over a game being worked on)"""
+    return pathlib.Path(os.environ['N64RX_BUILD_ROOT']) if os.environ.get('N64RX_BUILD_ROOT') else ROOT / 'build-xbox'
+
+
 REFUSED = re.compile(r'Error recompiling (\S+)')
 
 
@@ -526,7 +532,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     learnt = learnmod.read(learn) if learn else None   # --learn: the console's learn.txt (learn.py)
     if analyze or pack is None or learnt is not None:
         base = pack
-        bdir = ROOT / 'build-xbox' / ((base.id + '-rom') if base else re.sub(r'[^a-z0-9]', '', rom.code.lower()))
+        bdir = BUILD_ROOT() / ((base.id + '-rom') if base else re.sub(r'[^a-z0-9]', '', rom.code.lower()))
         bdir.mkdir(parents=True, exist_ok=True)
         t0 = time.time()
         pack, ainfo = romonly.make(rom, bdir, base, learnt)
@@ -539,7 +545,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
                   f'functions named, in {time.time() - t0:.1f} s ({bdir / "analysis.txt"})')
     else:
         prog.note(f'{pack.title}: {rom.describe()}, {rom.order} byte order, SHA-1 known to the pack')
-        bdir = ROOT / 'build-xbox' / pack.id
+        bdir = BUILD_ROOT() / pack.id
     bdir.mkdir(parents=True, exist_ok=True)
     log = bdir / 'n64rx.log'
     log.write_text(f'n64rx {VERSION} build {rom.path} ({engines.host_summary()}, engine {eng.name})\n', encoding='utf-8')
