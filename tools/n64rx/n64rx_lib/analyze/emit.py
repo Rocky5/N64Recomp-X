@@ -282,9 +282,13 @@ def _table_elsewhere(a, rom, t, f):
     it does: there in the ROM, its first entry inside the function (else its
     analysis fails on the table: "Failed to determine size")"""
     import struct
-    for o in getattr(a, 'table_sources', []) + list(a.img.segments):   # write_syms' order
-        if not o.has(t):
-            continue
+    holders = [o for o in getattr(a, 'table_sources', []) + list(a.img.segments) if o.has(t)]   # write_syms' order
+    # the recompiler reads the first holder: only an RDRAM table section, or
+    # the one segment there is (overlays sharing the vram: Mario Party's
+    # tables came out of another overlay and its switches jumped wild)
+    if not holders or (len(holders) > 1 and not holders[0].name.startswith('rdram_')):
+        return False
+    for o in holders[:1]:
         r = o.rom + (t - o.vram)
         if r < 0 or r + 4 > len(rom):
             return False
