@@ -109,7 +109,8 @@ def _syms_path(pack):
 def BUILD_ROOT():
     """where a game's build folder goes: build-xbox/, or N64RX_BUILD_ROOT (the library sweep's own,
     so it does not build over a game being worked on)"""
-    return pathlib.Path(os.environ['N64RX_BUILD_ROOT']) if os.environ.get('N64RX_BUILD_ROOT') else ROOT / 'build-xbox'
+    root = os.environ.get('N64RX_BUILD_ROOT')   # relative: to the working directory, made absolute (N64Recomp runs elsewhere)
+    return pathlib.Path(root).resolve() if root else ROOT / 'build-xbox'
 
 
 REFUSED = re.compile(r'Error recompiling (\S+)')
