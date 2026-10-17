@@ -486,7 +486,25 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
     stop(st, "Interpreter: an instruction it does not run", pc, w);
 }
 
-static uint32_t fetch(uint8_t* rdram, uint32_t pc) { return (uint32_t)MEM_W(0, pc); }
+/* A KUSEG address is reached on the host at rdram + vaddr, where the TLB's
+ * pages are aliased and an unmapped one faults into the game's refill
+ * (tlb.c). For vaddr past 0x80000000 - rdram that lands in the Xbox
+ * kernel's own space, where an unmapped page may read as someone else's
+ * memory instead of faulting: GoldenEye's paged code at 0x7F0CF000
+ * fetched as garbage, a wild jump to 0x7F5C40EC. There the fetch goes
+ * through the game's TLB (a refill on a miss) to the KSEG0 alias.
+ * DIVERGES: none meant. -DXRC_FETCH_TLB=0: the host alias, as before. */
+#ifndef XRC_FETCH_TLB
+#define XRC_FETCH_TLB 1
+#endif
+uint32_t xrc_tlb_resolve(uint32_t vaddr, int store);   /* tlb.c */
+static uint32_t fetch(uint8_t* rdram, uint32_t pc) {
+    if (XRC_FETCH_TLB && (int32_t)pc >= 0 && (uintptr_t)rdram + pc >= 0x80000000u) {
+        uint32_t p = xrc_tlb_resolve(pc, 0);
+        if (p != ~0u && p < xrc_rdram_size) return (uint32_t)MEM_W(0, 0x80000000u | p);
+    }
+    return (uint32_t)MEM_W(0, pc);
+}
 
 /* each thread's last interpreted instruction and its registers: the crash
  * report's (trace.c), for the thread that crashed */

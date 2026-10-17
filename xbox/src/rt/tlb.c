@@ -198,6 +198,20 @@ int xrc_tlb_miss(uint32_t vaddr, int store) {
     return 1;
 }
 
+/* vaddr through the game's TLB, running its refill code and fault path on a
+ * miss as a host fault would; ~0 when nothing maps it (interp.c's fetch) */
+uint32_t xrc_tlb_resolve(uint32_t vaddr, int store) {
+    uint32_t p = xrc_tlb_to_phys(vaddr);
+    int i;
+    for (i = 0; p == ~0u && i < 8; i++) {
+        if (!xrc_interp_refill(vaddr, store) && !xu_fault_wait(vaddr, store)) break;
+        p = xrc_tlb_to_phys(vaddr);
+        if (p == ~0u && !xu_fault_wait(vaddr, store)) break;   /* the refill wrote an invalid entry: the fault path loads it */
+        p = xrc_tlb_to_phys(vaddr);
+    }
+    return p;
+}
+
 /* XRC_HIGH_TLB (recomp.h): an address at 0xC0000000 and up, through the
  * game's TLB, as its KSEG0 alias; a miss runs the game's refill code and
  * fault path as a host fault would */

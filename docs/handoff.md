@@ -1120,3 +1120,17 @@ Lakitu text box drawn right (test build, scripted); the release booted
 35 s, no crash. To check: the intro, the castle grounds, a course, fps,
 sound, the EEPROM save.
 
+**GoldenEye, the same day (xemu, test build, its `--learn` logs).** Its
+main code runs at 0x7000xxxx through the TLB (all interpreted, "hand-written
+code": the analysis has it at 0x80000400) and its game code is paged in at
+0x7F000000 by its own refill (`tlb_resolve.s` in the decomp: an invalid
+entry first, then its fault path loads the page from the ROM). The wild
+jump to 0x7F5C40EC was the host side: a KUSEG address is reached at rdram +
+vaddr, and from about 0x7C5CF000 up that is the Xbox kernel's space, where
+the unmapped page 0x7F0CF000 read as someone else's memory instead of
+faulting into a miss. The interpreter's fetch there now goes through the
+game's TLB (`XRC_FETCH_TLB`): the miss at 0x7F0CFF30 is taken, then the
+game's fault path stalls (its fault thread shows stopped; open). Not yet:
+the same for the interpreter's and the generated code's data accesses in
+that band, and recompiling the 0x7000xxxx code at its own addresses.
+
