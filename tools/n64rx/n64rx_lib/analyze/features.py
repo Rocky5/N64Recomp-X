@@ -159,7 +159,9 @@ def features(img, f):
                     ft.gptr_src[(gload[i.rs], i.simm)] = src
             elif i.rs in const:
                 a = (const[i.rs] + i.simm) & 0xFFFFFFFF
-                if 0xA4000000 <= a < 0xA4900000 or 0xBFC00000 <= a < 0xBFD00000:
+                if 0xA4000000 <= a < 0xA4900000 or 0xBFC00000 <= a < 0xBFD00000 or 0xBFF00000 <= a < 0xC0000000:
+                    # (0xBFF00000: a development board's ID, "KMC" on Kyoto Microcomputer's; Mario Party 3 probes
+                    # it at boot. The interpreter's model reads 0 there, as a retail cartridge bus does)
                     _mark(ft.hw, a & 0x1FFFFFFF, rw)
                 elif 0x80000000 <= a < 0x80800000:
                     _mark(ft.globals_, a, rw)

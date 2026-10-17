@@ -18,6 +18,7 @@ The newest state first; the entries below are the record, oldest first.
 | Forsaken 64 | the ROM alone | builds and boots (aspMain), stops later | - |
 | Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (32 -> 53 MB) | builds; the 53 MB ROM through the page cache inside the budget; stopped at its RAM-size probe (KSEG1, since modelled) | - |
 | Mario Party | the ROM alone | the Hudson logo, the intro's 3D scene, the story text at ~58 fps; audio tasks run (53 a second); its processes run as coroutines (`strand.c`) | - |
+| Mario Party 2 / 3 | the ROM alone | 60 fps from boot (intro, menus); 2: the audio thread dies after a restart (open) | - |
 | Dr. Mario 64 | the ROM alone | links, boots; its gzip main segment is not found | - |
 | the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s2: 143 build, 17 present frames; s4 (all of today's work): see `docs/analyzer.md` | - |
 
@@ -920,3 +921,43 @@ Verified how: xemu, slot 9, test builds, shots at 8, 15, 25, 35 and 45 s;
 host tests. Not verified: past the story text (no input scripted beyond
 START/A), the sound itself (tasks run; not listened to), a console.
 `[MEM]`/`[CLOCK]`: not recorded (xemu test builds).
+
+### Threads stopped by others, overlay prechecks, the sweep worktree (2026-10-17, xemu)
+
+- **osStopThread / osDestroyThread of another thread** stop it at its next
+  block (`XRC_THREAD_HALT`). Mario Party 2 (60 fps, the intro and menus)
+  destroys its audio thread and makes it again; the old one had run on.
+  Its audio thread now restarts, then dies later on a stale message
+  pointer (open: one run in two; the game keeps presenting). Pokémon Snap,
+  Mario Kart 64 and Super Mario 64 as before.
+- **The precheck missed every overlay function**: it looked them up by
+  vram while `live` keys them with their ROM offset. Mario Party 3's
+  boards call where no section has a function; N64Recomp refused them one
+  a run (400 runs) and n64rx died on a missing `funcs.h`. Now 1639 are
+  interpreted up front and it builds; the run limit ends in an error that
+  says what to do. Its boot probes a development board at `0xBFF00000`
+  ("KMC"); such a function now runs interpreted and reads 0, as on a
+  retail N64. Mario Party 3 then presents 3377 frames in 35 s at 59 fps.
+- **The library sweep runs from a git worktree** pinned to a commit
+  (`git worktree add --detach ../N64Recomp-X-sweep <commit>`, then
+  `git submodule update --init tools/recomp` there): s6 was built from the
+  working tree while it changed and lost 30 games to half-made states
+  (Ridge Racer 64, Earthworm Jim 3D, Tom and Jerry, Hey You Pikachu draw
+  again on the committed code). Without the submodule n64rx wrote a config
+  N64Recomp refused; it now stops and says to fetch it.
+- **GoldenEye** (open): with the learning rounds it boots into
+  `bossInitMainthreadData` (interpreted: it calls the paged `0x7F` code);
+  the crashing thread's last entry is the safety net at `0x7F0CFF30`
+  (never captured), and from there an untraced jump reaches `0x7F5C40EC`,
+  past the game segment. The trace now keeps 4096 entries and lists the
+  crashing thread's own.
+- **Castlevania** (open): 27 frames, then garbage after the dispatch
+  `eret` in its own `__osException` run for a TLB miss.
+- **Donkey Kong 64** (open): ~790 frames to 42 s, then the main thread runs
+  on inside recompiled `func_8063A968` (called from captured code) without
+  blocking.
+- xemu slot 10 stalls reading the ROM at boot now and then (Mario Party 2
+  on slot 9 once, Mario Party 3 twice on 10); the same XBE boots on
+  another slot. An emulator matter.
+
+Not verified on a console. `[MEM]`/`[CLOCK]`: not recorded (xemu).
