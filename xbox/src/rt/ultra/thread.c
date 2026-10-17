@@ -633,6 +633,36 @@ uint32_t xu_self_sp(void) {
  * 10 s). The addresses come from n64rx, which finds __osException's fault
  * path in the ROM (-DXRC_FAULTED_THREAD, -DXRC_TH_BADVADDR). 0: no fault
  * thread, or it never let the thread go. */
+/* A game's fault thread may let the faulted thread go by putting it on its
+ * own run queue (GoldenEye's crashMain: __osEnqueueThread(&__osRunQueue)
+ * and a yield), for libultra's dispatcher to pop. The runtime runs threads
+ * itself and never pops it: the second fault queued the thread after
+ * itself, and the third enqueue walked the cycle for good. It is taken off
+ * here, as the dispatcher would. The queue is the game's __osRunQueue
+ * (XRC_OS_RUNQUEUE, or 12 bytes below __osFaultedThread as libultra lays
+ * them out, behind __osThreadTail: checked by its -1 priority).
+ * -DXRC_FAULT_RUNQ=0: left as it is. */
+#ifndef XRC_FAULT_RUNQ
+#define XRC_FAULT_RUNQ 1
+#endif
+#if defined(XRC_FAULTED_THREAD) && defined(XRC_TH_BADVADDR)
+static void runq_pop(uint32_t t) {
+#ifdef XRC_OS_RUNQUEUE
+    uint32_t q = XRC_OS_RUNQUEUE;
+#else
+    uint32_t q = (uint32_t)(XRC_FAULTED_THREAD) - 12u;
+    if (rd32(q - 4) != 0xFFFFFFFFu) return;   /* not __osThreadTail's priority: another layout */
+#endif
+    uint32_t prev = q, cur;
+    int n;
+    if (!XRC_FAULT_RUNQ) return;
+    for (n = 0; n < 64 && (cur = rd32(prev)) != 0 && (int32_t)rd32(cur + TH_PRIORITY) != -1; n++) {
+        if (cur == t) wr32(prev, rd32(cur + TH_NEXT));   /* unlinked; prev stays */
+        else prev = cur + TH_NEXT;
+    }
+}
+#endif
+
 int xu_fault_wait(uint32_t vaddr, int store) {
 #if defined(XRC_FAULTED_THREAD) && defined(XRC_TH_BADVADDR)
     static unsigned s_faults;
@@ -662,6 +692,7 @@ int xu_fault_wait(uint32_t vaddr, int store) {
     }
     for (i = 0; i < n; i++) xu_lock();
     me->wait = 0;
+    if (ms < 10000) runq_pop(t);
     wr16(t + TH_STATE, OS_STATE_RUNNING);
     wr16(t + TH_FLAGS, 0);
     running_is(t);

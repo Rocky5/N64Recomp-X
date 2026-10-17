@@ -27,7 +27,8 @@ console. Everything since `vmk4`/`vsnap1` is xemu only.
 | Donkey Kong 64 | the ROM alone + `--learn` rounds | its file screen ("GAME 1"), drawing on (the IPL3 copy at RDRAM 4); audio stops once graphics start (open) | - |
 | Diddy Kong Racing, Wave Race 64, WWF No Mercy, Dr. Mario 64 | the ROM alone | present frames for the whole 30 s sweep run (DKR's microcode not decoded: grey boxes) | - |
 | Paper Mario | the ROM alone + `--learn` rounds | past its obfuscated boot (KSEG2 DMA), 321 frames, then a map's textures (open) | - |
-| GoldenEye, Conker, Jet Force Gemini, Castlevania | the ROM alone + `--learn` rounds | boot and stop (the entries below; GoldenEye's paged code now misses properly) | - |
+| GoldenEye | the ROM alone + `--learn` rounds | its paged code faults in; draws (1047 frames in 55 s, ~14 fps, main code interpreted) | - |
+| Conker, Jet Force Gemini, Castlevania | the ROM alone + `--learn` rounds | boot and stop (the entries below) | - |
 | the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s7: 245 build, 139 present frames, 121 still presenting at 30 s (`docs/analyzer.md`) | - |
 
 **What exists** (each piece with host tests and a kill switch; the entries
@@ -1264,4 +1265,16 @@ documented behaviour (read, not copied: `LICENSE.md`), host-tested on flat
 macroblocks. The type-4 task OoT runs at boot (a 32-byte microcode, not
 the decoder) is rejected and logged. Not yet seen on a pre-rendered room:
 the scripts do not reach one.
+
+**GoldenEye draws (xemu, test build, its `--learn` logs).** After the
+fetch fix its third page fault stalled: its fault thread (`crashMain` in
+the decomp's `crash.c`) loads the page, then puts the faulted thread on
+`__osRunQueue` with `__osEnqueueThread` and yields, for libultra's
+dispatcher to pop. The runtime never popped it: the second fault queued
+thread 3 after itself, the third enqueue walked that cycle for good. The
+thread is now taken off the game's run queue when the fault is let go
+(`XRC_FAULT_RUNQ`; the queue's address from libultra's layout, 12 bytes
+below `__osFaultedThread`, matching the decomp's 0x80027728). It now
+presents 1047 frames in 55 s (0 before), ~14 fps in xemu with its main
+code all interpreted.
 
