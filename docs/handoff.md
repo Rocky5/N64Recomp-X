@@ -1040,3 +1040,11 @@ from the console results above.
   18 game frames, then back; two levels and R released give the boost.
   The port maps full tilt to 80 after its own 20 % radial dead zone.
 
+**On the console (deployed to red 2026-10-17, the code of `5803b8b`,
+ThinLTO release, the ROM inside; each booted 40 s in xemu first):**
+
+| build | game | xbe sha1 | title ID / folder | what to check |
+|---|---|---|---|---|
+| `vmp2` | Mario Party | e71ad68e37d5 | 4E52376A, `/F/Applications/N64Recomp-X-MP` | the flicker gone; the intro and a board at an even 30 fps |
+| `vbk2` | Banjo-Kazooie | 175d519fb4ac | 4E52E3F7, `/F/Applications/N64Recomp-X-BK` | no near/far clipping; the sky drawn in Spiral Mountain |
+
