@@ -212,6 +212,8 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_ROM_CACHE_720P_MB=<n>` | 12 | the same when the boot predicts 720p |
 | `-DXHW_ROM_IN_XBE=0` | 1 | ignore `default.xbe`'s `$ROM` section: the ROM is looked for next to the XBE (the build-side switch is `n64rx build --rom-beside`, which leaves the section out and writes the file) |
 | `-DXRC_TLB_MISS=0` | 1 | an access to an unmapped KUSEG page is a crash, as before; otherwise the crash handler's fixup runs the game's own exception code (its vector at 0x80000000, or `__osException`) and libultra's fault path, then retries (`tlb.c`) |
+| `-DXRC_RCP_DEFER=0` | 1 | a task's SP/DP done events go out inside `osSpTaskStartGo`, as before; otherwise when the starting thread next blocks, or at the next retrace |
+| `-DXRC_DP_ON_FULLSYNC=0` | 1 | every graphics task raises DP done, as before; otherwise only one whose display list issued a FullSync, as the RDP does (Blast Corps' scheduler asserts on a DP done with no RDP task) |
 | `-DXRC_ERET_RETURN=0` | 1 | an `eret` the interpreter meets outside the game's exception code stops the game, as before; otherwise it returns from the interpreted function (a game's own unnamed libultra dispatching a thread; the sweep's commonest stop) |
 | `-DXRC_TLBWR_RANDOM=0` | 1 | `tlbwr` writes the entry at Wired, as before; otherwise Random counts down from 31 to Wired, one step a write (`interp.c`) |
 | `-DXRC_TLB=0` | 1 | the TLB's entries are kept (tlbp, tlbr, `osVirtualToPhysical` still see them) but nothing is aliased: a TLB-mapped access faults as before `tlb.c` |

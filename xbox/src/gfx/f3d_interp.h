@@ -10,6 +10,7 @@
 /* One graphics task: interpret the display list at this N64 address and
  * present the frame. */
 void f3d_run(uint32_t dl);
+int f3d_last_fullsync(void);   /* the last f3d_run's list had a G_RDPFULLSYNC */
 /* The microcode the next f3d_run starts in (ucode.h; NULL: Fast3D). A
  * G_LOAD_UCODE in the list switches it for the rest of that task. */
 void f3d_set_ucode(const GfxUcode* uc);

@@ -35,7 +35,9 @@ void xrc_gfx_boot(void) {
 
 /* DIVERGES: a task that comes while the BACK menu is open waits for it to
  * close (the game is frozen under the menu; settings_menu.c) */
+static int s_dp = 1;
 void xrc_gfx_task(uint32_t task) {
+    s_dp = 1;
     if (!s_up) return;
     xrc_gfx_lock();
     while (xrc_menu_open()) {
@@ -45,8 +47,12 @@ void xrc_gfx_task(uint32_t task) {
     }
     f3d_set_ucode(gfx_ucode_at(rd32(task + TK_UCODE_DATA), rd32(task + TK_UCODE_DATA_SIZE)));
     f3d_run(rd32(task + TK_DATA_PTR));
+    s_dp = f3d_last_fullsync();
     xrc_gfx_unlock();
 }
+
+/* sp.c: whether the task just run raises DP done (its list's FullSync) */
+int xrc_gfx_task_dp(void) { return !s_up || s_dp; }
 
 /* the interpreter's hooks: no game state known (no title fit), no port
  * drawing of our own at the end of a frame yet (the BACK menu, M2) */

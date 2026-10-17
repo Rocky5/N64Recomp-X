@@ -160,6 +160,7 @@ static void wake_all(uint32_t key) {
  * thread switch did on the N64) and taken back after */
 static void sleep_on(Thr* me, uint32_t key) {
     int n = s_depth, i;
+    xu_rcp_flush();   /* sp.c: a task this thread started is done now */
     me->wait = key;
     running_next(me);
     for (i = 0; i < n; i++) xu_unlock();

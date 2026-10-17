@@ -31,6 +31,9 @@ __attribute__((weak)) void xrc_gfx_task(uint32_t task) {
                  (unsigned)rd32(task + TK_DATA_SIZE));
 }
 
+/* gfx.c: the task's list ended with a FullSync (weak: always, as before) */
+__attribute__((weak)) int xrc_gfx_task_dp(void) { return 1; }
+
 __attribute__((weak)) void xrc_audio_task(uint32_t task) {
     if (s_aud <= 1)
         xhw_logf("[SP] audio task %u: ucode %08x, data %08x (%u bytes)", s_aud, (unsigned)rd32(task + TK_UCODE),
@@ -42,19 +45,59 @@ ULTRA(osSpTaskLoad) {
     (void)ctx;
 }
 
+/* A task runs to its end inside osSpTaskStartGo; its done events wait until
+ * the thread that started it next blocks (or the next retrace): on the N64
+ * the RCP takes milliseconds, and code that starts a task outside the
+ * scheduler's thread records it after the call (Blast Corps' scheduler
+ * then took a DP done with no task recorded and asserted). The events go
+ * out together and in order: SP done ahead of DP done.
+ * Kill switch: -DXRC_RCP_DEFER=0 (posted inside the call, as before). */
+#ifndef XRC_DP_ON_FULLSYNC
+#define XRC_DP_ON_FULLSYNC 1
+#endif
+#ifndef XRC_RCP_DEFER
+#define XRC_RCP_DEFER 1
+#endif
+static volatile unsigned s_pend_sp, s_pend_dp;
+
+static void post_done(int dp) {
+    if (dp) xu_post_event_first(OS_EVENT_DP);   /* jammed in reverse: SP done is read first */
+    xu_post_event_first(OS_EVENT_SP);
+}
+
+/* under the lock (thread.c before a thread sleeps, vi.c every retrace) */
+void xu_rcp_flush(void) {
+    while (s_pend_sp) {
+        int dp = s_pend_dp != 0;
+        s_pend_sp--;
+        if (dp) s_pend_dp--;
+        post_done(dp);
+    }
+}
+
 ULTRA(osSpTaskStartGo) {
     uint32_t task = ARG(0), type = rd32(task + TK_TYPE);
+    int gfx = type == M_GFXTASK;
     (void)rdram;
-    if (type == M_GFXTASK) {
+    if (gfx) {
         s_gfx++;
         xrc_gfx_task(task);
-        xu_post_event_first(OS_EVENT_DP);   /* jammed in reverse: SP done is read first */
-        xu_post_event_first(OS_EVENT_SP);
+        /* DIVERGES from the runtime's old way: DP done only when the list ended
+         * with a FullSync, as the RDP raises it (Blast Corps' scheduler asserts
+         * on a DP done with no RDP task). -DXRC_DP_ON_FULLSYNC=0: always. */
+        if (XRC_DP_ON_FULLSYNC && !xrc_gfx_task_dp()) gfx = 0;
     } else {
         s_aud++;
         xrc_audio_task(task);
-        xu_post_event_first(OS_EVENT_SP);
     }
+    if (!XRC_RCP_DEFER) {
+        post_done(gfx);
+        return;
+    }
+    xu_lock();
+    s_pend_sp++;
+    if (gfx) s_pend_dp++;
+    xu_unlock();
 }
 
 ULTRA(osSpTaskYield) {

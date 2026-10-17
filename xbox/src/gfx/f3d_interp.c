@@ -526,6 +526,9 @@ static struct { uint32_t frame, addr, key; TexEntry* e; } s_memo[MEMO];
 #ifndef XGFX_TMEM_WITHIN
 #define XGFX_TMEM_WITHIN 1
 #endif
+/* the last display list ended with a FullSync (the RDP raises its interrupt
+ * there: a task without one gets no DP done) */
+static int s_fullsync;
 static void tex_miss(const char* why, int tidx);
 static void fb_touch(uint32_t addr, uint32_t bytes);
 static uint32_t s_cimg_w, s_cimg_siz, s_cimg_maxy;   /* the colour image's width and pixel size; the frame's lowest scissor row */
@@ -1691,7 +1694,10 @@ static void run_dl(const uint32_t* pc) {
                     DIRTY();
                 }
                 break;
-            case F3D_G_RDPLOADSYNC: case F3D_G_RDPPIPESYNC: case F3D_G_RDPTILESYNC: case F3D_G_RDPFULLSYNC:
+            case F3D_G_RDPFULLSYNC:
+                s_fullsync = 1;   /* the RDP's interrupt at the end: DP done (sp.c) */
+                break;
+            case F3D_G_RDPLOADSYNC: case F3D_G_RDPPIPESYNC: case F3D_G_RDPTILESYNC:
             case F3D_G_SPNOOP: case F3D_G_SETPRIMDEPTH: case F3D_G_SETCONVERT: case F3D_G_SETKEYR:
             case F3D_G_SETKEYGB: case F3D_G_CULLDL:
                 break;
@@ -2068,6 +2074,8 @@ static void fb_stage(void) {
     xgfx_tex_destroy(back);
 }
 
+int f3d_last_fullsync(void) { return s_fullsync; }
+
 void f3d_run(uint32_t dl) {
     uint64_t t0 = xhw_time_us();
     int i;
@@ -2094,6 +2102,7 @@ void f3d_run(uint32_t dl) {
     s_scissor[0] = s_scissor[1] = 0.0f; s_scissor[2] = N64_W; s_scissor[3] = N64_H;
     clip_rect_update();
     s_frame_no++;
+    s_fullsync = 0;
     s_trace = XGFX_TRACE_FRAME && s_frames == XGFX_TRACE_FRAME;
     DIRTY();
     run_dl((const uint32_t*)host(dl));

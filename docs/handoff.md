@@ -855,3 +855,16 @@ earlier pieces (osCicId, 64-bit registers):
 Not verified on a console. Next: the textures it misses; the variants of
 its overlays recompiled instead of interpreted.
 
+### Blast Corps plays its attract demo (2026-10-17, xemu)
+
+From the ROM alone (`--learn`, 15 rounds): the Rare logo, then the attract
+demo at 50-56 fps in xemu (the ground, buildings, smoke, the intro text).
+It crashed on an assert in its own scheduler: a DP done with no RDP task.
+The runtime posted DP done for every graphics task, inside
+`osSpTaskStartGo`; now only for a list that ends with a FullSync, as the
+RDP raises it (`XRC_DP_ON_FULLSYNC`), and the done events wait until the
+starting thread blocks or the next retrace (`XRC_RCP_DEFER`). Mario Kart 64
+and Banjo-Kazooie run as before (xemu). Open: the intro text's glyphs come
+from the wrong rows of its font (T for G, L for Y): the renderer's T
+coordinates or loaded height for that texture. Not verified on a console.
+

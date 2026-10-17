@@ -44,6 +44,9 @@ static void vi_thread(void* arg) {
         xhw_wait_vblank();
         if (s_cur != s_next) s_cur = s_next;
         s_retrace++;
+        xu_lock();
+        xu_rcp_flush();   /* sp.c: any task's done events still held */
+        xu_unlock();
         mq = s_mq;
         xrc_menu_vi(s_retrace);
         xrc_video_vi(s_retrace);   /* the video-mode prompt: A, or the timeout (../video.c) */
