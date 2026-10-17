@@ -1240,3 +1240,18 @@ instruction word. Where that argument comes from (its handler table,
 (the name box textured since the tile wrap), audio (nead family, ~54 tasks
 a second, peak 16497), ~41 fps on the menus. First time looked at.
 
+**Staged for the console, the current set (red still off; supersedes every
+earlier staged build).** ThinLTO releases, ROM inside, each booted 25-35 s
+in xemu with no crash. All but `vmm1` at `521a389`; `vmm1` at `80a7fd5`
+(docs only after it).
+
+| build | game | xbe sha1 | title ID / folder |
+|---|---|---|---|
+| `vssb4` | Super Smash Bros. | d02ebd103ae7 | 4E520101, `/F/Applications/N64Recomp-X-SSB` |
+| `vzel4` | Ocarina of Time 1.2 | 117872f11f3f | 4E52B837, `/F/Applications/N64Recomp-X-ZEL` (new folders) |
+| `vsm4` | Super Mario 64 | 3ea43f35bc49 | 4E52B0E2, `/F/Applications/N64Recomp-X-SM64` (new folders) |
+| `vbk4` | Banjo-Kazooie | b3f0c538d696 | 4E52E3F7, `/F/Applications/N64Recomp-X-BK` |
+| `vmk7` | Mario Kart 64 | 3ce0973d05e2 | 4E520DF7, `/F/Applications/N64Recomp-X-MK64` |
+| `vmp3` | Mario Party | 3e59f743f4dc | 4E52376A, `/F/Applications/N64Recomp-X-MP` |
+| `vmm1` | Majora's Mask | ee9fd2560cda | 4E52510E, `/F/Applications/N64Recomp-X-MM` (new folders) |
+
