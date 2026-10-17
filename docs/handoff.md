@@ -1255,3 +1255,13 @@ in xemu with no crash. All but `vmm1` at `521a389`; `vmm1` at `80a7fd5`
 | `vmp3` | Mario Party | 3e59f743f4dc | 4E52376A, `/F/Applications/N64Recomp-X-MP` |
 | `vmm1` | Majora's Mask | ee9fd2560cda | 4E52510E, `/F/Applications/N64Recomp-X-MM` (new folders) |
 
+**Ocarina of Time's JPEG task (its pre-rendered room backgrounds:
+Hyrule Market, the shops).** From the decomp's `z_jpeg.c`: the CPU
+Huffman-decodes four macroblocks (4:2:0, six 8x8 blocks, 0x300 bytes each)
+into RDRAM and an `M_NJPEGTASK` turns each into 16x16 RGBA5551 in place.
+`jpeg.c` does that task (`XRC_JPEG`), its numbers from the HLE plugin's
+documented behaviour (read, not copied: `LICENSE.md`), host-tested on flat
+macroblocks. The type-4 task OoT runs at boot (a 32-byte microcode, not
+the decoder) is rejected and logged. Not yet seen on a pre-rendered room:
+the scripts do not reach one.
+

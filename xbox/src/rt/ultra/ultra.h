@@ -98,7 +98,7 @@ enum {
     OS_EVENT_PI, OS_EVENT_DP, OS_EVENT_CPU_BREAK, OS_EVENT_SP_BREAK, OS_EVENT_FAULT, OS_EVENT_THREADSTATUS,
     OS_EVENT_PRENMI, OS_NUM_EVENTS
 };
-enum { M_GFXTASK = 1, M_AUDTASK = 2 };
+enum { M_GFXTASK = 1, M_AUDTASK = 2, M_NJPEGTASK = 4 };
 
 /* ---- thread.c: the lock, threads, queues, events ---- */
 /* The one recursive lock that stands for libultra's interrupt mask: every

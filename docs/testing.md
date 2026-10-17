@@ -22,6 +22,7 @@ python tools/xbox/test_f3dex.py         # the display-list interpreter on a fake
 python tools/xbox/test_fbfx.py          # framebuffer readback's bookkeeping: colour-image slots, stale/hot marks, the RGBA5551/8888 conversion
 python tools/xbox/test_yaz0.py          # Yaz0 ROMs on a synthetic ROM: the decoder's every code path, the DMA table found by behaviour, files at their vrom, the table rewritten
 python tools/xbox/test_entry.py         # the analyser's entry-code shapes on hand-assembled entries (SDK, start-to-end + jal, empty clears, the stack and j/jal, refusals)
+python tools/xbox/test_jpeg.py          # the JPEG decoder task: flat macroblocks give the microcode's colours
 python tools/xbox/test_analyze.py       # the analyser against every decomp + ROM pair present (skips without ROMs: CI); N64RX_ROMS=<folder>
 ```
 
@@ -255,6 +256,7 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_SWAP_STALE=<n>` | 6 | retraces an open frame waits (no task, no swap to its buffer) before the VI thread presents it as it is (a game that draws once and waits) |
 | `-DXRC_IPL3_LEFT=0` | 1 | low RDRAM left zero at boot; otherwise the part of the ROM's IPL3 that copies itself to RDRAM 0 is put there, as the console leaves it (`boot.c`; Banjo-Kazooie's anti-tamper reads 0xA00001D8) |
 | `-DXRC_SP_BY_TYPE=0` | 1 | every task that is not graphics goes to the audio HLE, as before; otherwise only `M_AUDTASK` does, and another type (a JPEG or HVQ decoder) is logged once and not run (Ocarina of Time's JPEG task came first and silenced its audio) |
+| `-DXRC_JPEG=0` | 1 | an `M_NJPEGTASK` is not run; otherwise one whose data looks like Ocarina of Time's decoder task (mode 0 or 2, 1-16 macroblocks in RDRAM) is decoded in place (`jpeg.c`: its pre-rendered room backgrounds; host test `tools/xbox/test_jpeg.py`) |
 | `-DXRC_TLB_KSEG2=0` | 1 | the runtime's RDRAM helpers (DMA destinations, message queues, task fields) translate KUSEG only; otherwise KSEG2/3 too, through the game's TLB (Paper Mario DMAs its effects to 0xE0200000) |
 | `-DXRC_FETCH_TLB=0` | 1 | the interpreter fetches a KUSEG address at rdram + vaddr even where that lands in the Xbox kernel's space (vaddr ≥ 0x80000000 − rdram, about 0x7C5CF000); otherwise there it goes through the game's TLB, its refill and fault path (`xrc_tlb_resolve`), to the KSEG0 alias; the interpreter's loads and stores too, and those to KSEG2/3 |
 | `-DXRC_LOG_SP_STARTS=<n>` | unset | diagnosis: the first n SP task starts, through `osSpTaskStartGo` (`[SP] start`: type, task, N64 thread, retrace) or the register model (`[MMIO] SP start`). Test builds also report once (up to three times) when audio tasks stop for 300 retraces after running (`[OS] stall: audio tasks stopped`) |

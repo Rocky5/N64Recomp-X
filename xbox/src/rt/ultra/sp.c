@@ -104,6 +104,8 @@ int xu_rcp_flush(void* mine) {
     return n;
 }
 
+int xrc_jpeg_task(uint32_t task);   /* ../jpeg.c */
+
 #ifndef XRC_SP_BY_TYPE
 #define XRC_SP_BY_TYPE 1
 #endif
@@ -130,6 +132,8 @@ ULTRA(osSpTaskStartGo) {
     } else if (type == M_AUDTASK || !XRC_SP_BY_TYPE) {
         s_aud++;
         xrc_audio_task(task);
+    } else if (type == M_NJPEGTASK && xrc_jpeg_task(task)) {
+        /* ../jpeg.c: Ocarina of Time's JPEG decoder task, run */
     } else {
         /* DIVERGES: another kind of task (a JPEG or HVQ decoder) is not run;
          * its done events go out as for any task. It used to go to the audio

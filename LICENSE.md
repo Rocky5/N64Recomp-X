@@ -70,6 +70,10 @@ in this repository, and none is linked into anything it builds.
   functions each game needed stubbed or patched, read per game when its pack
   is made.
 - **Zelda64RecompSyms** (no licence file): the symbol-file format.
+- **mupen64plus-rsp-hle** (GPL-2.0): the JPEG decoder task's behaviour as
+  Ocarina of Time runs it (the order of dequantization, de-zigzag and the
+  inverse transform, the scale, the colour constants and clamps), written
+  up in prose and implemented here (`xbox/src/rt/jpeg.c`).
 
 ## 4. Game code and game data: not licensed, not here
 
