@@ -79,11 +79,14 @@ static void alias(Ent* e, unsigned idx) {
 #endif
         if (ok) e->host[k] = host, e->bytes[k] = sz;
         if (XRC_TLB && host && va < 0x80000000u) xrc_learn_kuseg(va, ok);
+        if (va >= 0xC0000000u) xrc_learn_kuseg(va, 0);         /* n64rx: XRC_HIGH_TLB on the next build */
         if (s_logged < 24) {
             s_logged++;
             xhw_logf("[TLB] %u: %08x-%08x -> %08x%s", idx, (unsigned)va, (unsigned)(va + sz - 1), (unsigned)pa,
-                     ok ? "" : XRC_TLB ? " (not aliased: the host range is in use or outside RDRAM)"
-                                       : " (not aliased: -DXRC_TLB=0)");
+                     ok ? "" : va >= 0xC0000000u ? (XRC_HIGH_TLB ? " (KSEG2/3: translated, XRC_HIGH_TLB)"
+                                                                 : " (KSEG2/3: the next --learn build translates it)")
+                     : XRC_TLB ? " (not aliased: the host range is in use or outside RDRAM)"
+                               : " (not aliased: -DXRC_TLB=0)");
         }
     }
 }
@@ -193,6 +196,20 @@ int xrc_tlb_miss(uint32_t vaddr, int store) {
                                   how == 3 ? "the fault thread and the game's exception code" : how == 2 ? "the fault thread"
                                   : how == 1 ? "the game's exception code" : "another thread");
     return 1;
+}
+
+/* XRC_HIGH_TLB (recomp.h): an address at 0xC0000000 and up, through the
+ * game's TLB, as its KSEG0 alias; a miss runs the game's refill code and
+ * fault path as a host fault would */
+uint32_t xrc_high_addr(uint32_t a) {
+    uint32_t p = xrc_tlb_to_phys(a);
+    int i;
+    for (i = 0; p == ~0u && i < 8; i++) {
+        if (!xrc_interp_refill(a, 0) && !xu_fault_wait(a, 0)) break;
+        p = xrc_tlb_to_phys(a);
+    }
+    if (p == ~0u || p >= xrc_rdram_size) xrc_fatal_vram("An address the game's TLB does not map", a, p);
+    return 0x80000000u | p;
 }
 
 static int fixup(uint32_t host, int write) {

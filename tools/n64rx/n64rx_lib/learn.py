@@ -31,9 +31,10 @@ class Learnt:
     dmas: list = field(default_factory=list)    # (rom offset, ram, size), file order
     code: dict = field(default_factory=dict)    # block vram -> its bytes, from RDRAM (no ROM DMA put them there)
     kuseg: dict = field(default_factory=dict)   # 1 MB KUSEG regions the TLB mapped -> 1 if the host could not alias one
+    high: set = field(default_factory=set)      # 1 MB KSEG2/3 regions the TLB mapped (the host never can: XRC_HIGH_TLB)
 
     def __bool__(self):
-        return bool(self.funcs or self.dmas or self.code or self.kuseg)
+        return bool(self.funcs or self.dmas or self.code or self.kuseg or self.high)
 
 
 def _code_records(data, out):
@@ -87,6 +88,8 @@ def read(paths):
                 out.funcs[x] = (max(n, y), c or (int(z, 16) if z else 0))
             elif kind == 'kuseg' and x < 0x80000000:
                 out.kuseg[x & ~0xFFFFF] = out.kuseg.get(x & ~0xFFFFF, 0) | (y & 1)
+            elif kind == 'kuseg' and x >= 0xC0000000:
+                out.high.add(x & ~0xFFFFF)
             elif kind == 'dma' and z and 0 < int(z, 16) <= 0x800000:
                 d = (x, (y & 0x1FFFFFFF) | 0x80000000, int(z, 16))
                 if d not in out.dmas:
@@ -253,6 +256,17 @@ def extend_live(a, live, starts, nm, replaced):
     a.notes.append(f'learnt on the console: {len(starts)} functions, {len(live) - before} of them (with what they '
                    f'call) live only through it')
     return live
+
+
+def high_tlb(learnt):
+    """-DXRC_HIGH_TLB=1 when the game mapped KSEG2/3 (Paper Mario's effects at
+    0xE0200000): rdram + vaddr is the Xbox kernel's system space there, so
+    the generated code translates such addresses through the game's TLB
+    (recomp.h XRC_ADDR, rt/tlb.c). N64RX_HIGH_TLB=0/1 overrides."""
+    env = os.environ.get('N64RX_HIGH_TLB')
+    if env is not None:
+        return ['-DXRC_HIGH_TLB=1'] if env == '1' else []
+    return ['-DXRC_HIGH_TLB=1'] if learnt and learnt.high else []
 
 
 def rdram_user(learnt):

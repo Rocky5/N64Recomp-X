@@ -103,5 +103,13 @@ with tempfile.TemporaryDirectory() as d:
     t = (g / 'funcs_0.c').read_text(encoding='utf-8')
     check('    XRC_SETJMP(rdram, ctx);\n' in t and 'n64_setjmp_x(rdram, ctx);' in t, 'the call made XRC_SETJMP')
 
+# a KSEG2/3 TLB mapping on the console (Paper Mario's effects): the next build translates it (XRC_HIGH_TLB)
+with tempfile.TemporaryDirectory() as d:
+    lg = pathlib.Path(d) / 'run.log'
+    lg.write_text('[LEARN] kuseg e0200000 1\n[LEARN] kuseg 7f000000 0\n', encoding='utf-8')
+    lt = learn.read([lg])
+    check(lt.high == {0xE0200000} and 0x7F000000 in lt.kuseg, 'kuseg lines: KSEG2/3 apart from KUSEG')
+    check(learn.high_tlb(lt) == ['-DXRC_HIGH_TLB=1'] and learn.high_tlb(learn.Learnt()) == [], 'XRC_HIGH_TLB from them')
+
 print('test_precheck: ' + ('ok' if not fails else f'{fails} failed'))
 sys.exit(1 if fails else 0)

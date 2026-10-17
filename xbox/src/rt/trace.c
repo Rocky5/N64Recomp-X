@@ -63,4 +63,20 @@ void xrc_trace_dump(void) {
     }
 }
 
+/* a thread's own last n entries, oldest first (the stall report's, per N64 thread) */
+void xrc_trace_thread(void* thread, unsigned n);
+void xrc_trace_thread(void* thread, unsigned n) {
+    unsigned k, m = 0, idx[64], end = s_n, lim = end > RING ? end - RING : 0;
+    if (n > 64) n = 64;
+    for (k = end; k > lim && m < n; k--) {
+        unsigned i = (k - 1) & (RING - 1);
+        if (s_thread[i] == thread) idx[m++] = i;
+    }
+    while (m--) {
+        unsigned i = idx[m];
+        if (s_name[i]) xhw_logf("[TRACE]       %s", s_name[i]);
+        else if (s_vram[i]) xhw_logf("[TRACE]       %08x, interpreted", (unsigned)s_vram[i]);
+    }
+}
+
 void xrc_trace_init(void) { xhw_crash_set_extra(crash_report); }

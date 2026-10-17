@@ -956,6 +956,17 @@ START/A), the sound itself (tasks run; not listened to), a console.
 - **Donkey Kong 64** (open): ~790 frames to 42 s, then the main thread runs
   on inside recompiled `func_8063A968` (called from captured code) without
   blocking.
+- **Paper Mario** (open): one frame, then the main thread stopped in
+  `load_engine_data`: its effects run at `0xE0200000` through the TLB,
+  and KSEG2/3 cannot be aliased on the host (the kernel's system space).
+  Now the runtime logs such a mapping and the next `--learn` build sets
+  `XRC_HIGH_TLB`: generated code translates addresses at 0xC0000000 and up
+  through the game's TLB (one compare a memory access). With it the boot
+  goes further and crashes in the copy-protection chain: code captured
+  at `0x80200000` (`create_audio_system_obfuscated`, `load_obfuscation_shims`:
+  a hash over ROM words read through the PI sets a jump target) runs off the
+  end of a function and stores to address 0. Its flash code is not named
+  either (the runtime has `osFlash*`; no analyser rule yet).
 - xemu slot 10 stalls reading the ROM at boot now and then (Mario Party 2
   on slot 9 once, Mario Party 3 twice on 10); the same XBE boots on
   another slot. An emulator matter.

@@ -48,6 +48,9 @@
 #ifndef XRC_MEM_MASK
 #define XRC_MEM_MASK 0
 #endif
+#ifndef XRC_HIGH_TLB
+#define XRC_HIGH_TLB 0
+#endif
 #ifndef XRC_CHECKS
 #define XRC_CHECKS 0
 #endif
@@ -115,6 +118,13 @@ typedef uint64_t gpr;
 /* ---- memory: the RDRAM window (PLAN.md 3.2.1) ---- */
 #if XRC_MEM_MASK
 #define XRC_ADDR(a) (((uint32_t)(a) & 0x1FFFFFFFu) | 0x80000000u)
+#elif XRC_HIGH_TLB
+/* a game that maps KSEG2/3 through its TLB (n64rx learns it: Paper Mario's
+ * effects at 0xE0200000): rdram + vaddr is the Xbox kernel's system space
+ * there, so such an address goes through the game's TLB to its KSEG0 alias
+ * (rt/tlb.c). One compare a access, taken rarely. */
+uint32_t xrc_high_addr(uint32_t a);
+#define XRC_ADDR(a) (__builtin_expect((uint32_t)(a) >= 0xC0000000u, 0) ? xrc_high_addr((uint32_t)(a)) : (uint32_t)(a))
 #else
 #define XRC_ADDR(a) ((uint32_t)(a))
 #endif
