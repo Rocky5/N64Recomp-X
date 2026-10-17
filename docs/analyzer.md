@@ -322,16 +322,19 @@ precheck (Mario Party 3 builds), XRC_HIGH_TLB, the controller query names
   the console checks the inflated image's SHA-1. Other compressed code
   (Dr. Mario 64's gzip main segment, Rare's) is captured from RDRAM as it
   runs (the learning loop, step 4).
-- Overlays that share a vram (Paper Mario's maps, battles, partners; Pokémon
-  Snap's levels): names collide (`func_<vram>`) and the function table maps
-  a vram to one function; tracking which overlay is loaded (PLAN.md §3.4,
-  M5) is the next step.
+- Overlays that share a vram are kept apart by key and switched on their
+  DMA (below); a jal from one into an address no section has a function
+  at is interpreted up front (the precheck, by key since 2026-10-17:
+  Mario Party 3).
 - libultra built by GCC (Paper Mario) and the later 2.0I/2.0J layouts: many
-  rules are IDO-shaped; Paper Mario misses `osContInit`, `osSetEventMesg`,
-  `osEPiStartDma`, `osSpTaskLoad`, the Flash and Pfs families.
+  rules are IDO-shaped. Paper Mario now gets 70 names right and none wrong,
+  but `osSpTaskLoad`, the `osFlash*` family (no rule yet: the runtime has
+  them) and the Pfs family stay the game's own. A rule that depends on
+  another name must come after it (osContInit before the read/query split).
 - The TLB: mapped KUSEG pages are aliased in the Xbox page tables
-  (`xhw_alias.c`, `rt/tlb.c`; Super Mario 64's goddard dynlists); code
-  linked at TLB addresses, KSEG2/3 and the ASID are not handled.
+  (`xhw_alias.c`, `rt/tlb.c`); a miss runs the game's exception code and
+  fault thread; KSEG2/3 goes through the TLB in the generated code when
+  learnt (`XRC_HIGH_TLB`). The ASID is not handled.
 - Microcode families: graphics Fast3D, F3DEX, F3DEX2 (S2DEX's own commands
   skipped; `docs/renderer.md`). Audio: `aspMain`, the nead family (Mario
   Kart 64, the Zelda microcode) and `n_aspMain` are recognised at run time

@@ -33,7 +33,9 @@ xbox/src/gfx/        the display-list interpreter (game triple): Wings64-X's Fas
 xbox/src/rt/         the runtime (game triple): boot, settings, settings_menu (the BACK menu, the Paks
                      page), video (the probation), audio (the registry, the AI), gfx, mem (the RDRAM
                      window), ovl (the function table), interp (the MIPS interpreter), learn (the safety
-                     net, learn.txt), tlb, hooks, nogame/
+                     net, code capture, the learn lines), guard (captured code checked against RDRAM),
+                     tlb (the game's TLB, misses, KSEG2/3), mmio (the register model), strand (a game's
+                     setjmp/longjmp as coroutines), trace (crash and stall traces), hooks, nogame/
 xbox/src/rt/ultra/   libultra's surface: thread, time, vi, pi (ROM reads, domain 2), si (pads, the PIF,
                      paks), sp, ai, misc, extra (osEPi*, motor, Flash, probes), save + savedev + pfs
                      (every save type), more2 (the TLB family, __osEnqueueAndYield), more3 (internals
@@ -128,8 +130,29 @@ docs/look/           baseline shots: the loading screen (xemu, STILL); the BACK 
   table at the game's addresses (`gen/xrc_interp.c`'s ultra table), so
   interpreted code calling it by address reaches the replacement.
 - Graphics and audio tasks run on the calling thread (`sp.c`): the
-  interpreter for graphics, `asp_hle` for audio; their done events are put
-  ahead of retraces already queued.
+  interpreter for graphics, `asp_hle` for audio. Their done events are held
+  for the thread that started the task and go out (ahead of retraces already
+  queued) when it next blocks, or at a retrace once it is blocked or two
+  retraces on; DP done only for a list that ended with a FullSync
+  (`docs/decisions.md`: "A task's done events belong to its thread").
+- Threads (`ultra/thread.c`): one kernel thread per N64 thread; a blocking
+  call sleeps on the thread's event under the lock. osStopThread /
+  osDestroyThread of another thread stop it at its next block; created and
+  started again, it starts over at its entry. A game's own setjmp/longjmp
+  (Mario Party's processes) run as coroutines (`strand.c`): each context a
+  host thread of its own, the same N64 thread to the runtime, one running
+  at a time; n64rx turns each call to setjmp into a host `__builtin_setjmp`
+  in the caller (`XRC_SETJMP`).
+- Code the TLB maps: a miss (a fault at a KUSEG host address) runs the
+  game's own refill vector or `__osException` in the interpreter, then
+  libultra's fault path (the game's fault thread pages it in); KSEG2/3
+  (Paper Mario's 0xE0200000) cannot be aliased on the host, so a game that
+  maps it is built with `XRC_HIGH_TLB` (learnt): `XRC_ADDR` sends addresses
+  at 0xC0000000 and up through the TLB.
+- Code captured from RDRAM (`learn.c`, the `--learn` rounds) is
+  recompiled with a hash of the bytes it came from (`guard.c`): a function
+  whose RAM now holds another overlay runs interpreted and is captured
+  again.
 - The audio microcode registry (`audio.c` at the first task,
   `asp_hle_identify` in `xbox/src/hw/asp_abis.inc`): the microcode's data
   segment holds its command jump table right before the ADPCM nibble masks
@@ -187,11 +210,6 @@ its RAM range is cleared in the page arrays, the interpreted routines there
 entered (they run what is in RAM), then its functions. A function of the
 overlay that was there before then misses and goes to the safety net.
 `[OVL]` lines log the switches. Kill switch `-DXRC_OVERLAYS=0`.
-
-The RCP's registers through KSEG1 (`mem.c`): one shadow page per register
-block is mapped at `rdram + 0xA4xxxxxx` with `xhw_alias_map`, past the
-window's allocation, so a game's own register read (Snap's SP_IMEM/DMEM
-check, a PI_STATUS poll) reads the boot state or zero instead of faulting.
 
 HAL's object manager (Snap) runs object threads with osStopThread(NULL) /
 osStartThread each frame and recreates them on the same OSThread: thread.c

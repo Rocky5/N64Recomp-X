@@ -46,3 +46,4 @@ __pycache__/
 /.claude/
 .DS_Store
 build-sweep/
+/build-*/

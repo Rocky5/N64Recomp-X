@@ -112,6 +112,22 @@ analyse, recompile, compile, link, xbe; `--run` adds what the boot reached
 a crash, a card or 30 s of beats. xemu is not hardware: a run says where
 a game stops in xemu, nothing about timing.
 
+Run a sweep from a worktree pinned to a commit, never from the checkout
+being worked in (every build compiles the runtime from the tree it runs
+in; s6 caught half-made edits and lost 30 games):
+
+```sh
+git worktree add --detach ../N64Recomp-X-sweep <commit>
+cd ../N64Recomp-X-sweep && git submodule update --init tools/recomp   # n64rx reads its symbol lists
+export N64RX_BUILD_ROOT=$PWD/build-sweep N64RX_RECOMP=<checkout>/build-host/recomp
+. /c/xemu/nrx-env<N>.sh   # a slot no other run uses
+python -u tools/xbox/sweep.py "<ROM folder>" --jobs 5 --run 30 --tag s7
+```
+
+A one-off test build beside a sweep or a learning loop takes its own
+`N64RX_BUILD_ROOT` (`build-rg`, `build-sweep`), or the two compile over each
+other in `build-xbox/`.
+
 Pokemon Snap's scenario (`tools/xbox/scenarios/snap_title`): the intro, the
 title, START and A through the menus, shots along the way (build with
 `N64RX_CFLAGS=-DXHW_AUTOPAD=1`).

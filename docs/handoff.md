@@ -7,46 +7,62 @@ console).
 ## Where things stand (2026-10-17)
 
 The newest state first; the entries below are the record, oldest first.
+"xemu" is the emulator (slot runs, test builds); "red" is the maintainer's
+console. Everything since `vmk4`/`vsnap1` is xemu only.
 
 | game (US) | how built | xemu | console (red) |
 |---|---|---|---|
 | Pilotwings 64 | its pack, or the ROM alone (`--analyze`): the same | title to results, saves, sound, 720p + hor+, the BACK menu | `vnrx1`: plays, sound, EEPROM saves, the BACK menu, the combos; 53-59 fps |
 | Mario Kart 64 | the ROM alone | title, menus, races (F3DEX), sound (nead), Controller Pak, 720p 16:9 | `vmk2`/`vmk4`: races at 29.9 fps (display lists 2-3 ms), sound, the ROM inside the XBE, the BACK menu and its Paks page, EEPROM and pak files; the map screen's TV (a framebuffer read) wrong |
-| Super Mario 64 | the ROM alone + three `--learn` rounds | head screen, Lakitu intro, castle grounds (TLB aliasing); head shading off | not tried |
-| Pokémon Snap | the ROM alone (overlays sharing a vram) | its intro (the Jack and Beans logo scene, F3DEX2), past the main menu's load since the thread-stack fix | `vsnap1` (before the fix): the crash xemu had |
-| Ridge Racer 64 | the ROM alone + one `--learn` round | the first F3DEX2 game drawn: its save screen at ~42 fps; A not taken yet | - |
-| Forsaken 64 | the ROM alone | builds and boots (aspMain), stops later | - |
-| Super Smash Bros. | the ROM alone | intro, title, 1P character select, a 1P match (Link vs Link, Hyrule Castle) at ~50 fps with scripted input | - |
-| Mario Party | the ROM alone | the Hudson logo, the intro's 3D scene, the story text at ~58 fps; audio tasks run (53 a second); its processes run as coroutines (`strand.c`) | - |
-| Mario Party 2 / 3 | the ROM alone | 60 fps from boot (intro, menus); 2: the audio thread dies after a restart (open) | - |
-| Dr. Mario 64 | the ROM alone | links, boots; its gzip main segment is not found | - |
+| Super Smash Bros. | the ROM alone | intro, title, 1P character select, a 1P match (Link vs Link, Hyrule Castle) at 47-50 fps with scripted input | - |
+| Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text at ~58 fps, audio tasks (53 a second); its processes run as coroutines | - |
+| Mario Party 2 / 3 | the ROM alone | 60 fps from boot (intro, menus); 2: the audio thread dies some time after the game restarts it (open) | - |
+| Super Mario 64 | the ROM alone + three `--learn` rounds | head screen, Lakitu intro, castle grounds; head shading off | not tried |
+| Pokémon Snap | the ROM alone (overlays sharing a vram) | intro and main menu (s7: 1576 frames in 30 s) | `vsnap1` (before the thread-stack fix): the crash xemu had then |
+| Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro, Banjo's house (~28 fps); the sky black (open) | - |
+| Blast Corps | the ROM alone + 15 `--learn` rounds | Rare logo, title, profile screen, the attract demo (50-56 fps) | - |
+| Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (53 MB, page cache) | the title demo and logo, the controller seen; after START the next scene never draws (open) | - |
+| Ridge Racer 64 | the ROM alone + one `--learn` round | F3DEX2; 1732 frames in 30 s (~44 fps) | - |
+| Donkey Kong 64 | the ROM alone + `--learn` rounds | F3DEX2, ~790 frames, then its main thread runs on without sending tasks (open) | - |
+| Diddy Kong Racing, Wave Race 64, WWF No Mercy, Dr. Mario 64 | the ROM alone | present frames for the whole 30 s sweep run (DKR's microcode not decoded: grey boxes) | - |
+| Paper Mario, GoldenEye, Conker, Jet Force Gemini, Castlevania | the ROM alone + `--learn` rounds | boot and stop (each in the 2026-10-17 entry below) | - |
 | the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s7: 245 build, 139 present frames, 121 still presenting at 30 s (`docs/analyzer.md`) | - |
-| Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated | the title demo and logo (the controller seen since the query names); START: the file select's load stalls (open) | - |
 
-Built and merged on 2026-10-16 (each with host tests and a kill switch; the
-entries below say how each was verified): the ROM inside the XBE; the ROM
-page cache (ROMs over 16 MB); Yaz0 games inflated at build time; the safety
-net and the learning loop (`--learn`); the TLB (page-table aliases);
-overlays sharing a vram (the function table follows the PI DMA); the RCP
-register model and KSEG1 RDRAM (`mmio.c`); the graphics microcode registry
-with F3DEX/F3DEX2; framebuffer readback (off by default); the audio
-microcode registry with nead and `n_aspMain`; every save type (Controller
-Pak, SRAM, FlashRAM) and the BACK menu's Paks page; the V track's
-`decomp_check.py`/`test_analyze.py` (6 decomps, 0 wrong names); the library
-sweep; and the analyser's entry shapes (74 -> 13 games whose entry code is
-not read), cross-function branches, the later `osSetEventMesg`. Two runtime
-fixes that matter to every game: threads start 16 bytes below their stack
-top (libultra's `osCreateThread`), and the BACK menu drops the texture
-cache when its card finds no room. Diagnosis tools: `-DXRC_WATCH`
-(a hardware write watch), `-DXRC_THREAD_TRACE`, the stall report.
+**What exists** (each piece with host tests and a kill switch; the entries
+below say how each was verified): the ROM inside the XBE and its page cache;
+Yaz0 games inflated at build time; the ROM analyser (entry shapes, segments,
+libultra by behaviour, the N64Recomp precheck) and the learning loop
+(`--learn`: the safety net's functions, DMAs, code captured from RDRAM and
+checked against it by `guard.c`, TLB regions); the game's own TLB (aliases,
+misses through its exception code and fault thread, KSEG2/3 through
+`XRC_HIGH_TLB`); overlays sharing a vram; the RCP register model through
+KSEG1; F3DEX/F3DEX2 and the microcode registries; audio HLE (aspMain, nead,
+`n_aspMain`); every save type and the BACK menu's Paks page; coroutines for
+a game's own setjmp/longjmp; task done events held for their thread; threads
+stopped by others; the library sweep and the V track's `decomp_check.py`
+(0 wrong libultra names on Paper Mario and Mario Kart 64). Diagnosis:
+`-DXRC_WATCH` (a hardware write watch), `XRC_WATCH_QUEUE`/`XRC_WATCH_RECV`,
+`N64RX_TRACE=1` (per-thread traces in crashes and stalls), the stall report,
+`[INTERP] hot`.
 
-**Open, roughly in the order they block the most games**: what the s4
-sweep's table in `docs/analyzer.md` ranks; the 13 entries that are their
-own loaders (Acclaim's Turok 1-3, Armorines, All-Star Baseball; Army Men;
-two Star Wars), gzip/Rare compressed code, S2DEX's own commands,
-framebuffer effects by default (MK64's TV, Snap's photos), MusyX and the
-other audio microcodes, M2's leftovers (720p on the console, the 30-minute
-soak, Pilotwings' pack README), M3's measurement gate.
+**Open, roughly by how much they block** (details in the entries below and
+`docs/analyzer.md`):
+
+1. Console runs of what xemu now shows (Smash, Mario Party, the RCP-event
+   and thread changes on Mario Kart 64): staged as `vssb1`, `vmp1`, `vmk5`.
+2. The s7 categories: NULL pointers through the TLB path (42 games), Rare's
+   compressed boots before learning rounds (18), no frames (42).
+3. Per game: Ocarina of Time after START; Paper Mario's copy-protection
+   chain and its flash code (no `osFlash*` rule); GoldenEye's wild jump in
+   paged code; Jet Force Gemini's init reached only through decompressed
+   data; Donkey Kong 64's main thread; Mario Party 2's audio thread;
+   Banjo-Kazooie's sky; Castlevania's dispatch after a TLB miss.
+4. The 13 entries that are their own loaders (Acclaim's Turok 1-3,
+   Armorines, All-Star Baseball; Army Men; two Star Wars); gzip code.
+5. Renderer: S2DEX's own commands, F3DDKR, framebuffer effects by default
+   (MK64's TV, Snap's photos); MusyX and the other audio microcodes.
+6. M2's leftovers (720p on the console, the 30-minute soak, Pilotwings'
+   pack README); M3's measurement gate.
 
 ## M0: skeleton, toolchain, the tool's shape (2026-10-16, branch `dev`)
 
@@ -833,166 +849,119 @@ All xemu; nothing new on the console.
   map at a KUSEG host address can be aliased on a 64 MB console (xemu runs
   128 MB).
 
-### Banjo-Kazooie draws (2026-10-17, night, xemu)
+## 2026-10-17: ROM-only games in xemu (orchestrator)
 
-From the ROM alone, after twenty-odd learning rounds: Banjo-Kazooie runs
-its intro and draws Banjo and Kazooie (F3DEX 1.21; about 20 fps in xemu;
-some textures missing: the backpack, the sky). What it took, besides the
-earlier pieces (osCicId, 64-bit registers):
+All xemu, test builds, on slots 9-12; nothing new on the console this day.
+`[MEM]`/`[CLOCK]`: not recorded (xemu).
 
-- **Calls into captured code are weak starts** (`funcs.discover
-  weak_calls`): Banjo's core code jals into its level overlays at fixed
-  addresses; in the captured cutscene overlay those addresses are
-  mid-function, and treating them as starts cut its functions' epilogues
-  off (a function returned without restoring sp and ra). Found by
-  interpreting halves of the overlay region until the crash went
-  (`N64RX_CAPTURED_INTERP=<lo>-<hi>`), then the decomp's function list. A
-  jal into captured code where no function starts runs its caller
-  interpreted (N64Recomp would make a static there and split a function).
-- **Captured code is checked before it runs** (`guard.c`, decisions.md):
-  pages hashed as recompiled; a page holding another overlay runs
-  interpreted and is captured again.
-- **The log lock's holder runs above the game's threads**
-  (`XHW_LOG_BOOST`).
+### Games
 
-Later the same night: its faces textured (a tile inside a larger LOADBLOCK),
-and with START and A pressed it reaches its title screen (the logo, Banjo
-dancing, the copyright lines; 30 fps in xemu) and goes on into the lair
-scenes. With A pressed every few seconds it reaches the file select in
-Banjo's house ("Game 1: Empty", 28 fps) and starts a game: the intro
-cutscene in the lair, Banjo and Kazooie; after it the N64 logo shows again
-(a reset or the attract loop: open). Not verified on a console. Next: the
-sky draws black; what follows the intro; the variants of its overlays
-recompiled instead of interpreted.
-
-### Blast Corps plays its attract demo (2026-10-17, xemu)
-
-From the ROM alone (`--learn`, 15 rounds): the Rare logo, then the attract
-demo at 50-56 fps in xemu (the ground, buildings, smoke, the intro text).
-It crashed on an assert in its own scheduler: a DP done with no RDP task.
-The runtime posted DP done for every graphics task, inside
-`osSpTaskStartGo`; now only for a list that ends with a FullSync, as the
-RDP raises it (`XRC_DP_ON_FULLSYNC`), and the done events wait until the
-starting thread blocks or the next retrace (`XRC_RCP_DEFER`). Mario Kart 64
-and Banjo-Kazooie run as before (xemu). The intro text's glyphs were
-stale (T for G): the game writes glyphs into reused 512-byte slots and
-the texture cache sampled only 16 words; textures up to 2 KB are hashed
-whole now, and the text reads right. Not verified on a console.
-
-### Donkey Kong 64 presents frames (2026-10-17, xemu)
-
-With 8 MB, the 6105 boot magic and captured code: F3DEX2, about 800 frames
-from 10 s to 50 s of the boot, then the main thread stops sending tasks
-(open). It had read NULL+3 in its own osViGetCurrentMode
-(`__osViCurr->modep->type`: the game's VI context stays empty under the
-runtime's VI); the analyser names it now and the runtime answers it from
-the mode the game set. Not verified on a console.
-
-### Super Smash Bros. and Blast Corps' menus (2026-10-17, xemu)
-
-- **Super Smash Bros.** from the ROM alone, no learning rounds: the intro
-  (Master Hand on the desk, ~50 fps), the title, the 1P character select;
-  the stick moves the token and the fighter under it shows in the panel.
-  An A press there did not drop the token in the scripted runs (open:
-  timing of the scripted presses, or how the game reads the button).
-- **Blast Corps**: the title screen, the profile screen ("Amber", its
-  portrait frame empty: a framebuffer effect) and the attract story text.
-- Not verified on a console.
-
-
-### Mario Party draws and plays its intro (2026-10-17, xemu)
-
-From the ROM alone, no learning rounds: the Hudson logo, the intro's 3D
-scene (the grass and the sand circle), the story text, at 58-59 fps, with
-53 audio tasks a second. Two pieces:
-
-- **Coroutines** (`strand.c`): every game object is a Hudson process that
-  switches stacks with the game's own setjmp/longjmp. n64rx finds the pair
-  by shape (the same in Mario Party 1, 2 and 3), routes it to the runtime
-  and turns the game's three setjmp calls into host setjmps; each context
-  runs on a host thread of its own, one at a time. The main loop's
-  registers had come back wrong before.
-- **Done events** (`sp.c`, `thread.c`): the scheduler thread slept with its
-  SP done already in the queue (flushed after the check), and nnsched's
-  graphics thread took the audio task's done (one run in two froze after
-  ~6 s). Both fixed for every game (`docs/decisions.md`). Three 60 s runs
-  in a row: no freeze.
-
-Verified how: xemu, slot 9, test builds, shots at 8, 15, 25, 35 and 45 s;
-host tests. Not verified: past the story text (no input scripted beyond
-START/A), the sound itself (tasks run; not listened to), a console.
-`[MEM]`/`[CLOCK]`: not recorded (xemu test builds).
-
-### Threads stopped by others, overlay prechecks, the sweep worktree (2026-10-17, xemu)
-
-- **osStopThread / osDestroyThread of another thread** stop it at its next
-  block (`XRC_THREAD_HALT`). Mario Party 2 (60 fps, the intro and menus)
-  destroys its audio thread and makes it again; the old one had run on.
-  Its audio thread now restarts, then dies later on a stale message
-  pointer (open: one run in two; the game keeps presenting). Pokémon Snap,
-  Mario Kart 64 and Super Mario 64 as before.
-- **The precheck missed every overlay function**: it looked them up by
-  vram while `live` keys them with their ROM offset. Mario Party 3's
-  boards call where no section has a function; N64Recomp refused them one
-  a run (400 runs) and n64rx died on a missing `funcs.h`. Now 1639 are
-  interpreted up front and it builds; the run limit ends in an error that
-  says what to do. Its boot probes a development board at `0xBFF00000`
-  ("KMC"); such a function now runs interpreted and reads 0, as on a
-  retail N64. Mario Party 3 then presents 3377 frames in 35 s at 59 fps.
-- **The library sweep runs from a git worktree** pinned to a commit
-  (`git worktree add --detach ../N64Recomp-X-sweep <commit>`, then
-  `git submodule update --init tools/recomp` there): s6 was built from the
-  working tree while it changed and lost 30 games to half-made states
-  (Ridge Racer 64, Earthworm Jim 3D, Tom and Jerry, Hey You Pikachu draw
-  again on the committed code). Without the submodule n64rx wrote a config
-  N64Recomp refused; it now stops and says to fetch it.
-- **GoldenEye** (open): with the learning rounds it boots into
-  `bossInitMainthreadData` (interpreted: it calls the paged `0x7F` code);
-  the crashing thread's last entry is the safety net at `0x7F0CFF30`
-  (never captured), and from there an untraced jump reaches `0x7F5C40EC`,
-  past the game segment. The trace now keeps 4096 entries and lists the
-  crashing thread's own.
+- **Banjo-Kazooie** (~22 `--learn` rounds): its intro with Banjo and
+  Kazooie drawn (F3DEX 1.21), the title screen (the logo, Banjo dancing;
+  30 fps), the file select in Banjo's house ("Game 1: Empty", 28 fps), the
+  new-game intro in the lair, then Banjo's house. The sky draws black
+  (open). What it took: calls into captured code are weak starts
+  (`funcs.discover weak_calls`: Banjo's core code jals into its level
+  overlays at addresses that are mid-function in the captured cutscene
+  overlay; found by interpreting halves of the region,
+  `N64RX_CAPTURED_INTERP=<lo>-<hi>`); captured code checked before it runs
+  (`guard.c`); faces textured (a tile inside a larger LOADBLOCK); the log
+  lock's holder above the game's threads (`XHW_LOG_BOOST`).
+- **Blast Corps** (15 rounds): the Rare logo, the title, the profile
+  screen ("Amber"; its portrait frame empty: a framebuffer effect), the
+  attract story text and demo at 50-56 fps. It had asserted on a DP done
+  with no RDP task: DP done now only for a list that ends with a FullSync
+  (`XRC_DP_ON_FULLSYNC`), done events held until the starting thread
+  blocks (`XRC_RCP_DEFER`). Its glyphs were stale (T for G: reused 512-byte
+  slots): textures up to 2 KB are hashed whole.
+- **Super Smash Bros.** (no rounds): intro, title, 1P character select, and
+  a 1P match on Hyrule Castle (Link against a CPU Link) at 47-50 fps; the
+  scripted stick moves Link. "A does not drop the token" had been the
+  script: the game reads no pads while it loads, a screenshot over COM1
+  freezes it for seconds, and a second A picks the token up again
+  (`docs/testing.md`).
+- **Mario Party 1-3** (no rounds): Mario Party: the Hudson logo, the
+  intro's 3D scene, the story text, 58-59 fps, 53 audio tasks a second,
+  three 60 s runs without a freeze. Its game objects are Hudson processes
+  that switch stacks with the game's own setjmp/longjmp: n64rx finds the
+  pair by shape (the same in all three), the runtime runs each context as
+  a coroutine on a host thread of its own (`strand.c`). Mario Party 2: 60
+  fps; it destroys and remakes its audio thread, which now stops when
+  destroyed and restarts, then dies later on a stale message pointer in
+  one run of two (open; the game keeps presenting). Mario Party 3: 3377
+  frames in 35 s at 59 fps, after the overlay precheck and its
+  development-board probe at `0xBFF00000` ("KMC", read as 0 by the model).
+- **Donkey Kong 64**: 8 MB, the 6105 boot magic, captured code and its own
+  osViGetCurrentMode named: F3DEX2, ~790 frames to 42 s, then its main
+  thread runs on inside recompiled `func_8063A968` (called from captured
+  code) without blocking (open).
+- **Ocarina of Time**: the title demo (Link riding in Hyrule Field) and
+  the logo at ~25 fps; "NO CONTROLLER" until the controller-query names
+  were fixed (below). After START the graph thread waits on its stack
+  queue `0x8011F9B4` for the frame's task-done message (`0x29A`, every
+  frame until then) and it never comes (open: the scheduler's framebuffer
+  and swap state next; its moon also draws as a flat rectangle).
+- **Paper Mario**: its effects run at `0xE0200000` through the TLB; KSEG2/3
+  cannot be aliased on the host, so a learnt build sets `XRC_HIGH_TLB`.
+  With it the boot goes on into its copy-protection chain (code at
+  `0x80200000`: `create_audio_system_obfuscated`, `load_obfuscation_shims`,
+  a hash over ROM words read through the PI picking a jump target) and
+  stores to address 0 (open). Its flash code runs interpreted (the runtime
+  has `osFlash*`; the analyser has no rule for them yet).
+- **GoldenEye** (open): boots into `bossInitMainthreadData` (interpreted:
+  it calls the paged `0x7F` code); the crashing thread's last entry is the
+  safety net at `0x7F0CFF30` (never captured), from where an untraced jump
+  reaches `0x7F5C40EC`, past the game segment.
+- **Jet Force Gemini** (open): its main thread writes through the pointer
+  at `0x80102DB0`, still NULL; only `func_8006B8C4` sets it
+  (`malloc(0x580)`) and nothing in the ROM calls it or holds its address:
+  the call comes through a table in decompressed data.
 - **Castlevania** (open): 27 frames, then garbage after the dispatch
   `eret` in its own `__osException` run for a TLB miss.
-- **Donkey Kong 64** (open): ~790 frames to 42 s, then the main thread runs
-  on inside recompiled `func_8063A968` (called from captured code) without
-  blocking.
-- **Paper Mario** (open): one frame, then the main thread stopped in
-  `load_engine_data`: its effects run at `0xE0200000` through the TLB,
-  and KSEG2/3 cannot be aliased on the host (the kernel's system space).
-  Now the runtime logs such a mapping and the next `--learn` build sets
-  `XRC_HIGH_TLB`: generated code translates addresses at 0xC0000000 and up
-  through the game's TLB (one compare a memory access). With it the boot
-  goes further and crashes in the copy-protection chain: code captured
-  at `0x80200000` (`create_audio_system_obfuscated`, `load_obfuscation_shims`:
-  a hash over ROM words read through the PI sets a jump target) runs off the
-  end of a function and stores to address 0. Its flash code is not named
-  either (the runtime has `osFlash*`; no analyser rule yet).
-- **Jet Force Gemini** (open): the main thread (`func_80044B50` ->
-  `func_8004665C` -> `func_8006B9CC` -> `func_8006C230`) writes through the
-  pointer at `0x80102DB0`, still NULL. Only `func_8006B8C4` sets it
-  (`malloc(0x580)`), and nothing in the ROM calls it or holds its address:
-  the call comes through a table in data the game decompresses, so it is
-  either later in the boot than the crash or the table is wrong.
-- **Ocarina of Time** (open): the title demo and logo; after START the
-  graph thread waits on its stack queue `0x8011F9B4` for the frame's
-  task-done message (`0x29A`, every frame until then) and it never comes;
-  the scheduler waits on its interrupt queue. Next: the scheduler's
-  framebuffer/swap state at that moment.
-- xemu slot 10 stalls reading the ROM at boot now and then (Mario Party 2
-  on slot 9 once, Mario Party 3 twice on 10); the same XBE boots on
-  another slot. An emulator matter.
 
-Not verified on a console. `[MEM]`/`[CLOCK]`: not recorded (xemu).
+### The runtime, for every game
 
-### Super Smash Bros. plays a match (2026-10-17, xemu)
+- **Done events** (`sp.c`, `thread.c`, decisions.md): a thread that flushed
+  its held SP done into the queue it was about to wait on slept anyway
+  (the check came first); and any thread's block posted every thread's
+  events, so nnsched's graphics thread took the audio task's done. Now
+  the events belong to the starting thread, and a flush goes back to the
+  caller's check unless a thread that blocked there first at its priority
+  or above takes the message (`XRC_RCP_OWNER`).
+- **Threads stopped by others** stop at their next block and restart when
+  made again (`XRC_THREAD_HALT`). Pokémon Snap, Mario Kart 64 and Super
+  Mario 64 run as before.
+- **KSEG2/3 through the TLB** (`XRC_HIGH_TLB`, learnt), **coroutines**
+  (`N64RX_STRANDS`).
+- Checked after these: Mario Kart 64 (30 fps), Blast Corps (59), Super
+  Mario 64 (30), Smash (42), Banjo-Kazooie (19), Pokémon Snap: present
+  frames as before, 45 s each.
 
-From the ROM alone, no learning rounds: 1P mode, Link picked on the
-character select, START, and the match on Hyrule Castle against a CPU Link
-at 47-50 fps; the scripted stick moves Link. The earlier "A does not drop
-the token" was the script: the game reads no pads while it loads (56-69 s
-into the boot here), a screenshot dump over COM1 freezes it for seconds,
-and a second A picks the token up again. Script presses for after the
-screen is up, and leave 10 s or more between SHOTs. Not verified on a
-console.
+### The analyser and n64rx
 
+- The precheck missed every overlay function (it looked them up by vram
+  while `live` keys them with their ROM offset): Mario Party 3's boards
+  call where no section has a function, and N64Recomp refused them one a
+  run until n64rx died on a missing `funcs.h`. Now 1639 are interpreted up
+  front; the 400-run limit ends in an error that says what to do.
+- osContInit is named before the read/query split (Ocarina of Time's
+  osContStartQuery and osContStartReadData had come out swapped), and
+  osContGetQuery is named. `decomp_check.py`: Paper Mario 70 right,
+  Mario Kart 64 67 right, 0 wrong.
+- A missing `tools/recomp` stops n64rx with what to do (it had written a
+  config N64Recomp refused); a relative `N64RX_BUILD_ROOT` is made
+  absolute.
+
+### The sweep (s7)
+
+Built in a git worktree pinned to `fbe2fa1` (`docs/testing.md`): 245 of
+246 build, 139 present frames, 121 still presenting at 30 s. s6, built from
+a working tree that changed under it, lost 30 games to half-made states and
+is not comparable. Tables in `docs/analyzer.md`.
+
+### Not verified
+
+On a console: everything in this section. In xemu: the sound itself
+(tasks run; not listened to), Mario Party past its story text, Smash past
+the first seconds of a match. xemu slot 10 sometimes stalls reading the
+ROM at boot (the same XBE boots on another slot): an emulator matter.

@@ -666,3 +666,31 @@ thread back from a flush leaves the message to a thread that blocked on
 that queue first at its priority or above, as libultra hands it to the
 first waiter. Kill switch `-DXRC_RCP_OWNER=0`.
 
+
+## Another thread stopped stops at its next block (2026-10-17, `thread.c`)
+
+osStopThread of another thread was ignored and osDestroyThread of another
+left it running. Mario Party 2 destroys its audio thread, closes the audio
+library and makes the thread again; the old one woke on a retrace and read
+the freed globals. On the N64 the target is not running at that moment
+(one CPU): it is ready or blocked. Chosen: the target is flagged, woken if
+it is blocked, and stops at its next block with no lock held; created and
+started again, it starts over at its entry, as a thread stopped by itself
+already did (HAL's object threads). Rejected: suspending the host thread
+at once (it may hold the log lock, the runtime's lock or a kernel lock).
+DIVERGES: a target busy in its own code runs on until it blocks. Kill
+switch `-DXRC_THREAD_HALT=0`.
+
+## KSEG2/3 through the game's TLB (2026-10-17, `XRC_HIGH_TLB`)
+
+The TLB's pages are aliased on the host at `rdram + vaddr`; for KSEG2/3
+(0xC0000000 and up) that is the Xbox kernel's system space, where a page of
+ours would race the kernel's own allocator. Paper Mario runs its effects at
+0xE0200000. Chosen: the runtime logs such a mapping as a learn line and
+the next `--learn` build compiles with `XRC_HIGH_TLB`: the generated code's
+`XRC_ADDR` sends an address at 0xC0000000 and up through the game's TLB to
+its KSEG0 alias (one compare a memory access, the branch rarely taken; a
+miss runs the refill code and the fault path). Only games that map KSEG2/3
+pay. Rejected: decoding the faulting x86 instruction in the crash handler
+and emulating it (every load and store form the compiler emits). Override
+`N64RX_HIGH_TLB=0/1`.
