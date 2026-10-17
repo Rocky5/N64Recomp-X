@@ -1301,3 +1301,13 @@ waits on its own (unnamed) VI manager, whose events go through its own
 libultra, which the learning rounds name. The retrace thread now also
 starts when a game registers `OS_EVENT_VI` (`XRC_VI_ON_EVENT`).
 
+**Perfect Dark, five learning rounds (xemu slot 13, `pd-learn*.log`).**
+Round 1 from the ROM alone: 2 functions, "the boot code came back" (its
+boot returns before any dispatch). Rounds 2-5: 181 functions, 67 libultra
+names, then a fetch at 0x700016CC (its code, mapped at 0x70000000 through
+the TLB as GoldenEye's) before any TLB entry maps it (no `[TLB]` line):
+the crash. Its learn build places RDRAM's window at 0x91000000, so KUSEG
+0x70000000 sits at host 0x01000000 (the alias region); the interpreter's
+kernel-band test now computes in 64 bits (it wrapped there). Open: where
+its boot maps 0x70000000.
+

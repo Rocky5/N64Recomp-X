@@ -342,7 +342,7 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
     /* KSEG2/3, and KUSEG where rdram + ea is the Xbox kernel's space (fetch):
      * through the game's TLB to the KSEG0 alias. -DXRC_FETCH_TLB=0: as before */
     if (XRC_FETCH_TLB && op >= 32 && op != 47 &&
-        (ea >= 0xC0000000u || ((int32_t)ea >= 0 && (uintptr_t)rdram + ea >= 0x80000000u))) {
+        (ea >= 0xC0000000u || ((int32_t)ea >= 0 && (uint64_t)(uintptr_t)rdram + ea - 0x80000000u < 0x80000000u))) {
         int store = (op >= 40 && op <= 46) || op >= 56;
         uint32_t p = xrc_tlb_resolve(ea, store);
         if (p != ~0u && p < xrc_rdram_size) ea = 0x80000000u | p;
@@ -520,7 +520,7 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
  * through the game's TLB (a refill on a miss) to the KSEG0 alias.
  * DIVERGES: none meant. -DXRC_FETCH_TLB=0: the host alias, as before. */
 static uint32_t fetch(uint8_t* rdram, uint32_t pc) {
-    if (XRC_FETCH_TLB && (int32_t)pc >= 0 && (uintptr_t)rdram + pc >= 0x80000000u) {
+    if (XRC_FETCH_TLB && (int32_t)pc >= 0 && (uint64_t)(uintptr_t)rdram + pc - 0x80000000u < 0x80000000u) {
         uint32_t p = xrc_tlb_resolve(pc, 0);
         if (p != ~0u && p < xrc_rdram_size) return (uint32_t)MEM_W(0, 0x80000000u | p);
     }
