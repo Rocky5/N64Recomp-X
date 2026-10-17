@@ -1101,3 +1101,14 @@ first deploy). 45 s in xemu first: no crash, 1141 frames. To check: the
 title, a new file, the intro, Kokiri Forest with Link under control, music,
 fps, the free memory (`[BEAT]`).
 
+**Paper Mario, the same day (xemu, test build, its `--learn` logs).** The
+store to address 0 in its boot was not the copy-protection chain itself
+(its hashes give `load_engine_data` 0x80026DDC and `create_audio_system`
+0x8004AB00 from the ROM's bytes, as the decomp says): `load_engine_data`
+DMAs the effect code to 0xE0200000, and the runtime masked that to
+physical 0x200000, over the chain's own code at 0x80200000; the
+interpreter returned into the new bytes. KSEG2/3 now go through the TLB in
+the runtime's helpers (`docs/decisions.md`). It now presents 321 frames
+(1 before), then reads address 4 in `load_texture_impl` (from
+`mdl_load_all_textures`, a map's textures; open).
+

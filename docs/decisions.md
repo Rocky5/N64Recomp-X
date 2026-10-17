@@ -695,6 +695,20 @@ pay. Rejected: decoding the faulting x86 instruction in the crash handler
 and emulating it (every load and store form the compiler emits). Override
 `N64RX_HIGH_TLB=0/1`.
 
+## KSEG2/3 addresses in the runtime's helpers go through the TLB (2026-10-17, `XRC_TLB_KSEG2`)
+
+The generated code reaches KSEG2/3 through the game's TLB since
+`XRC_HIGH_TLB`, but the runtime's own helpers (`xu_phys`: DMA
+destinations, queues, task fields) only translated KUSEG and masked the
+rest. Paper Mario DMAs its effect code to 0xE0200000 (mapped to physical
+0x1A6000): masked, it landed on physical 0x200000, over the obfuscated
+boot code still running at 0x80200000, and the interpreter returned into
+the effect's bytes (a store to address 0). Chosen: `xu_phys` sends 0xC0000000
+and up through the TLB entries as well (nothing changes for games without
+a valid entry: the lookup returns at once). Found from the decomp: its
+`effect_globals` segment at vram 0xE0200000, the DMA's ROM offset in a
+`[WATCH]` on the overwritten word.
+
 ## Frames presented at the swap (2026-10-17, `gfx.c`, `XRC_PRESENT_ON_SWAP`)
 
 The interpreter presented a frame at the end of every graphics task. Mario

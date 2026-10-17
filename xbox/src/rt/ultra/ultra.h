@@ -25,14 +25,21 @@
 
 /* ---- RDRAM by N64 address (KSEG0, KSEG1 or physical) ---- */
 /* an N64 address the runtime touches for the game: KSEG0/KSEG1 by their
- * physical address; a KUSEG one (code and data a game maps with its own TLB:
- * Turok 2's 0x00200000 +) through the TLB's entries (tlb.c), as libultra's
- * osVirtualToPhysical would. -DXRC_TLB_HELPERS=0: masked, as before. */
+ * physical address; a KUSEG or KSEG2/3 one (code and data a game maps with
+ * its own TLB: Turok 2's 0x00200000 +, Paper Mario's effects at
+ * 0xE0200000) through the TLB's entries (tlb.c), as libultra's
+ * osVirtualToPhysical would. Masked, Paper Mario's effect DMA to
+ * 0xE0200000 landed on physical 0x200000, over the code running at
+ * 0x80200000 (its obfuscated boot chain). -DXRC_TLB_HELPERS=0: masked, as
+ * before; -DXRC_TLB_KSEG2=0: KUSEG only. */
 #ifndef XRC_TLB_HELPERS
 #define XRC_TLB_HELPERS 1
 #endif
+#ifndef XRC_TLB_KSEG2
+#define XRC_TLB_KSEG2 1
+#endif
 static inline uint32_t xu_phys(uint32_t v) {
-    if (XRC_TLB_HELPERS && (int32_t)v >= 0) {
+    if (XRC_TLB_HELPERS && ((int32_t)v >= 0 || (XRC_TLB_KSEG2 && v >= 0xC0000000u))) {
         uint32_t p = xrc_tlb_to_phys(v);
         if (p != ~0u) return p;
     }

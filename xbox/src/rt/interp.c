@@ -604,6 +604,18 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
             pc += 8;
             continue;
         }
+#ifdef XRC_INTERP_TRACE_FROM
+        {   /* diagnosis: from that pc on, every call and register jump with sp and ra */
+            static int s_tr = -1;
+            if (s_tr < 0 && pc + 4 >= (uint32_t)(XRC_INTERP_TRACE_FROM) && pc <= (uint32_t)(XRC_INTERP_TRACE_FROM) + 0x400u) s_tr = 20000;
+            if (s_tr > 0 && (br.link || br.jreg)) {
+                s_tr--;
+                xhw_logf("[ITRACE] %08x %s %08x sp %08x ra %08x frames %d%s", (unsigned)pc, br.link ? "call" : "jr",
+                         (unsigned)br.target, (unsigned)st.r[29], (unsigned)st.r[31], st.nframes,
+                         br.link && xrc_try_function(br.target) ? " (recompiled)" : "");
+            }
+        }
+#endif
         if (br.target == SENTINEL) break;
         if (br.target == pc && !br.link && !fetch(rdram, pc + 4)) pause_self(rdram);   /* b . (an idle loop), as the recompiler does */
         if (br.link) {   /* a call */
