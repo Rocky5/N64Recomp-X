@@ -253,13 +253,37 @@ the KSEG1 alias were mapped (no `[MMIO]`/`[MEM] KSEG1` line).
 
 Mario Kart 64 (1165 frames) and Pilotwings 64 (1616) present as before.
 
+### The library again: s4 to s5 (2026-10-17, xemu)
+
+The same 246 games, built from the ROM alone (no learning rounds), booted
+for 45 s each. s5 was built before that night's eret, RCP-event and guard
+fixes, so its 20 "an instruction it does not run" stops are all `eret`
+(now a return, `XRC_ERET_RETURN`).
+
+| in xemu | s4 | s5 |
+|---|---|---|
+| frames presented | 92 | 117 |
+| no frames | 36 | 43 |
+| crash at a KUSEG address (mostly NULL + an offset) | 32 | 38 |
+| fatal: `eret` interpreted | 15 | 20 |
+| fatal: no function at an address | - | 11 |
+
+Presenting frames in s5 among the popular: Super Smash Bros. (2291 frames:
+the intro, the title, the character select), International Superstar
+Soccer 64, Mystical Ninja, Pokémon Snap, Kirby 64, Diddy Kong Racing
+(grey boxes: its microcode), Mario Kart 64. Stopping early: Ocarina of Time
+and F-Zero X (2-3 frames), Mario Party (none: its older libultra's SI
+functions were not named; `__osSiRawStartDma` with the status check inline
+and controller reads with no SI access queue are named now).
+
 ## Known gaps
 
 - Code loaded with computed addresses (overlay tables, compressed code) is
   only found when the game runs: the safety net runs it and the learning
   loop recompiles it next build (above). Two overlays at one address are
-  still one table entry each (M5): the net's stub is fine (it interprets
-  what is there), a learnt segment that overlaps another is not yet.
+  still one table entry each (M5): code captured from RDRAM is checked
+  against what it was recompiled from (`guard.c`) and runs interpreted
+  when another overlay is loaded there; recompiling each variant is next.
 - The net's interpreter is slow (each instruction decoded every time); a
   hot function it runs costs frame time until the rebuild.
 - Loads described by plain words in the ROM are found statically (Super
@@ -268,7 +292,8 @@ Mario Kart 64 (1165 frames) and Pilotwings 64 (1616) present as before.
   file at its vrom, the table rewritten to "not compressed"; Ocarina of
   Time 1.2: 1456 files, 32 -> 53 MB; Majora's Mask: 1513, 32 -> 47 MB);
   the console checks the inflated image's SHA-1. Other compressed code
-  (Dr. Mario 64's gzip main segment, Rare's) is not handled.
+  (Dr. Mario 64's gzip main segment, Rare's) is captured from RDRAM as it
+  runs (the learning loop, step 4).
 - Overlays that share a vram (Paper Mario's maps, battles, partners; Pokémon
   Snap's levels): names collide (`func_<vram>`) and the function table maps
   a vram to one function; tracking which overlay is loaded (PLAN.md §3.4,

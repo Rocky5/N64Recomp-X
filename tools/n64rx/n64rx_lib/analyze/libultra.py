@@ -201,6 +201,10 @@ def _hardware(N):
                 one([a], 'osPiRawStartDma', 'PI DMA registers')
         if N.hw(a, SI, 0, 'w') and N.hw(a, SI, 0x10, 'w') or N.hw(a, SI, 0, 'w') and N.hw(a, SI, 4, 'w'):
             one([a], '__osSiRawStartDma', 'SI DMA registers')
+        elif N.hw(a, SI, 0, 'w') and N.hw(a, SI, 0x18) and not ft.leaf:
+            # an older one: the busy check inline, the PIF address register picked through a branch the
+            # feature walk does not follow (Mario Party)
+            one([a], '__osSiRawStartDma', 'SI_DRAM_ADDR written after an inline SI_STATUS check')
         if ft.leaf and N.only_hw(a, (SI, 0x18)):
             one([a], '__osSiDeviceBusy', 'reads SI_STATUS')
         if N.hw(a, VI) and sum(1 for k in ft.hw if k & 0xFFFF0000 == VI and 'w' in ft.hw[k]) >= 8:
@@ -486,6 +490,16 @@ def _io(N):
                     N.one([a], 'osEepromRead', 'an EEPROM block read into *arg2')
                 else:
                     N.one([a], 'osEepromWrite', 'an EEPROM block written from arg2')
+    if sid and rs and not sga:
+        # an older libultra with no SI access queue (Mario Party): osContStartReadData / osContStartQuery
+        # pack, raw SI DMA, wait on the queue at arg0, raw SI DMA
+        for a, ft in f.items():
+            if a in N.name or sid not in ft.calls or rs not in ft.calls or ft.args_used != {0} or len(ft.calls) > 4:
+                continue
+            packs = [c for c in ft.calls if c not in (sid, rs)]
+            if packs:
+                N.one([a], 'osContStartReadData' if not _packs_request(N, packs) else 'osContStartQuery',
+                      'packs a controller command, raw SI DMAs and a wait (no SI access queue)')
     er, ew = N.a_('osEepromRead'), N.a_('osEepromWrite')
     for a, ft in f.items():
         if a in N.name:
