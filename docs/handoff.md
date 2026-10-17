@@ -1193,3 +1193,16 @@ Banjo-Kazooie had the other miss: a tile over a load shorter than one row
 as one row (with `XGFX_TILE_WRAP`); its run has 0 misses (48 before).
 Whether this was its black sky and tree is for the console to show.
 
+**Staged for the console, superseding `vssb2`/`vzel2`/`vsm2` (red still
+off).** ThinLTO releases, ROM inside, each booted 30-35 s in xemu with no
+crash. `vssb3`, `vzel3`, `vsm3` at `e4c575d` (the tile wrap); `vbk3`,
+`vmk6` at `5380e59` (also the short-load row).
+
+| build | game | xbe sha1 | title ID / folder |
+|---|---|---|---|
+| `vssb3` | Super Smash Bros. | 24bb66cd8c22 | 4E520101, `/F/Applications/N64Recomp-X-SSB` |
+| `vzel3` | Ocarina of Time 1.2 | 5045824eef87 | 4E52B837, `/F/Applications/N64Recomp-X-ZEL` (new folders) |
+| `vsm3` | Super Mario 64 | 1f9b64ca010c | 4E52B0E2, `/F/Applications/N64Recomp-X-SM64` (new folders) |
+| `vbk3` | Banjo-Kazooie | 27c01714cf60 | 4E52E3F7, `/F/Applications/N64Recomp-X-BK` (replaces `vbk2`) |
+| `vmk6` | Mario Kart 64 | 00005430f511 | 4E520DF7, `/F/Applications/N64Recomp-X-MK64` |
+
