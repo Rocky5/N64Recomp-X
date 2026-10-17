@@ -1206,3 +1206,15 @@ crash. `vssb3`, `vzel3`, `vsm3` at `e4c575d` (the tile wrap); `vbk3`,
 | `vbk3` | Banjo-Kazooie | 27c01714cf60 | 4E52E3F7, `/F/Applications/N64Recomp-X-BK` (replaces `vbk2`) |
 | `vmk6` | Mario Kart 64 | 00005430f511 | 4E520DF7, `/F/Applications/N64Recomp-X-MK64` |
 
+**Sweep s8 (2026-10-17, the worktree at `f6b0150`, xemu slot 14, 30 s
+runs; built while other builds shared the CPU, so slow interpreted boots
+read low).** 246 games: 128 still presenting at 30 s (121 in s7), 136
+presented at all (139), KUSEG crashes 30 (42). New: Majora's Mask (564
+frames), Mario Party 3 (836). Stopped presenting: Paperboy (512 → 0) and
+six with 1-15 frames before, Goemon (NGME, almost wholly interpreted at
+boot: the shared CPU). Paperboy was the safety net's table (512 addresses):
+it is C++, its virtual functions reached only through vtables, and the
+521st lookup returned nothing ("no function at 80029d30"). The table holds
+4096 now, with a hash index (`XRC_MAX_LEARN`); Paperboy presents 1447
+frames in 35 s at ~50 fps.
+

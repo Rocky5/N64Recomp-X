@@ -35,7 +35,14 @@
 #include "rt.h"
 #include "xhw.h"
 
-#define MAX_LEARN 512        /* addresses the net remembers (each a stub or a logged in-line callee) */
+/* addresses the net remembers (each a stub or a logged in-line callee); 512
+ * ran out in Paperboy (C++: its virtual functions are reached only through
+ * vtables, 521 of them in 20 s), and a lookup past it was the "no function"
+ * card. About 52 bytes each. */
+#ifndef XRC_MAX_LEARN
+#define XRC_MAX_LEARN 4096
+#endif
+#define MAX_LEARN XRC_MAX_LEARN
 #define MAX_DMA 1024         /* the newest PI DMAs, to say where code came from */
 #define TEXT_MAX (48 * 1024) /* learn.txt */
 
@@ -70,11 +77,22 @@ static void lock(void) {
 }
 static void unlock(void) { xhw_mutex_unlock(s_lock); }
 
+/* an open-addressed index over s_l (twice its size, never full): vram -> slot + 1 */
+#define LEARN_HASH (2 * MAX_LEARN)
+static uint16_t s_hash[LEARN_HASH];
+static unsigned hash_of(uint32_t vram) { return (unsigned)((vram >> 2) * 2654435761u) % LEARN_HASH; }
+
 static Learnt* find(uint32_t vram) {
-    unsigned i;
-    for (i = 0; i < s_nl; i++)
-        if (s_l[i].vram == vram) return &s_l[i];
+    unsigned h = hash_of(vram), n;
+    for (n = 0; n < LEARN_HASH && s_hash[h]; n++, h = (h + 1) % LEARN_HASH)
+        if (s_l[s_hash[h] - 1].vram == vram) return &s_l[s_hash[h] - 1];
     return NULL;
+}
+
+static void index_add(unsigned slot) {
+    unsigned h = hash_of(s_l[slot].vram);
+    while (s_hash[h]) h = (h + 1) % LEARN_HASH;
+    s_hash[h] = (uint16_t)(slot + 1);
 }
 
 /* ---- learn.txt ---- */
@@ -266,10 +284,17 @@ static void log_one(Learnt* e) {
 
 static Learnt* add(uint32_t vram, uint32_t caller) {
     Learnt* e = find(vram);
-    if (e || s_nl >= MAX_LEARN) return e;
+    if (e) return e;
+    if (s_nl >= MAX_LEARN) {
+        static int said;
+        if (!said) said = 1, xhw_logf("[LEARN] the net's table is full (%u addresses): %08x and later ones are not run",
+                                      (unsigned)MAX_LEARN, (unsigned)vram);
+        return NULL;
+    }
     e = &s_l[s_nl++];
     memset(e, 0, sizeof *e);
     e->vram = vram, e->caller = caller;
+    index_add((unsigned)(e - s_l));
     return e;
 }
 
