@@ -124,6 +124,7 @@ def apply(a, learnt, rom_len):
     todo = {}
     runs = _code_runs(learnt.code)
     runs = _rom_backed(a, runs, rom_len, notes)
+    _table_sources(a, runs, notes)   # before the walks: they read jump tables there
     for x in sorted(learnt.funcs):
         d = next((d for d in reversed(learnt.dmas) if d[1] <= x < d[1] + d[2]), None)
         # where overlays share the address, the one the newest DMA put there
@@ -166,7 +167,6 @@ def apply(a, learnt, rom_len):
         notes.append(f'{name}: {len(new)} learnt functions ({", ".join(f"{x:08X}" for x in new[:8])}'
                      f'{"..." if len(new) > 8 else ""}), {len(a.funcs[name])} functions now')
     _cross_roots(a, notes)
-    _table_sources(a, runs, notes)
     a.notes += notes
     return notes
 
@@ -256,6 +256,7 @@ def _table_sources(a, runs, notes):
         notes.append(f'rdram_{blk:08X}: {len(data):#x} bytes at {blk:08X} from RDRAM, unlike the ROM segment '
                      f'there (decompressed at boot): read for jump tables only, at {off:#x}')
     a.img.rom = rom
+    a.img.table_sources = a.table_sources
 
 
 def _code_runs(code):

@@ -50,6 +50,7 @@ class Image:
         self.rom = rom
         self.segments = []
         self.focus = None
+        self.table_sources = []     # learn.py: captured RDRAM read for what lies outside the walked segment
         self.text_ends = {}         # (rom, vram) -> text end, from load descriptors (segments.in_data)
 
     def seg(self, v):
@@ -73,7 +74,12 @@ class Image:
         return None
 
     def word(self, v):
-        s = self.seg(v)
+        s = None
+        if self.table_sources and not (self.focus is not None and self.focus.has(v)):
+            # captured RDRAM over a segment its boot decompressed (learn.py _table_sources): what a
+            # function outside it reads there, its jump tables (GoldenEye's at 0x8005xxxx)
+            s = next((t for t in self.table_sources if t.has(v)), None)
+        s = s or self.seg(v)
         if not s:
             return None
         o = s.rom + v - s.vram

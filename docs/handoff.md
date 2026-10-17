@@ -1359,3 +1359,27 @@ too, with the evening's switches off, and at `vzel5`'s commit
 interpreted functions (8007e64c, 80218194, 8008fe7c, 8008faf8, 8008f408,
 800902e8) and no graphics task goes out. START at 40 s, once the logo
 has settled, reaches the name entry as before (`ootlate`). Open.
+
+**GoldenEye in the Dam, and most of it recompiled (xemu, test builds,
+learning rounds 21-27, 2026-10-17 evening).** From the briefing, START
+loads the Dam: the ground, the barriers, the ammo counter (7 | 93) drawn,
+the sky a dark purple (open) and one block's texture garbled (open). What
+got its code out of the interpreter, each from the decomp:
+- Its jump tables for the 0x70000000 code sit in KSEG0 data its boot
+  decompresses (0x8002xxxx): N64Recomp read a table at the function's own
+  ROM offset. `patches/recomp/0001` reads it from the section that holds
+  it; `learn.py` makes captured KSEG0 RDRAM unlike the ROM under it into
+  function-less sections listed first (`rdram_<vram>`).
+- `tlb_manage.c` copies each 0x7F000000 page straight from the ROM: the
+  captured pages match the ROM at 0x34B30, so the analyser now makes one
+  ROM-backed segment of them (`tlb_7F000000`, 2463 functions; the boot's
+  0x70000000 copy likewise). Its own libultra copy lives there; it counts
+  as captured code for naming (left out, the boot stalled).
+- The walker read tables at 0x8005xxxx from the compressed ROM bytes and
+  gave up ("jr without a table", 93 functions, interpreted): it now reads
+  them from the RDRAM sections too.
+Functions interpreted: 158 (round 20) -> 26; refused by the recompiler:
+134 -> 8 (cop0 and `trunc.l` only). Interpreted instructions in the
+menus: 7.5 million per 300 retraces (round 26) -> about 4000 (round 27);
+the menus at 45-50 fps. The level itself with this build: round 28.
+`[MEM]` free 18608 KB; `[CLOCK]` cpu 733 MHz (xemu).
