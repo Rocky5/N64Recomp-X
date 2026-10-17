@@ -103,6 +103,10 @@ int xu_rcp_flush(void* mine) {
     return n;
 }
 
+#ifndef XRC_SP_BY_TYPE
+#define XRC_SP_BY_TYPE 1
+#endif
+
 ULTRA(osSpTaskStartGo) {
     uint32_t task = ARG(0), type = rd32(task + TK_TYPE);
     int gfx = type == M_GFXTASK;
@@ -114,9 +118,23 @@ ULTRA(osSpTaskStartGo) {
          * with a FullSync, as the RDP raises it (Blast Corps' scheduler asserts
          * on a DP done with no RDP task). -DXRC_DP_ON_FULLSYNC=0: always. */
         if (XRC_DP_ON_FULLSYNC && !xrc_gfx_task_dp()) gfx = 0;
-    } else {
+    } else if (type == M_AUDTASK || !XRC_SP_BY_TYPE) {
         s_aud++;
         xrc_audio_task(task);
+    } else {
+        /* DIVERGES: another kind of task (a JPEG or HVQ decoder) is not run;
+         * its done events go out as for any task. It used to go to the audio
+         * HLE, whose first task names the audio microcode: Ocarina of Time's
+         * JPEG task came first and every audio task after it was skipped as
+         * an "unknown audio microcode". -DXRC_SP_BY_TYPE=0: as before. */
+        static uint32_t s_seen[4];
+        int k;
+        for (k = 0; k < 4 && s_seen[k] && s_seen[k] != type + 1; k++) {}
+        if (k < 4 && !s_seen[k]) {
+            s_seen[k] = type + 1;
+            xhw_logf("[SP] task type %u (microcode %08x, %u bytes): not run", (unsigned)type,
+                     (unsigned)rd32(task + TK_UCODE), (unsigned)rd32(task + TK_UCODE_SIZE));
+        }
     }
     if (!XRC_RCP_DEFER) {
         post_done(gfx);

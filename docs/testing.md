@@ -249,6 +249,7 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_PRESENT_ON_SWAP=0` | 1 | a frame presented at the end of every graphics task, as before; otherwise, once the game calls osViSwapBuffer, at the swap to its buffer or when a task starts drawing into another swapped buffer (`gfx.c`, `f3d_interp.c`; Mario Party draws a frame in several tasks) |
 | `-DXRC_SWAP_TASKS=<n>` | 16 | tasks without a present on a swap before frames go back to the end of every task (a game whose swaps never name its buffers) |
 | `-DXRC_IPL3_LEFT=0` | 1 | low RDRAM left zero at boot; otherwise the part of the ROM's IPL3 that copies itself to RDRAM 0 is put there, as the console leaves it (`boot.c`; Banjo-Kazooie's anti-tamper reads 0xA00001D8) |
+| `-DXRC_SP_BY_TYPE=0` | 1 | every task that is not graphics goes to the audio HLE, as before; otherwise only `M_AUDTASK` does, and another type (a JPEG or HVQ decoder) is logged once and not run (Ocarina of Time's JPEG task came first and silenced its audio) |
 | `-DXRC_THREAD_RESUME=0` | 1 | osStopThread(self) parks for good, osCreateThread over a stopped thread does not restart it, osStartThread never waits for a higher priority on the same kernel level (thread.c) |
 | `N64RX_OVERLAYS=0` (env, n64rx) | unset | the analyser's old segment rule: no segment whose vram overlaps a known one, no load descriptors without a caller (segments.py) |
 | `N64RX_WITHHOLD=<vram>,...` (env, n64rx) | unset | test: those functions left out of the analysis, so the safety net runs them (the learning loop's demo) |
