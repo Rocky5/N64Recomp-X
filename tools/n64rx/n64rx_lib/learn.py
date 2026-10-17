@@ -116,18 +116,19 @@ def apply(a, learnt, rom_len):
     segment. Returns the notes for the report."""
     notes = []
     todo = {}
+    runs = _code_runs(learnt.code)
     for x in sorted(learnt.funcs):
         d = next((d for d in reversed(learnt.dmas) if d[1] <= x < d[1] + d[2]), None)
         # where overlays share the address, the one the newest DMA put there
         seg = next((s for s in a.img.segments if s.has(x) and d and s.rom - s.vram == d[0] - d[1]), None) or \
             next((s for s in a.img.segments if s.has(x) and not d), None)
         if seg is None and d is None:   # code no ROM DMA put there: the bytes the console saved
-            blk = next((v for v in learnt.code if v <= x < v + len(learnt.code[v])), None)
+            blk = next((v for v in runs if v <= x < v + len(runs[v])), None)
             if blk is not None:
                 name = f'code_{blk:08X}'
                 seg = next((s for s in a.img.segments if s.name == name), None)
                 if seg is None:
-                    data = learnt.code[blk]
+                    data = runs[blk]
                     off = (len(a.img.rom) + 0xF) & ~0xF   # appended to the build's copy of the ROM
                     a.img.rom = bytes(a.img.rom) + bytes(off - len(a.img.rom)) + data
                     seg = F.Segment(name, off, blk, len(data))
@@ -156,8 +157,52 @@ def apply(a, learnt, rom_len):
         a.funcs[name] = F.discover(a.img, seg, roots)
         notes.append(f'{name}: {len(new)} learnt functions ({", ".join(f"{x:08X}" for x in new[:8])}'
                      f'{"..." if len(new) > 8 else ""}), {len(a.funcs[name])} functions now')
+    _cross_roots(a, notes)
     a.notes += notes
     return notes
+
+
+def _code_runs(code):
+    """captured blocks that follow each other in RDRAM, joined: one segment
+    each, so a function crossing a 64 KB boundary is whole"""
+    runs, cur, end = {}, None, None
+    for v in sorted(code):
+        if cur is not None and v == end:
+            runs[cur] += code[v]
+        else:
+            cur = v
+            runs[v] = code[v]
+        end = v + len(code[v])
+    return runs
+
+
+def _cross_roots(a, notes):
+    """a call from one captured segment into another where no function starts
+    yet (Banjo-Kazooie: ~150 of them; N64Recomp refuses each caller, "No
+    function found for jal target"): a root of the segment that holds it,
+    until nothing new turns up"""
+    code = [s for s in a.img.segments if s.name.startswith('code_')]
+    if not code:
+        return
+    added = 0
+    for _round in range(8):
+        want = {}
+        for seg in a.img.segments:
+            for f in a.funcs.get(seg.name, {}).values():
+                for t in f.calls:
+                    if seg.has(t):
+                        continue
+                    holds = [c for c in code if c.has(t)]
+                    if len(holds) == 1 and t not in a.funcs.get(holds[0].name, {}):
+                        want.setdefault(holds[0].name, (holds[0], set()))[1].add(t)
+        if not want:
+            break
+        for name, (seg, xs) in want.items():
+            have = a.funcs.get(name, {})
+            a.funcs[name] = F.discover(a.img, seg, [x for x, f in have.items() if f.how != 'gap'] + sorted(xs))
+            added += len(xs)
+    if added:
+        notes.append(f'captured code: {added} functions called from another captured segment found')
 
 
 def withhold(a, xs):

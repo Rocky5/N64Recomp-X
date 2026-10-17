@@ -3,6 +3,7 @@ the SHA-1 of the normalised (z64) image. The ROM is read from where it is
 and never leaves the machine."""
 import dataclasses
 import hashlib
+import zlib
 import pathlib
 
 from . import N64rxError
@@ -12,6 +13,8 @@ ORDERS = {
     b'\x37\x80\x40\x12': 'v64',   # byte-swapped halfwords (Doctor V64)
     b'\x40\x12\x37\x80': 'n64',   # little-endian words
 }
+CIC_IPL3 = {0x6170A4A1: 6101, 0x009E9EA3: 6101, 0x90BB6CB5: 6102, 0x0B050EE0: 6103, 0x98BC2C86: 6105,
+            0xACC8580A: 6106}   # CRC-32 of the boot chip's IPL3 -> its number
 EXTENSIONS = ('.z64', '.n64', '.v64', '.rom', '.bin')
 REGIONS = {'E': 'USA', 'J': 'Japan', 'P': 'Europe', 'D': 'Germany', 'F': 'France', 'I': 'Italy', 'S': 'Spain',
            'U': 'Australia', 'A': 'Asia', 'X': 'Europe', 'Y': 'Europe'}
@@ -34,6 +37,15 @@ class Rom:
     @property
     def region(self):
         return REGIONS.get(self.code[3:4], f'region {self.code[3:4]!r}')
+
+    @property
+    def cic(self):
+        """the boot chip, from its IPL3 (ROM 0x40-0x1000, the same in every
+        game that ships with that chip): what IPL3 leaves in osCicId, which
+        games check (Conker starts its main thread only on 6105; Banjo-Kazooie
+        breaks its models unless 6103). The PAL chips share their NTSC twin's
+        IPL3 but 7102, taken as 6101."""
+        return CIC_IPL3.get(zlib.crc32(self.data[0x40:0x1000]) & 0xFFFFFFFF, 6102)
 
     def describe(self):
         return f'"{self.title}" ({self.code}, {self.region}, v1.{self.version}), {self.size // (1 << 20)} MB'

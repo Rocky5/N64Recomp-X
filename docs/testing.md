@@ -211,6 +211,8 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_ROM_CACHE_MB=<n>` | 16 | the page cache's cap (chunks held, pins included) |
 | `-DXRC_ROM_CACHE_720P_MB=<n>` | 12 | the same when the boot predicts 720p |
 | `-DXHW_ROM_IN_XBE=0` | 1 | ignore `default.xbe`'s `$ROM` section: the ROM is looked for next to the XBE (the build-side switch is `n64rx build --rom-beside`, which leaves the section out and writes the file) |
+| `-DXRC_TLB_MISS=0` | 1 | an access to an unmapped KUSEG page is a crash, as before; otherwise the crash handler's fixup runs the game's own exception code (its vector at 0x80000000, or `__osException`) and libultra's fault path, then retries (`tlb.c`) |
+| `-DXRC_TLBWR_RANDOM=0` | 1 | `tlbwr` writes the entry at Wired, as before; otherwise Random counts down from 31 to Wired, one step a write (`interp.c`) |
 | `-DXRC_TLB=0` | 1 | the TLB's entries are kept (tlbp, tlbr, `osVirtualToPhysical` still see them) but nothing is aliased: a TLB-mapped access faults as before `tlb.c` |
 | `-DXRC_KSEG1=0` | 1 | the window is not aliased at KSEG1 (`mem.c`): a recompiled access to uncached RDRAM (0xA0000000 + x) faults as before (the interpreter still goes through KSEG0) |
 | `-DXRC_MMIO=0` | 1 | no RCP register model (`mmio.c`): no register pages, and the interpreter's KSEG1 accesses past RDRAM fault as before |
@@ -237,6 +239,7 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_WATCH=<N64 address>` | unset | diagnosis: every write to that word logged with the writer's EIP and the new value (`[WATCH]`, x86 DR0; `xhw_crash.c`) |
 | `-DXRC_TLB_HELPERS=0` | 1 | the runtime's RDRAM helpers mask a KUSEG address to physical instead of translating it through the game's TLB |
 | `N64RX_TRACE=1` (env, n64rx) | unset | diagnosis: N64Recomp's `trace_mode`; the last 64 functions entered (recompiled by name, interpreted by address) are logged with a crash (`[TRACE]`, `xbox/src/rt/trace.c`) |
+| `N64RX_RECOMP_PRECHECK=0` (env, n64rx) | 1 | what N64Recomp would crash on (a jump table outside the function's segment: it reads the ROM past its end) or refuse one run at a time (a jal to no function, a cop0 register other than Status) is left to it instead of interpreted up front |
 | `-DXRC_LEARN_CODE=0` | 1 | the safety net does not save the RDRAM block of code no ROM DMA put there (`learn_code.bin`, `[LEARNCODE]`) |
 | `-DXRC_STATUS_INIT=<value>` | 0x2000FF01 | the COP0 Status a thread starts with (libultra's: COP1 usable, every interrupt line unmasked, IE) |
 | `-DXGFX_HOLD_EVICT=0` | 1 | the BACK menu never drops the game's texture cache when its held frame or card finds the texture pool full (Mario Kart 64 on red: the card was missing) |

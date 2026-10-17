@@ -32,6 +32,7 @@ typedef struct XrcGame {
     uint32_t eeprom_bytes;             /* 512 (4 Kbit), 2048 (16 Kbit), 0: none */
     const uint32_t* rom_pins;          /* [rom] pin: offset, length pairs held in the page cache */
     uint32_t num_rom_pins;
+    uint32_t cic;                      /* the boot chip, 6101..6106, from the ROM's IPL3: osCicId (0 = 6102) */
 } XrcGame;
 
 extern const XrcGame xrc_game;

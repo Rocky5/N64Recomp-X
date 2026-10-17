@@ -26,6 +26,8 @@ void xrc_tlb_write(unsigned idx, uint32_t mask, uint32_t hi, uint32_t lo0, uint3
 void xrc_tlb_read(unsigned idx, uint32_t* mask, uint32_t* hi, uint32_t* lo0, uint32_t* lo1);
 uint32_t xrc_tlb_probe(uint32_t hi);
 uint32_t xrc_tlb_to_phys(uint32_t vaddr);
+int xrc_tlb_miss(uint32_t vaddr, int store);   /* a TLB miss: the refill vector or the fault thread maps it */
+void xrc_tlb_init(void);   /* the crash handler's fixup for misses */
 
 /* mmio.c: the RCP's registers, the PIF and the cartridge through KSEG1, for
  * the interpreter (xrc_mmio_is: KSEG1 past RDRAM; -DXRC_MMIO=0: never) */
@@ -68,6 +70,7 @@ static inline void xrc_ctx_init(recomp_context* ctx, uint32_t sp) {
 #endif
 recomp_func_t* xrc_learn_lookup(uint32_t vram, uintptr_t host_caller);
 void xrc_learn_dma(uint32_t rom, uint32_t ram, uint32_t size);
+void xrc_learn_want(uint32_t lo, uint32_t hi);   /* captured code's jump table: save the RDRAM between (learn.c) */
 void xrc_ovl_dma(uint32_t rom, uint32_t ram, uint32_t size);   /* ovl.c: overlays by their DMA source */
 void xrc_learn_inval(uint32_t ram, uint32_t size);
 

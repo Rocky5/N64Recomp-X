@@ -60,6 +60,7 @@ typedef struct {
     volatile int stopped;       /* in osStopThread, until an osStartThread */
     volatile int fresh;         /* osCreateThread again on this OSThread: start over at the entry */
     void* jb[5];                /* thread_body's restart point (__builtin_setjmp) */
+    recomp_context* ctx;        /* thread_body's: its sp for interp.c's exception code */
 } Thr;
 static Thr s_thr[MAX_THREADS];
 static volatile int s_nthr;
@@ -119,6 +120,34 @@ static Thr* self(void) {
     return d;
 }
 
+/* libultra's __osRunningThread, at the address n64rx found in the thread
+ * getters (-DXRC_RUNNING_THREAD): game code reads it inline (Conker's main
+ * thread checks its own id through it; NULL+0x14 otherwise). Kept as the
+ * N64 would have it: a thread that resumes writes itself, one that blocks
+ * writes the highest-priority thread left runnable (the kernel preempts by
+ * priority, as libultra did). Without the address: nothing written. */
+#ifdef XRC_RUNNING_THREAD
+static void running_is(uint32_t t) {
+    if (t) wr32(XRC_RUNNING_THREAD, t);
+}
+static void running_next(const Thr* me) {
+    uint32_t best = 0;
+    int32_t bp = -1;
+    int i;
+    for (i = 0; i < s_nthr; i++) {
+        const Thr* d = &s_thr[i];
+        int32_t p;
+        if (d == me || !d->t || !d->kt || d->wait || d->stopped) continue;
+        p = (int32_t)rd32(d->t + TH_PRIORITY);
+        if (p > bp) bp = p, best = d->t;
+    }
+    running_is(best);
+}
+#else
+#define running_is(t) ((void)0)
+#define running_next(me) ((void)0)
+#endif
+
 /* under the lock: wake every thread sleeping on `key` (they recheck) */
 static void wake_all(uint32_t key) {
     int i;
@@ -132,10 +161,12 @@ static void wake_all(uint32_t key) {
 static void sleep_on(Thr* me, uint32_t key) {
     int n = s_depth, i;
     me->wait = key;
+    running_next(me);
     for (i = 0; i < n; i++) xu_unlock();
     xhw_event_wait(me->ev, XHW_INFINITE);
     for (i = 0; i < n; i++) xu_lock();
     me->wait = 0;
+    running_is(me->t);
 }
 
 static void park(void) {
@@ -148,6 +179,7 @@ static void park(void) {
 static void stop_wait(Thr* me) {
     if (!XRC_THREAD_RESUME || !me->t) park();
     me->stopped = 1;
+    running_next(me);
     while (me->stopped) xhw_event_wait(me->ev, XHW_INFINITE);
     if (me->fresh) __builtin_longjmp(me->jb, 1);
     wr16(me->t + TH_STATE, OS_STATE_RUNNING);
@@ -163,7 +195,9 @@ static void thread_body(void* p) {
         xhw_logf("[OS] thread %d started again: entry %08x", (int)(int32_t)rd32(d->t + TH_ID), (unsigned)d->entry);
     }
     d->fresh = 0;
+    running_is(d->t);
     xrc_ctx_init(&ctx, d->sp);
+    d->ctx = &ctx;
     ctx.r4 = (gpr)(int32_t)d->arg;
     set_cop1_cs(0);
     get_function((int32_t)d->entry)(xrc_rdram, &ctx);
@@ -402,6 +436,55 @@ static void post(int e, int jam) {
 }
 
 void xu_post_event(int e) { post(e, 0); }
+
+/* the calling N64 thread's stack pointer as its context last held it (0 for
+ * a runtime thread): interp.c runs the game's exception code below it */
+uint32_t xu_self_sp(void) {
+    Thr* me = self();
+    return me->ctx ? (uint32_t)me->ctx->r29 : 0;
+}
+
+/* libultra's fault path for a TLB miss no refill vector mapped (tlb.c):
+ * the thread stops faulted as __osException leaves it (__osFaultedThread,
+ * state stopped, flag fault, cause and badvaddr in its context) and
+ * OS_EVENT_FAULT goes out; the game's fault thread (GoldenEye's crashMain)
+ * loads the page and makes it runnable again, which this waits for (up to
+ * 10 s). The addresses come from n64rx, which finds __osException's fault
+ * path in the ROM (-DXRC_FAULTED_THREAD, -DXRC_TH_BADVADDR). 0: no fault
+ * thread, or it never let the thread go. */
+int xu_fault_wait(uint32_t vaddr, int store) {
+#if defined(XRC_FAULTED_THREAD) && defined(XRC_TH_BADVADDR)
+    Thr* me = self();
+    uint32_t t = me->t;
+    int n, i, ms;
+    if (!t || !s_events[OS_EVENT_FAULT].mq) return 0;
+    xu_lock();
+    wr32(XRC_FAULTED_THREAD, t);
+    wr32(t + XRC_TH_BADVADDR - 4, (store ? 3u : 2u) << 2);   /* context.cause: TLBS / TLBL */
+    wr32(t + XRC_TH_BADVADDR, vaddr);
+    wr16(t + TH_STATE, OS_STATE_STOPPED);
+    wr16(t + TH_FLAGS, 2);   /* OS_FLAG_FAULT */
+    me->wait = 1;
+    running_next(me);
+    post(OS_EVENT_FAULT, 0);
+    n = s_depth;
+    for (i = 0; i < n; i++) xu_unlock();
+    for (ms = 0; ms < 10000; ms++) {
+        if (rd16(t + TH_STATE) != OS_STATE_STOPPED || !(rd16(t + TH_FLAGS) & 2)) break;
+        xhw_sleep_ms(1);
+    }
+    for (i = 0; i < n; i++) xu_lock();
+    me->wait = 0;
+    wr16(t + TH_STATE, OS_STATE_RUNNING);
+    wr16(t + TH_FLAGS, 0);
+    running_is(t);
+    xu_unlock();
+    return ms < 10000;
+#else
+    (void)vaddr, (void)store;
+    return 0;
+#endif
+}
 void xu_post_event_first(int e) { post(e, 1); }
 
 /* ---- the interrupt mask ---- */

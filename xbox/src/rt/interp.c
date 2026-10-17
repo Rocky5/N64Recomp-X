@@ -74,6 +74,7 @@ typedef struct {
     uint64_t hi, lo;
     int fcc;
     int learning;          /* entered by the safety net: log the functions it runs */
+    int exc;               /* the refill vector (xrc_interp_refill): eret returns */
     int nframes;
     Frame fr[MAX_FRAMES];
 } St;
@@ -246,9 +247,23 @@ static void divu32(St* st, uint32_t a, uint32_t b) {
  * back. The TLB instructions go to tlb.c with Index (0), EntryLo0/1 (2, 3),
  * PageMask (5) and EntryHi (10), so osMapTLB / osUnmapTLBAll / __osProbeTLB
  * code the analyser did not name (the recompiler refuses it) maps for real.
- * DIVERGES: tlbwr writes the entry Random would pick as Wired (no random
- * replacement: games that use tlbwr refill on a miss we never raise). */
+ * DIVERGES: tlbwr's Random counts down from 31 to Wired, one step a write
+ * (the CPU's counts every cycle). -DXRC_TLBWR_RANDOM=0: tlbwr writes the
+ * entry at Wired, as before. */
+#ifndef XRC_TLBWR_RANDOM
+#define XRC_TLBWR_RANDOM 1
+#endif
 static uint32_t s_cop0[32];
+static uint32_t s_random = 31;
+
+static uint32_t random_index(void) {
+    uint32_t wired = s_cop0[6] & 31, i;
+    if (!XRC_TLBWR_RANDOM) return wired;
+    if (s_random < wired || s_random > 31) s_random = 31;
+    i = s_random;
+    s_random = s_random > wired ? s_random - 1 : 31;
+    return i;
+}
 
 static void tlb_op(uint32_t fn) {
     switch (fn) {
@@ -256,7 +271,7 @@ static void tlb_op(uint32_t fn) {
         xrc_tlb_read(s_cop0[0] & 31, &s_cop0[5], &s_cop0[10], &s_cop0[2], &s_cop0[3]);
         return;
     case 2: case 6:   /* tlbwi, tlbwr */
-        xrc_tlb_write((fn == 2 ? s_cop0[0] : s_cop0[6]) & 31, s_cop0[5], s_cop0[10], s_cop0[2], s_cop0[3]);
+        xrc_tlb_write((fn == 2 ? s_cop0[0] : random_index()) & 31, s_cop0[5], s_cop0[10], s_cop0[2], s_cop0[3]);
         return;
     case 8:   /* tlbp */
         s_cop0[0] = xrc_tlb_probe(s_cop0[10]);
@@ -415,13 +430,14 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
     case 14: SET(rt, s ^ uimm); return;
     case 15: SET(rt, SX32(uimm << 16)); return;
     case 16:   /* COP0: Status is the runtime's; the rest a shadow, the TLB tlb.c's */
-        if (rs == 0) { SET(rt, SX32(rd == 12 ? (uint32_t)cop0_status_read(ctx) : s_cop0[rd])); return; }
+        if (rs == 0) { SET(rt, SX32(rd == 12 && !st->exc ? (uint32_t)cop0_status_read(ctx) : s_cop0[rd])); return; }
         if (rs == 4) {
-            if (rd == 12) cop0_status_write(ctx, (gpr)t);
+            if (rd == 12 && !st->exc) cop0_status_write(ctx, (gpr)t);
             else s_cop0[rd] = (uint32_t)t;
             return;
         }
         if (rs == 16 && (fn == 1 || fn == 2 || fn == 6 || fn == 8)) { tlb_op(fn); return; }   /* tlbr, tlbwi, tlbwr, tlbp */
+        if (rs == 16 && fn == 24 && st->exc) { br->ret = 1; return; }   /* eret, from the refill vector */
         break;
     case 17: cop1(ctx, st, pc, w, br); return;
     case 24: case 25: SET(rt, s + (uint64_t)(int64_t)imm); return;
@@ -459,12 +475,12 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
 
 static uint32_t fetch(uint8_t* rdram, uint32_t pc) { return (uint32_t)MEM_W(0, pc); }
 
-static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learning, uint32_t caller) {
+static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learning, uint32_t caller, int exc) {
     St st;
     gpr saved_ra = ctx->r31;
     uint32_t pc = entry, steps = 0;
     regs_in(&st, ctx);
-    st.fcc = 0, st.learning = learning, st.nframes = 0;
+    st.fcc = 0, st.learning = learning, st.nframes = 0, st.exc = exc;
     st.r[31] = SX32(SENTINEL);
     if (learning) st.fr[st.nframes++] = (Frame){entry, SENTINEL, entry, caller};
     xrc_trace_vram(entry);   /* trace.c: what the crash report names */
@@ -532,15 +548,62 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
     ctx->r31 = saved_ra;   /* back as the caller had it */
 }
 
+/* tlb.c: a TLB miss runs the game's own exception code, as the CPU would,
+ * with BadVAddr, Context, EntryHi and Cause set, until its eret: the refill
+ * vector it put at 0x80000000 (GoldenEye's reads its page table through
+ * Context into EntryLo0/1 and tlbwr), or else its __osException
+ * (-DXRC_OS_EXCEPTION from n64rx: Conker's sends a miss in its paged range
+ * to its own handler, which decompresses the page and maps it; libultra's
+ * leaves the thread faulted, and thread.c's fault path follows). It runs
+ * on a scratch register file with the stack below the thread's (its saves
+ * and the dispatcher's restore touch nothing the runtime reads), Status a
+ * shadow, and __osRunningThread put back after (the dispatcher pops the
+ * game's run queue, which the runtime does not keep). One at a time.
+ * 0: nothing to run. */
+uint32_t xu_self_sp(void);   /* ultra/thread.c */
+int xrc_interp_refill(uint32_t vaddr, int store) {
+    static volatile long s_busy;
+    uint8_t* rdram = xrc_rdram;
+    recomp_context ctx;
+    uint32_t start = fetch(rdram, 0x80000000u) ? 0x80000000u : 0, sp;
+#ifdef XRC_OS_EXCEPTION
+    if (!start) start = XRC_OS_EXCEPTION;
+#endif
+#ifdef XRC_RUNNING_THREAD
+    uint32_t running;
+#endif
+    if (!start) return 0;
+    while (__sync_lock_test_and_set(&s_busy, 1)) xhw_sleep_ms(0);
+    memset(&ctx, 0, sizeof ctx);
+    ctx.f_odd = &ctx.f0.u32h;
+    sp = xu_self_sp();
+    ctx.r29 = (gpr)(int32_t)((sp ? sp : 0x80000400u) - 0x400u);
+    s_cop0[8] = vaddr;                                                    /* BadVAddr */
+    s_cop0[4] = (s_cop0[4] & 0xFF800000u) | ((vaddr >> 9) & 0x007FFFF0u);  /* Context: PTEBase | BadVPN2 */
+    s_cop0[10] = (vaddr & 0xFFFFE000u) | (s_cop0[10] & 0xFFu);            /* EntryHi: VPN2 | ASID */
+    s_cop0[13] = (store ? 3u : 2u) << 2;                                  /* Cause: TLBS / TLBL */
+    s_cop0[12] = 0x2000FF03u;                                             /* Status: EXL, interrupts on */
+    s_cop0[14] = 0;                                                       /* EPC: not known */
+#ifdef XRC_RUNNING_THREAD
+    running = (uint32_t)MEM_W(0, XRC_RUNNING_THREAD);
+#endif
+    run(rdram, &ctx, start, 0, 0, 1);
+#ifdef XRC_RUNNING_THREAD
+    MEM_W(0, XRC_RUNNING_THREAD) = (int32_t)running;
+#endif
+    __sync_lock_release(&s_busy);
+    return 1;
+}
+
 static unsigned s_logged;
 
 void xrc_interp(uint8_t* rdram, recomp_context* ctx, uint32_t entry) {
     if (s_logged < 16) s_logged++, xhw_logf("[INTERP] %08x: hand-written code, interpreted", (unsigned)entry);
-    run(rdram, ctx, entry, 0, 0);
+    run(rdram, ctx, entry, 0, 0, 0);
 }
 
 /* learn.c's safety net: code the analyser missed */
 void xrc_interp_learn(uint8_t* rdram, recomp_context* ctx, uint32_t entry, uint32_t caller);
 void xrc_interp_learn(uint8_t* rdram, recomp_context* ctx, uint32_t entry, uint32_t caller) {
-    run(rdram, ctx, entry, 1, caller);
+    run(rdram, ctx, entry, 1, caller, 0);
 }

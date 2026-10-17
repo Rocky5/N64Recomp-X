@@ -54,6 +54,9 @@ recomp_func_t* xrc_try_function(uint32_t vram) { return vram == 0x80003000u ? kn
 static struct { uint32_t vram, len, caller; } s_learnt[8];
 static int s_nlearnt;
 void xrc_trace_vram(uint32_t vram) { (void)vram; }   /* trace.c: nothing to record on the host */
+void xhw_sleep_ms(uint32_t ms) { (void)ms; }
+int xu_fault_wait(uint32_t vaddr, int store) { (void)vaddr; (void)store; return 0; }   /* ultra/thread.c */
+void xhw_crash_set_fixup(int (*fn)(uint32_t host, int write)) { (void)fn; }
 void xrc_learn_func(uint32_t vram, uint32_t len, uint32_t caller) {
     if (s_nlearnt < 8) s_learnt[s_nlearnt].vram = vram, s_learnt[s_nlearnt].len = len, s_learnt[s_nlearnt++].caller = caller;
 }
@@ -326,6 +329,37 @@ static void t_misc(void) {
     CHECK("stop pc", s_fatal_pc, ENTRY + 4);
 }
 
+/* a TLB miss (tlb.c xrc_tlb_miss): the game's refill vector at 0x80000000 runs
+ * with Context set, fills EntryLo0/1 from its table and tlbwr; eret returns */
+int xrc_interp_refill(uint32_t vaddr, int store);
+uint32_t xu_self_sp(void) { return 0x8000F000u; }
+static void t_refill(void) {
+    static const uint32_t vec[] = {
+        IT(16, 0, k0, 4 << 11) /* mfc0 k0, Context */, LUI(k1, 0x8000), ORI(k1, k1, 0x8000),
+        IT(43, k1, k0, 0x10) /* sw k0, 0x10(k1) */, IT(35, k1, k1, 0) /* lw k1, 0(k1) */,
+        IT(16, 4, k1, 2 << 11) /* mtc0 EntryLo0 */, ADDIU(k1, k1, 0x40), IT(16, 4, k1, 3 << 11) /* EntryLo1 */,
+        IT(16, 4, zero, 5 << 11) /* PageMask */, 0x42000006u /* tlbwr */, 0x42000018u /* eret */, NOP};
+    static const uint32_t preamble[] = {LUI(k0, 0x8000), ADDIU(k0, k0, 0x1000), RT(8, k0, 0, 0, 0) /* jr k0 */, NOP};
+    fresh();
+    s_nalias = 0;
+    memset(s_ram, 0, 0x80);
+    CHECK("refill: no vector", xrc_interp_refill(0x7F002000u, 0), 0);
+    put(0x80000000u, vec, (int)(sizeof vec / 4));
+    wr32(0x80008000u, ((0x6000u >> 12) << 6) | 0x1F);
+    CHECK("refill: eret", xrc_interp_refill(0x7F002345u, 0), 1);
+    CHECK("refill: Context", rd32(0x80008010u) & 0x7FFFF0u, (0x7F002345u >> 9) & 0x7FFFF0u);
+    CHECK("refill: even page", xrc_tlb_to_phys(0x7F002345u), 0x6345);
+    CHECK("refill: odd page", xrc_tlb_to_phys(0x7F003010u), 0x7010);
+    CHECK("refill: aliased", s_nalias, 2);
+    CHECK("refill: host", s_alias[0][0], (uint32_t)(uintptr_t)(xrc_rdram + 0x7F002000u));
+    put(0x80000000u, preamble, 4);   /* libultra's preamble: into __osException (here an eret) */
+    wr32(0x80001000u, 0x42000018u);
+    CHECK("refill: through the preamble", xrc_interp_refill(0x7F004000u, 1), 1);
+    CHECK("refill: nothing mapped", xrc_tlb_to_phys(0x7F004000u), 0xFFFFFFFFu);
+    CHECK("refill: Status untouched", C.status_reg, 0);
+    memset(s_ram, 0, 0x80);
+}
+
 int main(void) {
     xrc_rdram = s_ram - 0x80000000u;
     t_int();
@@ -333,6 +367,7 @@ int main(void) {
     t_branch();
     t_fpu();
     t_misc();
+    t_refill();
     printf("test_interp (%s registers): %s\n", XRC_GPR32 ? "32-bit" : "64-bit", s_fail ? "FAILED" : "passed");
     return s_fail != 0;
 }

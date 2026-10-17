@@ -133,6 +133,29 @@ static void (*s_extra)(void);
 
 void xhw_crash_set_extra(void (*fn)(void)) { s_extra = fn; }
 
+/* an access fault the runtime may resolve before it is a crash: the N64's
+ * TLB miss (rt/tlb.c: the game's refill vector or its fault thread maps the
+ * page, which is then aliased), retried when it returns 1. Not re-entered on
+ * the thread already in it (a fault inside the fixup is a crash). */
+static int (*s_fixup)(uint32_t host, int write);
+static volatile PKTHREAD s_fixup_owner[8];
+void xhw_crash_set_fixup(int (*fn)(uint32_t host, int write)) { s_fixup = fn; }
+
+static int try_fixup(const EXCEPTION_RECORD* er) {
+    PKTHREAD me = KeGetCurrentThread();
+    int i, slot = -1, ok;
+    if (!s_fixup || (ULONG)er->ExceptionCode != 0xC0000005u || er->NumberParameters < 2) return 0;
+    if (KeGetCurrentIrql() >= DISPATCH_LEVEL) return 0;
+    for (i = 0; i < 8; i++)
+        if (s_fixup_owner[i] == me) return 0;   /* faulted inside the fixup */
+    for (i = 0; i < 8 && slot < 0; i++)
+        if (InterlockedCompareExchange((LONG*)&s_fixup_owner[i], (LONG)me, 0) == 0) slot = i;
+    if (slot < 0) return 0;
+    ok = s_fixup((uint32_t)er->ExceptionInformation[1], er->ExceptionInformation[0] != 0);
+    s_fixup_owner[slot] = NULL;
+    return ok;
+}
+
 static volatile uint32_t s_watch;
 static volatile LONG s_watch_hits;
 
@@ -163,6 +186,7 @@ __attribute__((cdecl)) static int on_exception(EXCEPTION_RECORD* er, void* frame
     (void)dc;
     if (er->ExceptionFlags & EXCEPTION_UNWIND) return DISP_CONTINUE_SEARCH;
     if (s_watch && (ULONG)er->ExceptionCode == 0x80000004u) return on_watch(cx);
+    if (try_fixup(er)) return DISP_CONTINUE_EXECUTION;
     if (InterlockedExchange((LONG*)&s_in_crash, 1)) {
         if (KeGetCurrentIrql() < DISPATCH_LEVEL)
             for (;;) Sleep(1000);

@@ -40,6 +40,10 @@ void pause_self(uint8_t* rdram) { (void)rdram; }
 recomp_func_t* xrc_try_function(uint32_t vram) { (void)vram; return NULL; }
 void xrc_learn_func(uint32_t vram, uint32_t len, uint32_t caller) { (void)vram, (void)len, (void)caller; }
 void xrc_trace_vram(uint32_t vram) { (void)vram; }
+void xhw_sleep_ms(uint32_t ms) { (void)ms; }
+int xu_fault_wait(uint32_t vaddr, int store) { (void)vaddr; (void)store; return 0; }   /* ultra/thread.c */
+uint32_t xu_self_sp(void) { return 0; }
+void xhw_crash_set_fixup(int (*fn)(uint32_t host, int write)) { (void)fn; }
 
 void xu_post_event(int e) { s_ev |= 1u << e; }
 void xu_post_event_first(int e) { s_evfirst |= 1u << e; }

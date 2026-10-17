@@ -66,3 +66,70 @@ def cflags(pack, rom_data: bytes):
                 addr, size = found
                 return [f'-DXRC_CONT_MAX_ADDR=0x{addr:08X}u', f'-DXRC_CONT_MAX_SIZE={size}']
     return []
+
+
+def running_thread(pack, rom_data: bytes):
+    """-DXRC_RUNNING_THREAD=<addr>: libultra's __osRunningThread, from the
+    thread getters (osGetThreadId / osGetThreadPri, or the game's own
+    copies): bnez a0; lui a0, hi; lw a0, lo(a0). Game code reads it inline
+    (Conker's main: the running thread's id), so the runtime keeps it."""
+    for sec in _syms(pack):
+        for f in sec.get('functions', []):
+            if f.get('name', '').split('__')[0] not in ('osGetThreadId', 'osGetThreadPri'):
+                continue
+            off = sec['rom'] + (f['vram'] - sec['vram'])
+            ws = [int.from_bytes(rom_data[off + i:off + i + 4], 'big') for i in range(0, min(f.get('size', 0x20), 0x20), 4)]
+            for i, w in enumerate(ws[:-1]):
+                n = ws[i + 1]
+                if w >> 26 == 15 and n >> 26 == 35 and (n >> 21) & 31 == (w >> 16) & 31:   # lui r, hi; lw x, lo(r)
+                    lo = n & 0xFFFF
+                    addr = ((w & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF
+                    if 0x80000000 <= addr < 0x80800000:
+                        return [f'-DXRC_RUNNING_THREAD=0x{addr:08X}u']
+    return []
+
+
+def faulted_thread(rom_data: bytes):
+    """-DXRC_FAULTED_THREAD=<addr> -DXRC_TH_BADVADDR=<off>: libultra's
+    __osFaultedThread and the offset of context.badvaddr in OSThread, from
+    __osException's fault path (sw k0, __osFaultedThread; state 1; flags 2;
+    mfc0 t2, BadVAddr; sw t2, badvaddr(k0)), for the runtime's TLB-miss
+    fault path (rt/ultra/thread.c). The last copy found: a game's own,
+    beside its boot loader's."""
+    key = bytes.fromhex('24090001A749001024090002A7490012')
+    found, i = None, rom_data.find(key)
+    while i >= 0:
+        o = i - 8
+        if o >= 0 and i % 4 == 0:
+            w0, w1 = (int.from_bytes(rom_data[o + k:o + k + 4], 'big') for k in (0, 4))
+            w6, w7 = (int.from_bytes(rom_data[i + 16 + k:i + 20 + k], 'big') for k in (0, 4))
+            if w0 >> 16 == 0x3C01 and w1 >> 16 == 0xAC3A and w6 == 0x400A4000 and w7 >> 16 == 0xAF4A:
+                lo = w1 & 0xFFFF
+                addr = ((w0 & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF
+                if 0x80000000 <= addr < 0x80800000:
+                    found = (addr, w7 & 0xFFFF)
+        i = rom_data.find(key, i + 4)
+    if not found:
+        return []
+    return [f'-DXRC_FAULTED_THREAD=0x{found[0]:08X}u', f'-DXRC_TH_BADVADDR=0x{found[1]:X}u']
+
+
+def os_exception(rom_data: bytes):
+    """-DXRC_OS_EXCEPTION=<vram>: libultra's __osException, from
+    __osExceptionPreamble (lui k0, hi; addiu k0, lo; jr k0; nop) followed by
+    __osException's start (lui k0; addiu k0; sd at, 0x20(k0); mfc0 k1,
+    Status). The runtime does not install the preamble (its osInitialize is
+    its own); a TLB miss runs the game's exception code from here (rt/interp.c:
+    Conker's pages its code in from it). The last copy found: a game's own."""
+    key = bytes.fromhex('FF410020401B6000')
+    found, i = None, rom_data.find(key)
+    while i >= 0:
+        o = i - 24
+        if o >= 0 and i % 4 == 0:
+            w = [int.from_bytes(rom_data[o + 4 * k:o + 4 * k + 4], 'big') for k in range(6)]
+            if w[0] >> 16 == 0x3C1A and w[1] >> 16 == 0x275A and w[2] == 0x03400008 and w[3] == 0 \
+                    and w[4] >> 16 == 0x3C1A and w[5] >> 16 == 0x275A:
+                lo = w[1] & 0xFFFF
+                found = ((w[0] & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF
+        i = rom_data.find(key, i + 4)
+    return [f'-DXRC_OS_EXCEPTION=0x{found:08X}u'] if found else []

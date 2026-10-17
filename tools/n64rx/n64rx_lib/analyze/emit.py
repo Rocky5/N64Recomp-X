@@ -219,3 +219,98 @@ def cross_funcs(a: Analysis, live, nm, replaced):
                     out[x] = nm[x]
                     break
     return out
+
+
+def _n64recomp_tables(ws, vram):
+    """the jump tables N64Recomp's analysis finds in a function (its
+    analysis.cpp, a straight pass over the words: lui, one addiu, an addu of
+    an index, lw, jr), as table vrams"""
+    from .mips import Ins
+    fresh = lambda: {'lui': None, 'addiu': None, 'addend': False, 'loaded': None}
+    regs = [fresh() for _ in range(32)]
+    stack, out = {}, []
+    for i, w in enumerate(ws):
+        ins = Ins(w, vram + 4 * i)
+        op, rs, rt, rd = ins.op, ins.rs, ins.rt, ins.rd
+        if op == 15:                                         # lui
+            regs[rt] = fresh()
+            regs[rt]['lui'] = (ins.simm << 16) & 0xFFFFFFFF
+        elif op == 9:                                        # addiu
+            st = dict(regs[rs])
+            if st['addiu'] is None:
+                st['addiu'] = ins.simm
+            else:
+                st = fresh()
+            regs[rt] = st
+        elif op == 0 and ins.funct == 33:                    # addu: a lui register plus another
+            lr, ar = (regs[rs]['lui'] is not None), (regs[rt]['lui'] is not None)
+            if lr != ar:
+                st = dict(regs[rs] if lr else regs[rt])
+                st['addend'] = True
+            else:
+                st = fresh()
+            regs[rd] = st
+        elif op == 0 and ins.funct in (45, 37):              # daddu, or: a move copies
+            regs[rd] = dict(regs[rt]) if rs == 0 else dict(regs[rs]) if rt == 0 else fresh()
+        elif op == 43 and rs == 29:                          # sw to the stack
+            stack[ins.imm] = dict(regs[rt])
+        elif op == 35:                                       # lw
+            st = fresh()
+            if rs == 29:
+                st = dict(stack.get(ins.imm, fresh()))
+            elif regs[rs]['lui'] is not None and regs[rs]['addend']:
+                if not (ins.imm and regs[rs]['addiu'] is not None):
+                    lo = ins.simm if ins.imm else (regs[rs]['addiu'] or 0)
+                    st['loaded'] = (regs[rs]['lui'] + lo) & 0xFFFFFFFF
+            regs[rt] = st
+        elif ins.is_jr and rs != 31:
+            if regs[rs]['loaded'] is not None:
+                out.append(regs[rs]['loaded'])
+        elif ins.dest is not None:
+            regs[ins.dest] = fresh()
+    return sorted(out)
+
+
+def recomp_hazards(a: Analysis, live, nm, replaced):
+    """live functions N64Recomp would crash on or refuse one run at a time:
+    a jump table it reads outside the function's own segment (it takes the
+    table to sit in the function's segment and reads the ROM past its end:
+    a segfault, Conker's TLB-mapped code with its tables in KSEG0), and a
+    jal to an address where no segment has a function and that is not in the
+    caller's own segment ("No function found for jal target": Banjo-Kazooie's
+    captured code, ~150 callers, one recompiler run each). The runtime's
+    interpreter runs them; also a cop0 register other than Status, which
+    N64Recomp refuses. Returns {vram: (name, why, want)}: `want`, the RDRAM
+    range from the function to its table when the function is captured code
+    (learn.py): the console saves it, the next build has both in one segment"""
+    from .mips import Ins, words
+    rom = a.img.rom
+    starts = {x for fs in a.funcs.values() for x in fs}
+    out = {}
+    for seg in a.img.segments:
+        for x, f in a.funcs.get(seg.name, {}).items():
+            if x not in live or nm[x] in replaced:
+                continue
+            n = (f.end - f.start) // 4
+            off = seg.rom + (f.start - seg.vram)
+            ws = words(rom, off, n)
+            why, want = None, None
+            for i, w in enumerate(ws):
+                ins = Ins(w, f.start + 4 * i)
+                if ins.is_jal and not seg.has(ins.target) and ins.target not in starts:
+                    why = f'jal {ins.target:08X}: no function there'
+                    break
+                if ins.op == 16 and ins.rs in (0, 4) and ins.rd != 12:   # mfc0/mtc0: N64Recomp takes Status only
+                    why = f'{"mfc0" if ins.rs == 0 else "mtc0"} of cop0 register {ins.rd}'
+                    break
+            if why is None:
+                for t in _n64recomp_tables(ws, f.start):
+                    r = (t - f.start + off) & 0xFFFFFFFF
+                    if not seg.has(t) or r + 4 > len(rom):
+                        why = f'jump table at {t:08X}, outside its segment'
+                        if seg.name.startswith('code_') and 0x80000000 <= t < 0x80800000:
+                            want = (min(f.start, t), max(f.end, t + 4))
+                        break
+            if why:
+                out[x] = (nm[x], why, want)
+    return out

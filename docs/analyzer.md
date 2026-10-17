@@ -25,7 +25,7 @@ machine and stays in their build folder.
 | features | `features.py` | per function, a straight-line value tracker: calls, COP0 and FPU control registers, cache ops, TLB ops, hardware registers (VI, AI, PI, SI, SP, DP, MI by address), loads and stores at argument + offset, through pointers read from globals (and what was stored), 64-bit ops, `ddiv`/`dmult` kinds. Delay slots run before the call clobbers. |
 | libultra | `libultra.py` | names by behaviour, no fingerprints: COP0/cache anchors (`__osDisableInt`, `osGetCount`, `osWritebackDCache`...), hardware anchors (`osAiSetFrequency`, `osPiRawStartDma`, `__osSiRawStartDma`, `__osViSwapContext`...), then the call graph and libultra's struct offsets (OSMesgQueue, OSThread, OSIoMesg, OSTimer, the VI context behind `__osViNext`), IDO's 64-bit helpers by their one `ddiv`/`dmult`, the TLB writers by their arguments (`osMapTLB`, `osUnmapTLB`, `osUnmapTLBAll`, `osMapTLBRdb`). Rules run to a fixed point; a name is given only when exactly one candidate fits (the hardware rules try every function first). |
 | liveness | `emit.py` `reachable` | the game's code reached from the entry, main, function addresses in data (in the segments and anywhere else in the ROM: scripts, display-list callbacks) and in code, with the edges out of the functions the runtime replaces cut. Dead code (libultra's internals only replaced functions reached) is not recompiled. |
-| output | `emit.py`, `../romonly.py` | the symbol file, `recomp.toml` (ignored = dead + interpreted; a real pack's patches mapped by address), `interp.txt`, the report. Interpreted: hand-written code (a return through a register other than ra), live functions that reach the RCP's registers by a fixed address and are not replaced (`emit.hw_funcs`, `N64RX_MMIO_INTERP=0`), and functions with a branch or `j` into another function's body or to code no function holds (`emit.cross_funcs`, `N64RX_XBRANCH_INTERP=0`: C cannot jump to another function's label). Without a pack the title is the header's ASCII, the title ID `0x4E52` + a hash of the game code, the save type from a facts table or 4 Kbit when the game probes the EEPROM (SRAM and Flash decided at run time). Yaz0 games are inflated before all this (`yaz0.py`). |
+| output | `emit.py`, `../romonly.py` | the symbol file, `recomp.toml` (ignored = dead + interpreted; a real pack's patches mapped by address), `interp.txt`, the report. Interpreted: hand-written code (a return through a register other than ra), live functions that reach the RCP's registers by a fixed address and are not replaced (`emit.hw_funcs`, `N64RX_MMIO_INTERP=0`), and functions with a branch or `j` into another function's body or to code no function holds (`emit.cross_funcs`, `N64RX_XBRANCH_INTERP=0`: C cannot jump to another function's label). Before N64Recomp runs, what it would crash on or refuse one run at a time (`emit.recomp_hazards`, `N64RX_RECOMP_PRECHECK=0`): a jump table outside the function's own segment (N64Recomp's analysis takes the table to be in the function's section and reads the ROM past its end: Conker's TLB-mapped code with its tables in KSEG0 segfaulted it; the finder mirrors its `analysis.cpp`), a `jal` to an address with no function outside the caller's segment, an `mfc0`/`mtc0` of a cop0 register other than Status. The boot chip (`rom.cic`, the CRC-32 of IPL3) goes to `osCicId`: Conker starts its main thread only on 6105, Banjo-Kazooie checks 6103. Without a pack the title is the header's ASCII, the title ID `0x4E52` + a hash of the game code, the save type from a facts table or 4 Kbit when the game probes the EEPROM (SRAM and Flash decided at run time). Yaz0 games are inflated before all this (`yaz0.py`). |
 
 ## What the runtime adds for ROM-only builds
 
@@ -103,9 +103,16 @@ machine and stays in their build folder.
    second copy of libultra (beside a boot loader's) is named separately: a
    name the loader's copy already has becomes `<name>__2`, left out of the
    recompile and forwarded to the runtime's by `gen/xrc_alias.c`.
-   Banjo-Kazooie (xemu): nine rounds, 4838 functions in 20 captured
-   segments, 96 libultra functions named, its audio running; it stops on
-   a heap block reused while still in its spawnable-actor list (open).
+   Captured blocks that follow each other in RDRAM are one segment (a
+   function crossing a 64 KB boundary is whole); a call from one captured
+   segment into another where no function starts yet is a root there. A
+   function interpreted because its jump table is in RDRAM no capture holds
+   asks for it: its interpreter stub calls `xrc_learn_want` the first time
+   it runs (`want.txt`), and the console saves the blocks from the code to
+   the table. The register width is decided on what N64Recomp reads (the
+   ROM plus the captured code): Banjo-Kazooie's `bkmemcpy64` copies with
+   `ld`/`sd`, and on 32-bit registers every `bk_realloc` lost half of each
+   doubleword (the heap block found reused under its spawnable-actor list).
 
 `N64RX_WITHHOLD=<vram>,...` (a test switch) takes functions out of the
 analysis as if it had missed them; a function the learn file names is never

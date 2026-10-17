@@ -98,6 +98,9 @@ void* xhw_alias_page(uint32_t va);
 void xhw_watch_write(uint32_t host);
 /* a report the runtime adds to a crash (rt/trace.c: the functions entered last) */
 void xhw_crash_set_extra(void (*fn)(void));
+/* an access fault the runtime may resolve (the N64's TLB miss, rt/tlb.c):
+ * host address and read/write; 1 = resolved, the instruction runs again */
+void xhw_crash_set_fixup(int (*fn)(uint32_t host, int write));
 /* 128 MB consoles run as 64 MB ones (xhw_ramlock.c): call first in main_body.
  * _log writes the [MEM] line once the log is open. */
 void xhw_ram_lock64(void);

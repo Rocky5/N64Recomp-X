@@ -129,3 +129,77 @@ uint32_t xrc_tlb_to_phys(uint32_t vaddr) {
     }
     return ~0u;
 }
+
+/* ---- a miss: the N64's TLB refill and TLB invalid exceptions ----
+ * Code and data a game pages in on demand (GoldenEye's 0x7F000000 from the
+ * ROM; Conker jumps to 0x15000000 before anything maps it) fault on the
+ * Xbox, unmapped at rdram + vaddr. The crash handler asks here first
+ * (xhw_crash_set_fixup): the game's refill vector at 0x80000000 runs
+ * (interp.c), and if the entry is still not valid, libultra's fault path
+ * (ultra/thread.c: the thread stops faulted, OS_EVENT_FAULT goes to the
+ * game's fault thread, which loads the page and makes it runnable again);
+ * then the page is aliased and the instruction runs again.
+ * DIVERGES: EPC is not given (the fault thread does not read it); a page
+ * whose host range cannot be aliased (KUSEG addresses that land on the
+ * kernel's map, GoldenEye's) stays a crash.
+ * Kill switch: -DXRC_TLB_MISS=0 (a miss is a crash, as before). */
+#ifndef XRC_TLB_MISS
+#define XRC_TLB_MISS 1
+#endif
+int xrc_interp_refill(uint32_t vaddr, int store);   /* interp.c */
+int xu_fault_wait(uint32_t vaddr, int store);       /* ultra/thread.c */
+
+/* the entry that maps vaddr, valid, and aliased on the host: 1 */
+static int aliased(uint32_t vaddr, int* valid) {
+    unsigned i;
+    *valid = 0;
+    for (i = 0; i < NENT; i++) {
+        const Ent* e = &s_ent[i];
+        uint32_t sz = page_bytes(e->mask), base = vpn2(e);
+        if (vaddr - base < 2 * sz) {
+            int k = (vaddr - base) >= sz;
+            if (!(e->lo[k] & LO_V)) continue;
+            *valid = 1;
+            if (e->bytes[k]) return 1;
+        }
+    }
+    return 0;
+}
+
+int xrc_tlb_miss(uint32_t vaddr, int store) {
+    static unsigned s_n;
+    int i, valid, how = 0;
+    for (i = 0; i < 8; i++) {
+        if (aliased(vaddr, &valid)) break;
+        if (valid) {   /* mapped, but the host range is taken */
+            if (s_n < 32) s_n++, xhw_logf("[TLB] miss %08x: mapped but not aliased (the host range is in use)",
+                                          (unsigned)vaddr);
+            return 0;
+        }
+        if (xrc_interp_refill(vaddr, store)) {
+            how |= 1;
+            if (aliased(vaddr, &valid)) break;
+        }
+        if (!xu_fault_wait(vaddr, store)) {
+            if (s_n < 32) s_n++, xhw_logf("[TLB] miss %08x (%s): the game's exception code did not map it and "
+                                          "no fault thread took it", (unsigned)vaddr, store ? "store" : "load");
+            return 0;
+        }
+        how |= 2;
+    }
+    if (i == 8) return 0;
+    if (s_n < 32) s_n++, xhw_logf("[TLB] miss %08x (%s): mapped by %s", (unsigned)vaddr, store ? "store" : "load",
+                                  how == 3 ? "the fault thread and the game's exception code" : how == 2 ? "the fault thread"
+                                  : how == 1 ? "the game's exception code" : "another thread");
+    return 1;
+}
+
+static int fixup(uint32_t host, int write) {
+    uint32_t v = host - (uint32_t)(uintptr_t)xrc_rdram;
+    if (v >= 0x80000000u) return 0;   /* KSEG0/1 are always there: a real crash */
+    return xrc_tlb_miss(v, write);
+}
+
+void xrc_tlb_init(void) {
+    if (XRC_TLB && XRC_TLB_MISS) xhw_crash_set_fixup(fixup);
+}

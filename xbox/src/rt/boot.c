@@ -130,7 +130,7 @@ static void boot_block(void) {
     wr32(0x80000304, 0);                 /* osRomType: cartridge */
     wr32(0x80000308, 0xB0000000u);       /* osRomBase */
     wr32(0x8000030C, 0);                 /* osResetType: cold */
-    wr32(0x80000310, 2);                 /* osCicId: 6102 */
+    wr32(0x80000310, xrc_game.cic ? xrc_game.cic : 6102);   /* osCicId: the chip's number (Conker, Banjo check it) */
     wr32(0x80000314, 0);                 /* osVersion */
     wr32(0x80000318, xrc_rdram_size);    /* osMemSize */
     for (i = 0; i < 64; i += 4) wr32(0x8000031C + i, 0);   /* osAppNMIBuffer */
@@ -165,9 +165,16 @@ static void game(void) {
     if (!xrc_mem_init(xrc_game.rdram_mb ? xrc_game.rdram_mb : 4))
         xhw_fatal("Out of memory", "No room for the N64's RAM.");
     boot_block();
+    xrc_tlb_init();   /* a TLB miss goes to the game's refill vector or fault thread (tlb.c) */
     boot = xrc_game.boot_size;
     if (boot > info.size - 0x1000) boot = info.size - 0x1000;
     xu_rom_to_rdram(0x1000, xrc_game.entrypoint, boot);   /* the IPL3's copy */
+    /* DIVERGES: the 6105 boot chip's IPL3 leaves boot magic in RDRAM that
+     * games check (OoT's CIC6105_SaveBootMagicValues reads 0x2FE1C0;
+     * Donkey Kong 64's boot waits until it holds IPL3's own word at ROM
+     * 0x750). The word is copied from the ROM's IPL3; the second value
+     * (0x2FB1F4) is not known and stays 0. */
+    if (xrc_game.cic == 6105) xu_rom_to_rdram(0x750, 0x802FE1C0u, 4);
     xhw_logf("[RECOMP] boot segment: %u KB from ROM 0x1000 to %08x", (unsigned)(boot >> 10),
              (unsigned)xrc_game.entrypoint);
 

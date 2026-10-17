@@ -99,6 +99,18 @@ def make(rom, bdir, base=None, learnt=None):
     # (N64RX_XBRANCH_INTERP=0: recompiled, the compile then fails as before)
     if os.environ.get('N64RX_XBRANCH_INTERP', '1') != '0':
         interp.update({x: n for x, n in emit.cross_funcs(a, live, nm, replaced).items() if n not in ignored})
+    # what N64Recomp would crash on (a jump table outside the function's segment) or refuse one run at a
+    # time (a jal to no function): interpreted up front (N64RX_RECOMP_PRECHECK=0: left to the recompiler)
+    if os.environ.get('N64RX_RECOMP_PRECHECK', '1') != '0':
+        hz = {x: v for x, v in emit.recomp_hazards(a, live, nm, replaced).items() if v[0] not in ignored and x != a.entry}
+        interp.update({x: n for x, (n, _why, _want) in hz.items()})
+        if hz:
+            a.notes.append(f'{len(hz)} functions the recompiler would refuse or crash on, interpreted: ' +
+                           ', '.join(f'{n} ({why})' for n, why, _w in list(hz.values())[:6]) + ('...' if len(hz) > 6 else ''))
+        # captured code whose jump table is in RDRAM no capture holds yet: its stub asks the console to save
+        # the blocks from the code to the table (learn.c xrc_learn_want), for the next --learn round
+        (pdir / 'want.txt').write_text(''.join(f'{n} 0x{w[0]:08X} 0x{w[1]:08X}\n' for n, _why, w in hz.values() if w),
+                                       encoding='utf-8')
     ignored |= set(interp.values())
     (pdir / 'interp.txt').write_text(''.join(f'{n} 0x{x:08X}\n' for x, n in sorted(interp.items())),
                                      encoding='utf-8')

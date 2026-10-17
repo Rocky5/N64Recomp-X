@@ -158,6 +158,15 @@ static void capture(uint32_t vram) {
     emit(line);
 }
 
+/* the blocks [lo, hi) the build asks for: captured code whose jump table
+ * sits in RDRAM no capture holds yet (n64rx's want.txt; the function's
+ * interpreter stub calls this the first time it runs, when its table is
+ * loaded with it) */
+void xrc_learn_want(uint32_t lo, uint32_t hi) {
+    uint32_t v;
+    for (v = lo & ~(CODE_BLOCK - 1); v < hi; v += CODE_BLOCK) capture(v);
+}
+
 static void log_one(Learnt* e) {
     char line[80];
     uint32_t phys = e->vram & 0x1FFFFFFFu;

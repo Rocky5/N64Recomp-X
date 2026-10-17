@@ -578,3 +578,31 @@ tables, in kernel space the kernel did not map at boot (the sweep's faults
 there show it); if a page cannot be had it is logged and that block faults
 as before. Kill switches: `-DXRC_KSEG1=0`, `-DXRC_MMIO=0`,
 `N64RX_MMIO_INTERP=0`.
+
+## A TLB miss runs the game's own exception code (2026-10-16, Rare's games)
+
+Rare's games page in on demand: GoldenEye's refill vector at 0x80000000
+fills EntryLo from a page table through Context and tlbwr, and a miss on
+an invalid page goes through libultra's fault path to its fault thread
+(`crashMain`), which loads the page from the ROM; Conker's
+`__osException` sends a miss in 0x15000000-0x151FC000 to its own handler,
+which decompresses the page and maps it. On the Xbox the access faults at
+rdram + vaddr. Chosen: the crash handler asks the runtime first
+(`xhw_crash_set_fixup`); `tlb.c` runs the game's own exception code in the
+interpreter as the CPU would (BadVAddr, Context, EntryHi, Cause set; the
+vector if the game wrote one, else its `__osException`, found by n64rx
+through `__osExceptionPreamble`) until its eret, on a scratch register
+file with the stack below the thread's; if the page is still not valid,
+libultra's fault path (`thread.c`: `__osFaultedThread`, the thread
+stopped and flagged, OS_EVENT_FAULT out, wait until the game makes it
+runnable). Then the page is aliased and the instruction runs again.
+Rejected: emulating each game's paging in C (game knowledge in the
+runtime; the analyser finds the libultra pieces by their shape instead).
+Open: a KUSEG page whose host address lands on the kernel's map
+(GoldenEye's 0x7F000000 with this RDRAM window) cannot be aliased; it
+needs translated loads and stores for that game. The 6105 boot chip's
+values are the same kind of fact: `osCicId` from the ROM's IPL3 (Conker
+starts its main thread only on 6105, Banjo-Kazooie breaks its models
+unless 6103) and IPL3's word at RDRAM 0x2FE1C0 (Donkey Kong 64 waits for
+it).
+
