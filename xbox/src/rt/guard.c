@@ -7,9 +7,10 @@
  * code at 0x803863F0 one after another, and a level's recompiled code then
  * ran where another level's was loaded (the actor that crashed in
  * anSeq_update). n64rx wraps every recompiled function of a captured page
- * (gen/xrc_guard.c, pipeline.py write_guard): it runs while the page's
- * state is "verified"; otherwise xrc_guard_miss hashes the page in RDRAM
- * against the bytes it was recompiled from. A match verifies it; anything
+ * (gen/xrc_guard.c, pipeline.py write_guard): it runs while its state is
+ * "verified"; otherwise xrc_guard_miss hashes its bytes in RDRAM against
+ * the bytes it was recompiled from (the function's own: a page's would
+ * change with data beside the code). A match verifies it; anything
  * else runs the function in the interpreter from RDRAM and saves the page
  * again for the next --learn build. A page is unverified again when the
  * game invalidates the instruction cache over it (osInvalICache: it loaded
@@ -24,11 +25,12 @@
 
 /* gen/xrc_guard.c's tables, sorted by vram; a build without captured code has none */
 __attribute__((weak)) const uint32_t xrc_guard_vram[1];
+__attribute__((weak)) const uint32_t xrc_guard_size[1];
 __attribute__((weak)) const uint32_t xrc_guard_hash[1];
 __attribute__((weak)) const unsigned xrc_guard_count;
 __attribute__((weak)) volatile unsigned char xrc_guard_state[1];
 
-#define PAGE 0x1000u
+#define PAGE 0x1000u   /* invalidations round to it */
 enum { UNVERIFIED = 0, VERIFIED = 1, OTHER = 2 };
 
 void xrc_interp(uint8_t* rdram, recomp_context* ctx, uint32_t entry);
@@ -44,35 +46,30 @@ static int word(uint32_t v, uint32_t* w) {
     return 1;
 }
 
-/* FNV-1a over the page's words as the N64 reads them (pipeline.py's twin) */
-static int page_hash(uint32_t vp, uint32_t* out) {
+/* FNV-1a over the function's words as the N64 reads them (pipeline.py's twin) */
+static int fn_hash(uint32_t v, uint32_t n, uint32_t* out) {
     uint32_t h = 0x811C9DC5u, i, w;
-    for (i = 0; i < PAGE; i += 4) {
-        if (!word(vp + i, &w)) return 0;
+    for (i = 0; i < n; i += 4) {
+        if (!word(v + i, &w)) return 0;
         h = (h ^ w) * 0x01000193u;
     }
     *out = h;
     return 1;
 }
 
-static void verify(unsigned i) {
-    uint32_t h;
-    if (i >= xrc_guard_count || xrc_guard_state[i] != UNVERIFIED) return;
-    xrc_guard_state[i] = page_hash(xrc_guard_vram[i], &h) && h == xrc_guard_hash[i] ? VERIFIED : OTHER;
-}
-
-void xrc_guard_miss(uint8_t* rdram, recomp_context* ctx, uint32_t vram, unsigned i, unsigned j, recomp_func_t* body) {
+void xrc_guard_miss(uint8_t* rdram, recomp_context* ctx, uint32_t vram, unsigned i, recomp_func_t* body) {
     static unsigned s_logged;
-    verify(i);
-    verify(j);
-    if (xrc_guard_state[i] == VERIFIED && xrc_guard_state[j] == VERIFIED) {
+    uint32_t h;
+    if (i < xrc_guard_count && xrc_guard_state[i] == UNVERIFIED)
+        xrc_guard_state[i] = fn_hash(xrc_guard_vram[i], xrc_guard_size[i], &h) && h == xrc_guard_hash[i] ? VERIFIED
+                                                                                                      : OTHER;
+    if (i < xrc_guard_count && xrc_guard_state[i] == VERIFIED) {
         body(rdram, ctx);
         return;
     }
     if (s_logged < 32) {
         s_logged++;
-        xhw_logf("[GUARD] %08x: its page holds other code than it was recompiled from; interpreted",
-                 (unsigned)vram);
+        xhw_logf("[GUARD] %08x: RDRAM holds other code than it was recompiled from; interpreted", (unsigned)vram);
     }
     xrc_learn_recapture(vram);
     xrc_interp(rdram, ctx, vram);
@@ -91,5 +88,7 @@ void xrc_guard_inval(uint32_t vram, uint32_t len) {
         if (xrc_guard_vram[mid] < vram) lo = mid + 1;
         else hi = mid;
     }
-    for (; lo < xrc_guard_count && xrc_guard_vram[lo] < end; lo++) xrc_guard_state[lo] = UNVERIFIED;
+    if (lo) lo--;   /* a function that starts before vram can reach into it */
+    for (; lo < xrc_guard_count && xrc_guard_vram[lo] < end; lo++)
+        if (xrc_guard_vram[lo] + xrc_guard_size[lo] > vram) xrc_guard_state[lo] = UNVERIFIED;
 }

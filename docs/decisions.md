@@ -611,10 +611,12 @@ it).
 Code captured from RDRAM was recompiled from the bytes one run saw, but
 decompressed overlays share addresses (Banjo-Kazooie's levels load at
 0x803863F0; Donkey Kong 64's and Conker's do the same). Chosen: n64rx
-hashes each captured 4 KB page as recompiled (`gen/xrc_guard.c`) and wraps
-each of its functions with a check of the page's state; an unverified page
-is hashed in RDRAM on the next call, and a page that holds other bytes runs
-its functions in the interpreter and is captured again. A page is
+hashes each captured function's own bytes as recompiled (`gen/xrc_guard.c`;
+a page's hash changed with the data beside the code: Banjo-Kazooie's core
+code shares its first page with data, and every call there missed) and
+wraps each function with a check of its state; an unverified function is
+hashed in RDRAM on its next call, and one whose bytes differ runs in the
+interpreter and its page is captured again. A page is
 unverified again when the game invalidates the instruction cache over it
 or a PI DMA writes it. Rejected for now: recompiling every variant of a
 page (the overlay sections would share vram; N64Recomp resolves such jals
