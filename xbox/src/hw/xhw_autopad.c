@@ -48,6 +48,7 @@ typedef struct {
     uint8_t lt, rt, shot, shot_done;   /* shot 2: TSHOT, frame is a match tick */
     uint8_t next;
     uint8_t timed;   /* "t<ms>": frame and len are milliseconds since the script was read */
+    uint8_t said;    /* its start logged */
 } Event;
 
 #define MAX_EVENTS 512
@@ -309,6 +310,10 @@ void xhw_autopad_apply(int port, xhw_pad* out) {
             continue;
         }
         if (now < e->frame || now >= e->frame + e->len) continue;
+        if (!e->said) {   /* when it took hold, for lining up with [WATCH] and the game's logs */
+            e->said = 1;
+            xhw_logf("[AUTOPAD] event %d on at frame %u (%u ms)", i, f, (unsigned)xhw_ms_now());
+        }
         out->buttons |= e->buttons;
         if (e->lx) out->lx = e->lx;
         if (e->ly) out->ly = e->ly;

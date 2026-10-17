@@ -167,16 +167,27 @@ void xhw_watch_write(uint32_t host) {
     xhw_logf("[WATCH] writes to %08x", (unsigned)host);
 }
 
+#ifndef XHW_WATCH_IGNORE
+#define XHW_WATCH_IGNORE 0u
+#endif
 static int on_watch(CONTEXT* cx) {
     ULONG* sp = (ULONG*)cx->Esp;
     ULONG up[4] = {0, 0, 0, 0};
     int n = 0, i;
-    LONG k = InterlockedIncrement((LONG*)&s_watch_hits);
+    static volatile uint32_t s_last = 0xDEADBEEFu;
+    uint32_t v = *(volatile uint32_t*)s_watch;
+    LONG k;
+    __asm__ volatile("movl %0, %%dr6" : : "r"(0u));
+    if (v == s_last || ((v ^ s_last) & ~(uint32_t)(XHW_WATCH_IGNORE)) == 0)
+        return DISP_CONTINUE_EXECUTION;   /* only changes are logged, outside the -DXHW_WATCH_IGNORE bits */
+    s_last = v;
+    k = InterlockedIncrement((LONG*)&s_watch_hits);
     for (i = 0; i < 64 && n < 4; i++)
         if (sp[i] >= xhw_image_base + 0x1000 && sp[i] < xhw_image_end) up[n++] = sp[i];
     if (k <= 200)
-        xhw_logf("[WATCH] %08x = %08x by eip %08lx (up %08lx %08lx %08lx %08lx) thread %p", (unsigned)s_watch,
-                 (unsigned)*(volatile uint32_t*)s_watch, cx->Eip, up[0], up[1], up[2], up[3], (void*)KeGetCurrentThread());
+        xhw_logf("[WATCH] %08x = %08x by eip %08lx (up %08lx %08lx %08lx %08lx) thread %p at %u ms", (unsigned)s_watch,
+                 (unsigned)*(volatile uint32_t*)s_watch, cx->Eip, up[0], up[1], up[2], up[3], (void*)KeGetCurrentThread(),
+                 (unsigned)(xhw_time_us() / 1000u));
     __asm__ volatile("movl %0, %%dr6" : : "r"(0u));
     return DISP_CONTINUE_EXECUTION;
 }

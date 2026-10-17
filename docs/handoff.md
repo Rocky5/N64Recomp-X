@@ -1034,6 +1034,20 @@ from the console results above.
   stopped near 790 before), no audio tasks (MusyX, open). Paper Mario and
   Jet Force Gemini crash writing RDRAM 0 as in their earlier learning runs
   (unchanged).
+- **Mario Kart 64's drift boosts, measured** (xemu, a scripted 50cc race,
+  `XRC_WATCH` on player 1's `effects` at 0x800F6A4C and on its
+  `driftStateCounter`/`driftState` word at 0x800F6BB8, offsets from the
+  decomp's `Player`): R with the stick into a right turn hops (HOP) and
+  drifts (DRIFTING); the counter runs while the stick is held outward,
+  about two counts a presented frame; a 10-frame outward tap gives
+  counter 19, then the return gives `driftState` 1 and counter 10, as the
+  decomp's `update_drift_state_counter` says. Every scripted drift then
+  ended 0.1 s to 0.4 s later (counter and state cleared, DRIFTING off: the
+  heading within 6 degrees of the travel), before a second level, so no
+  MINI_TURBO. Not known yet whether a player on a real N64 keeps the drift
+  with the same input; nothing in the input path is wrong (full tilt 80,
+  MK64's own dead zone and clamp to 53 after it). Next: a reference run
+  of the same input, or the heading maths (`unk_0C0`) compared.
 - **Mario Kart 64's drift boosts** (the decomp's `player_controller.c`,
   read, nothing changed yet): a spark level needs the stick past -10/+10
   after MK64's own dead zone (12 of the raw value, then clamped to 53) for
