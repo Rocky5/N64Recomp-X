@@ -491,8 +491,15 @@ typedef struct {
 static TexEntry s_texc[TEX_CACHE];
 static uint32_t s_frame_no = 1;
 
+/* every word of a texture up to this size, 16 samples of a larger one: a
+ * game that writes its font's glyphs into the same slots changed bytes the
+ * samples missed (Blast Corps' intro text: T for G). -DXGFX_TEX_FULLHASH_MAX=64:
+ * as before */
+#ifndef XGFX_TEX_FULLHASH_MAX
+#define XGFX_TEX_FULLHASH_MAX 2048
+#endif
 static uint32_t sample_hash(const uint8_t* p, uint32_t bytes) {
-    uint32_t h = 2166136261u, step = bytes > 64 ? bytes / 16 : 4, i, w;
+    uint32_t h = 2166136261u, step = bytes > XGFX_TEX_FULLHASH_MAX ? bytes / 16 : 4, i, w;
     for (i = 0; i + 4 <= bytes; i += step) {
         memcpy(&w, p + (i & ~3u), 4);
         h ^= w;
@@ -711,6 +718,10 @@ static void bind_unit(int u, int tidx) {
     Tile* t = &R.tile[tidx & 7];
     TexEntry* e = texture_for_tile(tidx & 7);
     s_st.tex[u] = e ? e->handle : 0;
+    if (s_trace)
+        xhw_logf("[DRAW] bind %d tile %d fmt %u siz %u line %u tmem %u sl %u tl %u sh %u th %u pal %u -> addr %08x %ux%u",
+                 u, tidx & 7, t->fmt, t->siz, t->line, t->tmem, t->uls >> 2, t->ult >> 2, t->lrs >> 2, t->lrt >> 2,
+                 t->palette, e ? (unsigned)e->addr : 0u, e ? e->pw : 0u, e ? e->ph : 0u);
     if (!e) return;
     s_st.wrap_s[u] = wrap_of(t->cms);
     s_st.wrap_t[u] = wrap_of(t->cmt);
@@ -1169,6 +1180,15 @@ static void do_texrect(uint32_t w0, uint32_t w1) {
     fdy = dtdy / 1024.0f;
     if (cycle == 2) fdx *= 0.25f;   /* copy mode: dsdx is x4 */
     flush();
+    if (s_trace) {
+        const Tile* tt = &R.tile[tile & 7];
+        const TmemLoad* ld = &R.loads[(tt->tmem >> 3) & 63];
+        xhw_logf("[DRAW] texrect %d,%d-%d,%d tile %u s %d t %d (1/32) dsdx %d dtdy %d | tile fmt %u siz %u line %u "
+                 "tmem %u sl %u tl %u sh %u th %u mask %u/%u | load %u addr %08x bytes %u dxt %u", (int)x0, (int)y0,
+                 (int)x1, (int)y1, (unsigned)tile, s, t, dsdx, dtdy, tt->fmt, tt->siz, tt->line, tt->tmem, tt->uls >> 2,
+                 tt->ult >> 2, tt->lrs >> 2, tt->lrt >> 2, tt->masks, tt->maskt, ld->valid, (unsigned)ld->addr,
+                 (unsigned)ld->bytes, ld->dxt);
+    }
     memset(&s_st, 0, sizeof s_st);
     pixel_state(1);
     s_st.fog = 0;
