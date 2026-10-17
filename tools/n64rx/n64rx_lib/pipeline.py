@@ -596,6 +596,10 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
                 raise N64rxError('N64Recomp failed on this ROM.', f'the log says why:\n{tail(log)}\nfull log: {log}')
             if gen.exists():
                 shutil.rmtree(gen)
+        else:
+            raise N64rxError('N64Recomp refused 400 functions, one a run, and still failed.',
+                             'send the log to the project (the analyser should have marked them up front):\n'
+                             f'{tail(log)}\nfull log: {log}')
         if fix_zero_dest(gen):
             prog.note('loads into $zero kept as reads')
         extern = write_extern_h(gen)

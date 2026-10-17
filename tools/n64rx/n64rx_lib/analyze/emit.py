@@ -287,10 +287,12 @@ def recomp_hazards(a: Analysis, live, nm, replaced):
     (learn.py): the console saves it, the next build has both in one segment"""
     from .mips import Ins, words
     rom = a.img.rom
-    starts = {x for fs in a.funcs.values() for x in fs}
+    starts = {x for fs in a.funcs.values() for x in fs}   # vram: N64Recomp finds a jal's function in every section
+    ovl = a.overlays()
     out = {}
     for seg in a.img.segments:
-        for x, f in a.funcs.get(seg.name, {}).items():
+        for v, f in a.funcs.get(seg.name, {}).items():
+            x = a.key(seg, v, ovl)   # an overlay's function is keyed with its ROM offset in live and nm (Mario Party 3)
             if x not in live or nm[x] in replaced:
                 continue
             n = (f.end - f.start) // 4
