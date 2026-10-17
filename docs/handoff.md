@@ -15,17 +15,18 @@ console. Everything since `vmk4`/`vsnap1` is xemu only.
 | Pilotwings 64 | its pack, or the ROM alone (`--analyze`): the same | title to results, saves, sound, 720p + hor+, the BACK menu | `vnrx1`: plays, sound, EEPROM saves, the BACK menu, the combos; 53-59 fps |
 | Mario Kart 64 | the ROM alone | title, menus, races (F3DEX), sound (nead), Controller Pak, 720p 16:9 | `vmk2`/`vmk4`: races at 29.9 fps (display lists 2-3 ms), sound, the ROM inside the XBE, the BACK menu and its Paks page, EEPROM and pak files; the map screen's TV (a framebuffer read) wrong |
 | Super Smash Bros. | the ROM alone | intro, title, 1P character select, a 1P match (Link vs Link, Hyrule Castle) at 47-50 fps with scripted input | - |
-| Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text at ~58 fps, audio tasks (53 a second); its processes run as coroutines | - |
+| Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text; one present a frame (its frames are several tasks; presented at the swap), audio; its processes run as coroutines | `vmp1`: 60 fps but flickering (two half frames a frame); `vmp2` (the fix) deployed |
 | Mario Party 2 / 3 | the ROM alone | 60 fps from boot (intro, menus); 2: the audio thread dies some time after the game restarts it (open) | - |
-| Super Mario 64 | the ROM alone + three `--learn` rounds | head screen, Lakitu intro, castle grounds; head shading off | not tried |
-| Pokémon Snap | the ROM alone (overlays sharing a vram) | intro and main menu (s7: 1576 frames in 30 s) | `vsnap1` (before the thread-stack fix): the crash xemu had then |
-| Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro, Banjo's house (~28 fps); the sky black (open) | - |
+| Super Mario 64 | the ROM alone (+ three `--learn` rounds before) | head screen, Lakitu intro, castle grounds and Lakitu's text drawn right (scripted, 2026-10-17) | `vsm1` staged |
+| Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, main menu, Professor Oak's lab and his dialogue (threads reused; a glyph run missing) | `vsnap1` (before the thread-stack fix): the crash xemu had then |
+| Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro with the lair drawn whole, Banjo's house (~28 fps); near/far now the game's (the IPL3 copy) | `vbk1`: works, near/far clipping; `vbk2` (the fix) deployed |
 | Blast Corps | the ROM alone + 15 `--learn` rounds | Rare logo, title, profile screen, the attract demo (50-56 fps) | - |
 | Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (53 MB, page cache) | title, file select, name entry, a new file, the intro text, Kokiri Forest's HUD, the Deku Tree's intro drawn, music (nead) | - |
 | Ridge Racer 64 | the ROM alone + one `--learn` round | F3DEX2; 1732 frames in 30 s (~44 fps) | - |
-| Donkey Kong 64 | the ROM alone + `--learn` rounds | F3DEX2, ~790 frames, then its main thread runs on without sending tasks (open) | - |
+| Donkey Kong 64 | the ROM alone + `--learn` rounds | its file screen ("GAME 1"), drawing on (the IPL3 copy at RDRAM 4); audio stops once graphics start (open) | - |
 | Diddy Kong Racing, Wave Race 64, WWF No Mercy, Dr. Mario 64 | the ROM alone | present frames for the whole 30 s sweep run (DKR's microcode not decoded: grey boxes) | - |
-| Paper Mario, GoldenEye, Conker, Jet Force Gemini, Castlevania | the ROM alone + `--learn` rounds | boot and stop (each in the 2026-10-17 entry below) | - |
+| Paper Mario | the ROM alone + `--learn` rounds | past its obfuscated boot (KSEG2 DMA), 321 frames, then a map's textures (open) | - |
+| GoldenEye, Conker, Jet Force Gemini, Castlevania | the ROM alone + `--learn` rounds | boot and stop (the entries below; GoldenEye's paged code now misses properly) | - |
 | the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s7: 245 build, 139 present frames, 121 still presenting at 30 s (`docs/analyzer.md`) | - |
 
 **What exists** (each piece with host tests and a kill switch; the entries
