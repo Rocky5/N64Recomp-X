@@ -558,6 +558,27 @@ void xu_crash_regs(void) {
 
 uint32_t xrc_interp_last_pc(void* thread);   /* interp.c */
 
+/* a fatal on this thread (ovl.c: no function at an address): its MIPS
+ * registers and the top of its stack, for the log */
+void xu_log_regs(void) {
+    const Thr* d = self();
+    const recomp_context* c = d ? d->ctx : NULL;
+    uint32_t sp, i;
+    if (!c) return;
+    xhw_logf("[CRASH] N64 thread %08x: a0 %08x a1 %08x a2 %08x a3 %08x v0 %08x v1 %08x t9 %08x", (unsigned)d->t,
+             (unsigned)c->r4, (unsigned)c->r5, (unsigned)c->r6, (unsigned)c->r7, (unsigned)c->r2, (unsigned)c->r3,
+             (unsigned)c->r25);
+    xhw_logf("[CRASH]   s0 %08x s1 %08x s2 %08x s3 %08x s4 %08x sp %08x ra %08x", (unsigned)c->r16, (unsigned)c->r17,
+             (unsigned)c->r18, (unsigned)c->r19, (unsigned)c->r20, (unsigned)c->r29, (unsigned)c->r31);
+    sp = (uint32_t)c->r29;
+    if ((sp & 0xC0000000u) == 0x80000000u && (sp & 0x1FFFFFFFu) + 64 <= xrc_rdram_size)
+        for (i = 0; i < 64; i += 32)
+            xhw_logf("[CRASH]   sp+%02x: %08x %08x %08x %08x %08x %08x %08x %08x", (unsigned)i, (unsigned)rd32(sp + i),
+                     (unsigned)rd32(sp + i + 4), (unsigned)rd32(sp + i + 8), (unsigned)rd32(sp + i + 12),
+                     (unsigned)rd32(sp + i + 16), (unsigned)rd32(sp + i + 20), (unsigned)rd32(sp + i + 24),
+                     (unsigned)rd32(sp + i + 28));
+}
+
 /* strand.c: the contexts a game switches with setjmp/longjmp run on host
  * threads of their own, each the same N64 thread to the runtime */
 void* xu_self_thr(void) { return self(); }
@@ -692,10 +713,11 @@ void xu_stall_report(const char* why) {
     for (i = 0; i < s_nthr; i++) {
         uint32_t w = s_thr[i].wait, q = w & ~1u;
         if (!s_thr[i].t && !w) continue;
-        xhw_logf("[OS] stall:   thread %d (pri %d) %s %08x (%u of %u)", s_thr[i].t ? (int)(int32_t)rd32(s_thr[i].t + TH_ID) : -1,
+        xhw_logf("[OS] stall:   thread %d (pri %d) %s %08x (%u of %u)%s%s", s_thr[i].t ? (int)(int32_t)rd32(s_thr[i].t + TH_ID) : -1,
                  s_thr[i].t ? (int)(int32_t)rd32(s_thr[i].t + TH_PRIORITY) : -1,
                  !w ? "runs, or waits outside a queue" : (w & 1) ? "waits for room in" : "waits for a message in",
-                 (unsigned)q, w ? (unsigned)rd32(q + MQ_VALIDCOUNT) : 0u, w ? (unsigned)rd32(q + MQ_MSGCOUNT) : 0u);
+                 (unsigned)q, w ? (unsigned)rd32(q + MQ_VALIDCOUNT) : 0u, w ? (unsigned)rd32(q + MQ_MSGCOUNT) : 0u,
+                 s_thr[i].stopped ? ", stopped" : "", s_thr[i].halted ? ", halted" : "");
         if (!w) {   /* a running thread: where it was last (interp.c; its context's ra and sp) */
             uint32_t pc = xrc_interp_last_pc(s_thr[i].kt);
             xhw_logf("[OS] stall:     last interpreted pc %08x, ra %08x, sp %08x", (unsigned)pc,

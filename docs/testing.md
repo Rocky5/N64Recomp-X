@@ -266,7 +266,7 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXHW_LOG_BOOST=0` | 1 | the log lock's holder keeps its own priority; otherwise it runs at 15 while holding it (an idle-priority N64 thread logging was preempted for good and stopped every thread that logs, the VI thread among them: Donkey Kong 64's retraces froze at 300) |
 | `N64RX_XBRANCH_INTERP=0` (env, n64rx) | 1 | a function with a branch or j into another function's body is recompiled anyway (the compile then fails: "use of undeclared label") instead of interpreted |
 | `-DXRC_THREAD_SP16=0` | 1 | threads start at the sp the game gives instead of 16 bytes below it, as libultra does |
-| `-DXRC_WATCH=<N64 address>` | unset | diagnosis: every write to that word logged with the writer's EIP and the new value (`[WATCH]`, x86 DR0; `xhw_crash.c`) |
+| `-DXRC_WATCH=<N64 address>` | unset | diagnosis: every write to that word logged with the writer's EIP and the new value (`[WATCH]`, x86 DR0; `xhw_crash.c`). The full KSEG0 address (`0x800F1A10u`), not an offset; armed on every thread started after it (the debug registers are per thread). A "no function at this address" fatal also logs the N64 thread's registers and stack top (`[CRASH] N64 thread`) |
 | `-DXRC_TLB_HELPERS=0` | 1 | the runtime's RDRAM helpers mask a KUSEG address to physical instead of translating it through the game's TLB |
 | `N64RX_TRACE=1` (env, n64rx) | unset | diagnosis: N64Recomp's `trace_mode`; the last 64 functions entered (recompiled by name, interpreted by address) are logged with a crash (`[TRACE]`, `xbox/src/rt/trace.c`) |
 | `N64RX_GUARD=0` (env, n64rx) | 1 | functions recompiled from captured code run without checking that RDRAM still holds the bytes they were recompiled from (`guard.c`) |

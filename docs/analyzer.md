@@ -331,6 +331,13 @@ precheck (Mario Party 3 builds), XRC_HIGH_TLB, the controller query names
   but `osSpTaskLoad`, the `osFlash*` family (no rule yet: the runtime has
   them) and the Pfs family stay the game's own. A rule that depends on
   another name must come after it (osContInit before the read/query split).
+- A libultra function the runtime replaces in part must be named in full:
+  the runtime's `osSetTimer` keeps its own timer list, so a game's own
+  `osStopTimer` unlinked a timer that list never held and wrote through
+  stale pointers (Ocarina of Time: its graph thread's RCP-timeout timer on
+  the stack; the store landed in the game-state table and the next state's
+  init became 0xFFF7B4E8). Rule since 2026-10-17: arg0 only, writes +0 and
+  +4 of it, calls `__osDisableInt`, `__osRestoreInt` and `__osSetCompare`.
 - The TLB: mapped KUSEG pages are aliased in the Xbox page tables
   (`xhw_alias.c`, `rt/tlb.c`); a miss runs the game's exception code and
   fault thread; KSEG2/3 goes through the TLB in the generated code when

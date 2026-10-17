@@ -173,6 +173,8 @@ int xrc_ovl_init(void) {
     return 1;
 }
 
+void xu_log_regs(void);   /* ultra/thread.c */
+
 recomp_func_t* xrc_try_function(uint32_t vram) {
     uint16_t** pg = page_ptr(vram, 0);
     if (!pg || !*pg) return NULL;
@@ -192,6 +194,7 @@ recomp_func_t* get_function(int32_t vram) {
         recomp_func_t* f = xrc_learn_lookup((uint32_t)vram, (uintptr_t)__builtin_return_address(0));
         if (f) return f;
     }
+    xu_log_regs();
     xrc_fatal_vram("No function at this address", (uint32_t)vram, (uint32_t)(uintptr_t)__builtin_return_address(0));
 }
 

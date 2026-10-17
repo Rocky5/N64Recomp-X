@@ -22,6 +22,7 @@ Nintendo graphics microcode carries its version text there.
 | `RSP Gfx ucode F3DEX/F3DLX/F3DLP/L3DEX ... 1.xx` | F3DEX | 32; `.Rej` 64; F3DLP 80 |
 | `RSP Gfx ucode F3DEX.NoN/F3DZEX/... 2.xx` | F3DEX2 | 32; `.Rej` 64 |
 | `RSP Gfx ucode S2DEX ... 1.xx` / `2.xx` | S2DEX / S2DEX2 | - |
+| `RSP Gfx[Safe] S2DEX ... 2.05` (a tag in place of `ucode`: Ocarina of Time's second microcode, loaded by `G_LOAD_UCODE`) | S2DEX2 | - |
 | nothing found | Fast3D (the build before the registry) | 16 |
 
 The version text is the microcode's behaviour, not a game's: one rule
@@ -32,7 +33,12 @@ segment from RDRAM once per address, remembers it (8 slots) and logs
 the first time. A `G_LOAD_UCODE` in a list (`RDPHALF_1` = the new data
 segment) goes through the same lookup and switches the family for the rest
 of that task. Kill switches: `XGFX_UCODE_F3DEX`, `XGFX_UCODE_F3DEX2`,
-`XGFX_UCODE_S2DEX` (0: that family read as Fast3D).
+`XGFX_UCODE_S2DEX` (0: that family read as Fast3D). Before the tag was
+read, Ocarina of Time's S2DEX2 lists ran as Fast3D after its first
+`G_LOAD_UCODE` in Kokiri Forest (garbage matrices, the scheduler's task
+never ending). `G_RDPSETOTHERMODE` (0xEF, gDPSetOtherMode: both othermode
+words at once) is handled in every family; Ocarina of Time sets its render
+modes with it (tens of thousands a minute, all dropped before).
 
 ## One interpreter for every family
 

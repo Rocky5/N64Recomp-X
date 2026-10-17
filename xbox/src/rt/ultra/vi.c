@@ -63,7 +63,8 @@ static void vi_thread(void* arg) {
             static unsigned s_seen, s_still;
             unsigned g = xu_gfx_tasks();
             if (g != s_seen) s_seen = g, s_still = 0;
-            else if (++s_still == 60 && g) xu_stall_report("no graphics task for 60 retraces");
+            else if ((++s_still == 60 || (s_still % 1800 == 0 && s_still <= 7200)) && g)
+                xu_stall_report(s_still == 60 ? "no graphics task for 60 retraces" : "still no graphics task (30 s more)");
             else if (s_still == 300 && !g) xu_stall_report("no graphics task at all after 300 retraces");
             if (s_retrace % 1800 == 0)   /* every 30 s */
                 xhw_logf("[VI] retrace %u: %u gfx tasks, queue %08x %u/%u", s_retrace, g, (unsigned)s_mq,

@@ -20,8 +20,14 @@ int gfx_ucode_parse(const uint8_t* data, size_t n, GfxUcode* out) {
     memset(out, 0, sizeof *out);
     out->family = GFX_UC_F3D;
     out->vtx_max = 16;
-    if ((p = find(data, n, "RSP Gfx ucode ")) != NULL) {
-        p += 14;
+    if ((p = find(data, n, "RSP Gfx")) != NULL && p + 8 < end && (p[7] == ' ' || p[7] == '[')) {
+        /* "RSP Gfx ucode F3DEX ...", or a tag in place of "ucode": "RSP Gfx[Safe] S2DEX  fifo 2.05"
+         * (Ocarina of Time's second microcode) */
+        const uint8_t* start = p;
+        p += 7;
+        while (p < end && *p != ' ') p++;   /* "[Safe]" */
+        while (p < end && *p == ' ') p++;
+        if (end - p > 6 && !memcmp(p, "ucode ", 6)) p += 6;
         while (p < end && *p == ' ') p++;
         name = p;
         while (p < end && *p > ' ' && *p < 0x7F) p++;
@@ -41,7 +47,7 @@ int gfx_ucode_parse(const uint8_t* data, size_t n, GfxUcode* out) {
             return 0;   /* an unknown graphics microcode: Fast3D's GBI is the best guess */
         }
         out->found = 1;
-        p = name - 14;
+        p = start;
     } else if ((p = find(data, n, "RSP SW Version: ")) != NULL) {
         out->found = 1;
     } else {

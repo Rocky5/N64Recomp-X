@@ -471,6 +471,15 @@ def _io(N):
     st_ = N.a_('osSetTimer')
     gc, sc = N.a_('osGetCount'), N.a_('__osSetCompare')
     di, ri = N.a_('__osDisableInt'), N.a_('__osRestoreInt')
+    # osStopTimer(t): unlinks the OSTimer at arg0 from the timer list with interrupts off, clears its
+    # next and prev (+0, +4), and sets Compare to 0 when the list is empty. Unnamed, the game's own
+    # copy unlinked a timer the runtime's osSetTimer never put in its list and wrote through stale
+    # pointers (Ocarina of Time: its graph thread's RCP timeout timer; the game-state table corrupted)
+    if sc and di and ri:
+        cands = [a for a, ft in f.items() if a not in N.name and ft.args_used == {0} and
+                 {di, ri, sc} <= set(ft.calls) and len(ft.calls) <= 4 and ft.size <= 0x100 and
+                 N.arg_w(a, 0, 0) and N.arg_w(a, 0, 4)]
+        N.one(cands, 'osStopTimer', 'unlinks the OSTimer at arg0 (clears +0 and +4) and resets Compare when none is left')
     if gc and di:
         cands = [a for a, ft in f.items() if a not in N.name and set(ft.calls) == {di, gc, ri} and
                  not ft.args_used and ft.returns_value and (not sc or sc not in ft.calls)]

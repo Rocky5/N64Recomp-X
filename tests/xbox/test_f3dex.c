@@ -190,6 +190,7 @@ static void test_parse(void) {
         { "RSP Gfx ucode F3DEX.Rej   xbus 2.07  Yoshitaka Yasumoto 1998 Nintendo.", GFX_UC_F3DEX2, 64, 0, 1 },
         { "RSP Gfx ucode S2DEX  fifo 1.07 Yoshitaka Yasumoto 1997 Nintendo.", GFX_UC_S2DEX, 32, 0, 1 },
         { "RSP Gfx ucode S2DEX       fifo 2.05  Yoshitaka Yasumoto 1998 Nintendo.", GFX_UC_S2DEX2, 32, 0, 1 },
+        { "RSP Gfx[Safe] S2DEX       fifo 2.05  Yoshitaka Yasumoto 1998 Nintendo.", GFX_UC_S2DEX2, 32, 0, 1 },
         { "nothing to see", GFX_UC_F3D, 16, 0, 0 },
     };
     unsigned i;

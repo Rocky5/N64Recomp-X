@@ -214,6 +214,11 @@ __attribute__((noinline)) void xhw_crash_guard(void (*fn)(void*), void* arg) {
         return;
     }
     r.handler = (void*)on_exception;
+    if (s_watch) {   /* the debug registers are per thread: a watch set before covers this one too */
+        uint32_t dr7 = 0x1u | (0x1u << 16) | (0x3u << 18);
+        __asm__ volatile("movl %0, %%dr0" : : "r"(s_watch));
+        __asm__ volatile("movl %0, %%dr7" : : "r"(dr7));
+    }
     __asm__ volatile("movl %%fs:0, %0" : "=r"(r.prev));
     __asm__ volatile("movl %0, %%fs:0" : : "r"(&r) : "memory");
     fn(arg);

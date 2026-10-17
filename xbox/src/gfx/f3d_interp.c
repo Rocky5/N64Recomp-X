@@ -1517,6 +1517,7 @@ static void run_dl(const uint32_t* pc) {
             case F3D_G_TEXTURE: case F3D_G_SETOTHERMODE_H: case F3D_G_SETOTHERMODE_L: case F3D_G_SETGEOMETRYMODE:
             case F3D_G_CLEARGEOMETRYMODE: case F3D_G_SETTILE: case F3D_G_SETTILESIZE: case F3D_G_LOADBLOCK:
             case F3D_G_SETCOMBINE: case F3D_G_SETTIMG: case F3D_G_SETFOGCOLOR: case F3D_G_SETBLENDCOLOR:
+            case F3D_G_RDPSETOTHERMODE:
                 DIRTY();
                 break;
         }
@@ -1601,6 +1602,10 @@ static void run_dl(const uint32_t* pc) {
             }
             case F3D_G_SETOTHERMODE_H: R.omh = f3d_othermode_apply(R.omh, w0, w1); break;
             case F3D_G_SETOTHERMODE_L: R.oml = f3d_othermode_apply(R.oml, w0, w1); break;
+            case F3D_G_RDPSETOTHERMODE:   /* gDPSetOtherMode: both words at once (Ocarina of Time's render modes) */
+                R.omh = w0 & 0x00FFFFFFu;
+                R.oml = w1;
+                break;
             case F3D_G_SETGEOMETRYMODE: R.geom |= w1; break;
             case F3D_G_CLEARGEOMETRYMODE: R.geom &= ~w1; break;
             case F3D_G_RDPHALF_1: R.half1 = w1; break;
