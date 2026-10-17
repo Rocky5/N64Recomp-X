@@ -21,6 +21,7 @@ console. Everything since `vmk4`/`vsnap1` is xemu only.
 | Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, main menu, Professor Oak's lab and his dialogue (threads reused; a glyph run missing) | `vsnap1` (before the thread-stack fix): the crash xemu had then |
 | Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro with the lair drawn whole, Banjo's house (~28 fps); near/far now the game's (the IPL3 copy) | `vbk1`: works, near/far clipping; `vbk2` (the fix) deployed |
 | Blast Corps | the ROM alone + 15 `--learn` rounds | Rare logo, title, profile screen, the attract demo (50-56 fps) | - |
+| Majora's Mask | the ROM alone | title, file select, name entry, audio (2026-10-17) | - |
 | Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (53 MB, page cache) | title, file select, name entry, a new file, the intro text, Kokiri Forest's HUD, the Deku Tree's intro drawn, music (nead) | - |
 | Ridge Racer 64 | the ROM alone + one `--learn` round | F3DEX2; 1732 frames in 30 s (~44 fps) | - |
 | Donkey Kong 64 | the ROM alone + `--learn` rounds | its file screen ("GAME 1"), drawing on (the IPL3 copy at RDRAM 4); audio stops once graphics start (open) | - |
@@ -1233,4 +1234,9 @@ call came with `dest` = 0x80020668, thread 3's own OSThread, so the DMA
 wrote code over the thread's stack and the callback read back an
 instruction word. Where that argument comes from (its handler table,
 `func_80001A30`) is next.
+
+**Majora's Mask (US), the same day (xemu, test build, the ROM alone, no
+`--learn`).** Title, file select and the name-entry screen drawn right
+(the name box textured since the tile wrap), audio (nead family, ~54 tasks
+a second, peak 16497), ~41 fps on the menus. First time looked at.
 
