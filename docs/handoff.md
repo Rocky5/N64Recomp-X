@@ -21,7 +21,7 @@ console. Everything since `vmk4`/`vsnap1` is xemu only.
 | Pokémon Snap | the ROM alone (overlays sharing a vram) | intro and main menu (s7: 1576 frames in 30 s) | `vsnap1` (before the thread-stack fix): the crash xemu had then |
 | Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro, Banjo's house (~28 fps); the sky black (open) | - |
 | Blast Corps | the ROM alone + 15 `--learn` rounds | Rare logo, title, profile screen, the attract demo (50-56 fps) | - |
-| Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (53 MB, page cache) | title, file select, name entry, a new file, the intro text, Kokiri Forest's HUD, music (nead); the 3D world dark (open) | - |
+| Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (53 MB, page cache) | title, file select, name entry, a new file, the intro text, Kokiri Forest's HUD, the Deku Tree's intro drawn, music (nead) | - |
 | Ridge Racer 64 | the ROM alone + one `--learn` round | F3DEX2; 1732 frames in 30 s (~44 fps) | - |
 | Donkey Kong 64 | the ROM alone + `--learn` rounds | F3DEX2, ~790 frames, then its main thread runs on without sending tasks (open) | - |
 | Diddy Kong Racing, Wave Race 64, WWF No Mercy, Dr. Mario 64 | the ROM alone | present frames for the whole 30 s sweep run (DKR's microcode not decoded: grey boxes) | - |
@@ -54,7 +54,7 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
    (the last entry below).
 2. The s7 categories: NULL pointers through the TLB path (42 games), Rare's
    compressed boots before learning rounds (18), no frames (42).
-3. Per game: Ocarina of Time's world and its JPEG task; Paper Mario's copy-protection
+3. Per game: Ocarina of Time's JPEG task and S2DEX2; Paper Mario's copy-protection
    chain and its flash code (no `osFlash*` rule); GoldenEye's wild jump in
    paged code; Jet Force Gemini's init reached only through decompressed
    data; Donkey Kong 64's main thread; Mario Party 2's audio thread;
@@ -1072,10 +1072,10 @@ Found on the way, each from the decomp:
   go by type (`XRC_SP_BY_TYPE`): `nead (24-entry table)`, 45-55 audio
   tasks a second, peak 15000-19000 (xemu). The JPEG task is not run
   (prerendered room backgrounds, open).
-Open: the 3D world shows dark or flat grey behind the HUD and text (the
-traced frame draws the sky, the world with depth on, and the game's own
-full-screen dimming fills: whether the result is right is not judged
-yet); no audio task at all (its audio thread waits); interpreted overlay
-code is hot (up to 11 million instructions a 300-retrace window); runs
-with a 640x480 SHOT stop logging in xemu.
+The world draws: at 180 s of scripted A presses, the Great Deku Tree's
+face, Navi and the "Fly, Navi, fly!" text box (the darker frames before
+were the intro's own night and its full-screen dimming fills). Open:
+interpreted overlay code is hot (up to 11 million instructions a
+300-retrace window: the actors' relocated code); runs with a 640x480
+SHOT stop logging in xemu some seconds later.
 
