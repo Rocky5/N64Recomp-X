@@ -16,7 +16,7 @@ console. Everything since `vmk4`/`vsnap1` is xemu only.
 | Mario Kart 64 | the ROM alone | title, menus, races (F3DEX), sound (nead), Controller Pak, 720p 16:9 | `vmk2`/`vmk4`: races at 29.9 fps (display lists 2-3 ms), sound, the ROM inside the XBE, the BACK menu and its Paks page, EEPROM and pak files; the map screen's TV (a framebuffer read) wrong |
 | Super Smash Bros. | the ROM alone | intro, title, 1P character select, a 1P match (Link vs Link, Hyrule Castle) at 47-50 fps with scripted input | - |
 | Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text; one present a frame (its frames are several tasks; presented at the swap), audio; its processes run as coroutines | `vmp1`: 60 fps but flickering (two half frames a frame); `vmp2` (the fix) deployed |
-| Mario Party 2 / 3 | the ROM alone | 60 fps from boot (intro, menus); 2: the audio thread dies some time after the game restarts it (open) | - |
+| Mario Party 2 / 3 | the ROM alone | intro, menus; 2: its audio thread, destroyed and made again by the game, plays on (58 tasks a second, 2026-10-17) | - |
 | Super Mario 64 | the ROM alone (+ three `--learn` rounds before) | head screen, Lakitu intro, castle grounds and Lakitu's text drawn right (scripted, 2026-10-17) | `vsm1` staged |
 | Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, main menu, Professor Oak's lab and his dialogue (threads reused; a glyph run missing) | `vsnap1` (before the thread-stack fix): the crash xemu had then |
 | Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro with the lair drawn whole, Banjo's house (~28 fps); near/far now the game's (the IPL3 copy) | `vbk1`: works, near/far clipping; `vbk2` (the fix) deployed |
@@ -60,7 +60,7 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
 3. Per game: Ocarina of Time's JPEG task and S2DEX2; Paper Mario's copy-protection
    chain and its flash code (no `osFlash*` rule); GoldenEye's wild jump in
    paged code; Jet Force Gemini's init reached only through decompressed
-   data; Donkey Kong 64's main thread; Mario Party 2's audio thread;
+   data; Donkey Kong 64's main thread; 
    Castlevania's dispatch after a TLB miss.
 4. The 13 entries that are their own loaders (Acclaim's Turok 1-3,
    Armorines, All-Star Baseball; Army Men; two Star Wars); gzip code.
@@ -1281,4 +1281,10 @@ A scripted run (START/A, shots at 50 s and 90 s) shows a dark background
 with the red aim cursor, the same at both shots; every other line of the
 background is dark (open: a row stride or copy-mode rule in its large
 background draws, or the menu waiting on input it does not get).
+
+**Mario Party 2's audio after its restart (xemu, 60 s, the regression run
+after the thread change).** The game destroys its audio thread and makes
+it again (`[OS] thread 0 started again`); audio now runs on after it:
+3518 tasks by the end, 58 a second, peak 30893 (the old open item, "dies
+some time after the game restarts it", not seen).
 
