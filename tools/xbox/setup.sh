@@ -99,16 +99,19 @@ else
   say "nxdk: $NXDK_DIR (built)"
 fi
 
-# ---- N64Recomp at the submodule's pin ----
+# ---- N64Recomp at the submodule's pin, with patches/recomp (tools/xbox/recomp_src.py) ----
 git -C "$root" submodule update --init --recursive tools/recomp
 if [ ! -x "$root/build-host/recomp/N64Recomp" ] && [ ! -x "$root/build-host/recomp/N64Recomp.exe" ]; then
   say "N64Recomp -> build-host/recomp"
+  rpy=python3; command -v python3 >/dev/null && python3 -c 'import sys' 2>/dev/null || rpy=python
+  rsrc=$(cd "$root" && $rpy tools/xbox/recomp_src.py build-host/recomp-src | tr '\\' /) || { echo "a patch in patches/recomp does not apply"; exit 1; }
   if [ "$kind" = windows ]; then
-    run "cmake -S tools/recomp -B build-host/recomp -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXE_LINKER_FLAGS=-static && ninja -C build-host/recomp N64RecompCLI RSPRecomp"
+    run "cmake -S $rsrc -B build-host/recomp -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXE_LINKER_FLAGS=-static && ninja -C build-host/recomp N64RecompCLI RSPRecomp"
   else
-    (cd "$root" && cmake -S tools/recomp -B build-host/recomp -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null \
+    (cd "$root" && cmake -S "$rsrc" -B build-host/recomp -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null \
       && ninja -C build-host/recomp N64RecompCLI RSPRecomp)
   fi
+  (cd "$root" && $rpy -c "import sys; sys.path.insert(0, 'tools/xbox'); import recomp_src; open('build-host/recomp/.n64rx-key', 'w').write(recomp_src.key())")
 fi
 
 # ---- Python modules for n64rx ----

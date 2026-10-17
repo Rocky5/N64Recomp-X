@@ -34,7 +34,9 @@ RUN if [ "$(dpkg --print-architecture)" = amd64 ]; then dpkg --add-architecture 
 RUN pip3 install --break-system-packages --no-cache-dir rabbitizer pillow
 # N64Recomp at the checkout's submodule pin: copied in at build time (the
 # build context is the repo root), built to /opt/n64recomp; n64rx inside the
-# image finds it there through N64RX_RECOMP
+# image finds it there through N64RX_RECOMP. Without patches/recomp: n64rx
+# keys the recompiler on the pin plus the patches (engines.ensure_recompiler)
+# and builds a patched one in the checkout's build-host/recomp the first time
 COPY tools/recomp /usr/src/n64recomp
 RUN cmake -S /usr/src/n64recomp -B /opt/n64recomp -G Ninja -DCMAKE_BUILD_TYPE=Release \
  && ninja -C /opt/n64recomp N64RecompCLI RSPRecomp && rm -rf /opt/n64recomp/CMakeFiles

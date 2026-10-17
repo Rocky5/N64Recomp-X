@@ -75,11 +75,22 @@ docker build -t "$(cat tools/xbox/docker/IMAGE)" -f tools/xbox/docker/Dockerfile
 
 ## N64Recomp
 
-Used unmodified at the pin, on the host, at build time. n64rx writes the
-pack's `recomp.toml` with the paths filled in to `build-xbox/<id>/cfg/`,
-runs `N64Recomp` there, and gets `gen/` (`funcs.h`, `funcs_N.c`,
-`recomp_overlays.inl`, `lookup.cpp`, which is not compiled). Changes to the
-recompiler go to `patches/recomp/` with a `.md` each (none yet).
+Used at the pin with `patches/recomp/*.patch` applied, on the host, at
+build time. n64rx writes the pack's `recomp.toml` with the paths filled in
+to `build-xbox/<id>/cfg/`, runs `N64Recomp` there, and gets `gen/`
+(`funcs.h`, `funcs_N.c`, `recomp_overlays.inl`, `lookup.cpp`, which is not
+compiled). Changes to the recompiler go to `patches/recomp/` with a `.md`
+each; the submodule is never edited. `tools/xbox/recomp_src.py` copies it
+to `build-host/recomp-src` and applies the patches in name order (its own
+strict applier, LF; no `patch` needed); n64rx builds `build-host/recomp`
+from there and keys the recompiler and the generated code's cache on the
+pin plus the patches (`.n64rx-key`), so a new or changed patch rebuilds
+both. The SDK image's prebuilt recompiler is unpatched: inside it n64rx
+builds its own the first time.
+
+| patch | what |
+|---|---|
+| `0001-jump-table-in-another-section` | a jump table outside the function's section is read from the section that holds it (GoldenEye's TLB-mapped code with its tables in KSEG0; with `learn.py`'s RDRAM table sections) |
 
 ## LTO
 

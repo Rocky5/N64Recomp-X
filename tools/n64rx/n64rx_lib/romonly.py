@@ -126,6 +126,8 @@ def make(rom, bdir, base=None, learnt=None):
                            ', '.join(f'{n} ({why})' for n, why, _w in list(hz.values())[:6]) + ('...' if len(hz) > 6 else ''))
         # captured code whose jump table is in RDRAM no capture holds yet: its stub asks the console to save
         # the blocks from the code to the table (learn.c xrc_learn_want), for the next --learn round
+        (pdir / 'hazards.txt').write_text(''.join(f'{n} 0x{x & 0xFFFFFFFF:08X} {why}\n' for x, (n, why, _w) in sorted(hz.items())),
+                                          encoding='utf-8')   # every one, with why (the notes show six)
         (pdir / 'want.txt').write_text(''.join(f'{n} 0x{w[0]:08X} 0x{w[1]:08X}\n' for n, _why, w in hz.values() if w),
                                        encoding='utf-8')
     ignored |= set(interp.values())

@@ -1,0 +1,37 @@
+--- a/src/analysis.cpp
++++ b/src/analysis.cpp
+@@ -318,10 +318,33 @@
+         cur_jtbl.rom = cur_jtbl.vram + func.rom - func.vram;
+         cur_jtbl.section_index = func.section_index;
+ 
++        // N64Recomp-X (patches/recomp/0001-jump-table-in-another-section.md):
++        // a table outside the function's own section is read from the section
++        // that holds its vram (code mapped through the TLB with its rodata in
++        // KSEG0: GoldenEye's 0x70000000 code, tables at 0x8002xxxx)
++        uint32_t jtbl_rom_delta = func.rom - func.vram;
++        {
++            const auto& own = context.sections[func.section_index];
++            if (vram < own.ram_addr || vram >= own.ram_addr + own.size) {
++                for (size_t s = 0; s < context.sections.size(); s++) {
++                    const auto& sec = context.sections[s];
++                    if (sec.rom_addr != (uint32_t)-1 && vram >= sec.ram_addr && vram < sec.ram_addr + sec.size) {
++                        jtbl_rom_delta = sec.rom_addr - sec.ram_addr;
++                        cur_jtbl.rom = vram + jtbl_rom_delta;
++                        cur_jtbl.section_index = (uint16_t)s;
++                        break;
++                    }
++                }
++            }
++        }
++
+         while (vram < end_address) {
+             // Retrieve the current entry of the jump table
+             // TODO same as above
+-            uint32_t rom_addr = vram + func.rom - func.vram;
++            uint32_t rom_addr = vram + jtbl_rom_delta;
++            if ((size_t)rom_addr + 4 > context.rom.size()) {
++                break;
++            }
+             uint32_t jtbl_word = byteswap(*reinterpret_cast<const uint32_t*>(&context.rom[rom_addr]));
+ 
+             if (cur_jtbl.got_offset.has_value() && got_ram_addr.has_value()) {

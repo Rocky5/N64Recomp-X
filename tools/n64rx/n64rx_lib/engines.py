@@ -63,8 +63,18 @@ def git_head(path):
         return None
 
 
+def _recomp_src():
+    sys.path.insert(0, str(ROOT / 'tools/xbox'))
+    try:
+        import recomp_src
+    finally:
+        sys.path.pop(0)
+    return recomp_src
+
+
 def recompiler_pin():
-    return git_head(ROOT / 'tools/recomp') or 'unknown'
+    """the submodule's pin plus patches/recomp (tools/xbox/recomp_src.py): what generated code depends on"""
+    return _recomp_src().key()
 
 
 SETUP_HINT = ('run: bash tools/xbox/setup.sh' if not IS_WINDOWS
@@ -153,24 +163,44 @@ class Native:
         env = dict(os.environ, NXDK_DIR=str(self.nxdk), LLVM=str(self.llvm), **env_vars)
         return run_logged(['bash', '-c', script], log, env=env)
 
+    def _built_key(self):
+        """the key the recompiler at recomp_dir was built with (none: the bare pin, as before patches)"""
+        stamp = self.recomp_dir / '.n64rx-key'
+        return stamp.read_text().strip() if stamp.exists() else git_head(ROOT / 'tools/recomp')
+
     def ensure_recompiler(self, log):
-        if self.recompiler.exists():
+        """N64Recomp at the submodule's pin with patches/recomp applied
+        (tools/xbox/recomp_src.py), built again when either changes. A
+        prebuilt one that is older (the SDK image's) gives way to one built in
+        build-host/recomp."""
+        key = recompiler_pin()
+        if self.recompiler.exists() and self._built_key() == key:
             return
+        if self.recomp_dir != ROOT / 'build-host/recomp' and os.environ.get('N64RX_RECOMP'):
+            self.recomp_dir = ROOT / 'build-host/recomp'
+            if self.recompiler.exists() and self._built_key() == key:
+                return
         if not self.can_build_recompiler():
             raise N64rxError('N64Recomp is not built and there is no C++ compiler to build it.', SETUP_HINT)
-        src = ROOT / 'tools/recomp'
-        if not (src / 'CMakeLists.txt').exists():
+        if not (ROOT / 'tools/recomp/CMakeLists.txt').exists():
             raise N64rxError('The recompiler\'s source (tools/recomp) is missing.',
                              'run: git submodule update --init --recursive')
+        try:
+            src = pathlib.Path(_recomp_src().prepare(ROOT / 'build-host/recomp-src')).resolve()
+        except SystemExit as e:
+            raise N64rxError('A patch in patches/recomp does not apply to the recompiler.', str(e))
+        rel = src.relative_to(ROOT.resolve()).as_posix()
+        out = self.recomp_dir.resolve().relative_to(ROOT.resolve()).as_posix()
         if IS_WINDOWS:
-            script = (f'cmake -S tools/recomp -B build-host/recomp -G Ninja -DCMAKE_BUILD_TYPE=Release '
+            script = (f'rm -f {out}/CMakeCache.txt; cmake -S {rel} -B {out} -G Ninja -DCMAKE_BUILD_TYPE=Release '
                       f'-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXE_LINKER_FLAGS=-static && '
-                      f'ninja -C build-host/recomp N64RecompCLI RSPRecomp')
+                      f'ninja -C {out} N64RecompCLI RSPRecomp')
         else:
-            script = ('cmake -S tools/recomp -B build-host/recomp -G Ninja -DCMAKE_BUILD_TYPE=Release && '
-                      'ninja -C build-host/recomp N64RecompCLI RSPRecomp')
+            script = (f'rm -f {out}/CMakeCache.txt; cmake -S {rel} -B {out} -G Ninja -DCMAKE_BUILD_TYPE=Release && '
+                      f'ninja -C {out} N64RecompCLI RSPRecomp')
         if self.bash(script, log, {}) or not self.recompiler.exists():
             raise N64rxError('Building N64Recomp failed.', f'see {log}')
+        (self.recomp_dir / '.n64rx-key').write_text(key)
 
     def recompile(self, config, log):
         env = self._msys_env() if IS_WINDOWS else None   # the MinGW runtime DLLs, for a non-static build

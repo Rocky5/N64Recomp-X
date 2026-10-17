@@ -165,8 +165,40 @@ def apply(a, learnt, rom_len):
         notes.append(f'{name}: {len(new)} learnt functions ({", ".join(f"{x:08X}" for x in new[:8])}'
                      f'{"..." if len(new) > 8 else ""}), {len(a.funcs[name])} functions now')
     _cross_roots(a, notes)
+    _table_sources(a, runs, notes)
     a.notes += notes
     return notes
+
+
+def _table_sources(a, runs, notes):
+    """captured KSEG0 RDRAM over a ROM segment whose bytes differ there (a
+    boot that decompresses its code and data over its own segment: GoldenEye,
+    whose 0x70000000 code reads switch tables at 0x8002xxxx). Appended to the
+    recompiler's copy of the ROM as sections with no functions, written ahead
+    of the others (emit.write_syms), so N64Recomp with patches/recomp/0001
+    reads a jump table outside its function's section from what RDRAM held.
+    Kept out of a.img.segments: no overlay keys or function searches change."""
+    a.table_sources = getattr(a, 'table_sources', [])
+    rom = a.img.rom
+    for blk, data in sorted(runs.items()):
+        if not 0x80000000 <= blk < 0x80800000:
+            continue
+        over = [s for s in a.img.segments if not s.name.startswith('code_') and s.vram < blk + len(data) and blk < s.vram + s.size]
+        differ = False
+        for s in over:
+            lo, hi = max(blk, s.vram), min(blk + len(data), s.vram + s.size)
+            r = s.rom + (lo - s.vram)
+            if r + (hi - lo) > len(rom) or rom[r:r + (hi - lo)] != data[lo - blk:hi - blk]:
+                differ = True
+                break
+        if not differ:
+            continue
+        off = (len(rom) + 0xF) & ~0xF
+        rom = bytes(rom) + bytes(off - len(rom)) + data
+        a.table_sources.append(F.Segment(f'rdram_{blk:08X}', off, blk, len(data)))
+        notes.append(f'rdram_{blk:08X}: {len(data):#x} bytes at {blk:08X} from RDRAM, unlike the ROM segment '
+                     f'there (decompressed at boot): read for jump tables only, at {off:#x}')
+    a.img.rom = rom
 
 
 def _code_runs(code):
