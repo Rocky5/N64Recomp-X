@@ -974,6 +974,11 @@ START/A), the sound itself (tasks run; not listened to), a console.
   (`malloc(0x580)`), and nothing in the ROM calls it or holds its address:
   the call comes through a table in data the game decompresses, so it is
   either later in the boot than the crash or the table is wrong.
+- **Ocarina of Time** (open): the title demo and logo; after START the
+  graph thread waits on its stack queue `0x8011F9B4` for the frame's
+  task-done message (`0x29A`, every frame until then) and it never comes;
+  the scheduler waits on its interrupt queue. Next: the scheduler's
+  framebuffer/swap state at that moment.
 - xemu slot 10 stalls reading the ROM at boot now and then (Mario Party 2
   on slot 9 once, Mario Party 3 twice on 10); the same XBE boots on
   another slot. An emulator matter.

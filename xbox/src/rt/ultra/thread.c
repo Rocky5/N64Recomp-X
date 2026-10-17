@@ -468,7 +468,7 @@ ULTRA(osRecvMesg) {
     void xrc_trace_dump(void);   /* trace.c */
     if (mq == (uint32_t)(XRC_WATCH_RECV) && block && !rd32(mq + MQ_VALIDCOUNT)) {   /* diagnosis: who waits there */
         static unsigned s_n;
-        if (s_n++ < 2) {
+        if (s_n++ < 300) {
             uint32_t sp = (uint32_t)ctx->r29, i;
             xhw_logf("[OS] recv %08x blocks: N64 thread %08x, ra %08x, sp %08x, a1 %08x", (unsigned)mq,
                      (unsigned)me->t, (unsigned)ctx->r31, (unsigned)sp, (unsigned)ARG(1));
@@ -476,7 +476,7 @@ ULTRA(osRecvMesg) {
                 xhw_logf("[OS]   sp+%02x: %08x %08x %08x %08x %08x %08x %08x %08x", (unsigned)(4 * i),
                          rd32(sp + 4 * i), rd32(sp + 4 * i + 4), rd32(sp + 4 * i + 8), rd32(sp + 4 * i + 12),
                          rd32(sp + 4 * i + 16), rd32(sp + 4 * i + 20), rd32(sp + 4 * i + 24), rd32(sp + 4 * i + 28));
-            xrc_trace_dump();
+            if (s_n <= 2) xrc_trace_dump();
         }
     }
 #endif
