@@ -1147,3 +1147,11 @@ Next: where the order of the graphics task's SP/DP done (held for the
 scheduler's thread, `sp.c`) and the audio thread's 0x29E request breaks
 that path.
 
+**Pokémon Snap, the same day (xemu, test build, scripted START/A).** It
+stopped at 20 s with "Too many N64 threads" (32): it makes and destroys
+object threads by the dozen and a destroyed thread's record was never
+freed. A destroyed or returned thread's record and host thread, parked in
+`stop_wait`, now serve the next new OSThread (`XRC_THREAD_REUSE`). It now
+runs on into Professor Oak's lab (the menu, Oak, his dialogue) at 60 s.
+Open: a run of glyphs missing in Oak's text ("t____").
+

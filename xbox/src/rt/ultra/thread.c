@@ -20,6 +20,9 @@
  * same OSThread structs: an osCreateThread over a stopped thread makes the
  * next osStartThread run the new entry on the same kernel thread (back to
  * thread_body's start). Kill switch: -DXRC_THREAD_RESUME=0 (parks). */
+#ifndef XRC_THREAD_REUSE
+#define XRC_THREAD_REUSE 1
+#endif
 #ifndef XRC_THREAD_RESUME
 #define XRC_THREAD_RESUME 1
 #endif
@@ -71,6 +74,8 @@ typedef struct {
     volatile int stopped;       /* in osStopThread, until an osStartThread */
     volatile int fresh;         /* osCreateThread again on this OSThread: start over at the entry */
     volatile int halted;        /* another thread stopped or destroyed it: it stops at its next block */
+    volatile int dead;          /* destroyed, or its entry returned: its record (and host thread, once
+                                 * stopped) may serve the next new OSThread */
     void* jb[5];                /* thread_body's restart point (__builtin_setjmp) */
     recomp_context* ctx;        /* thread_body's: its sp for interp.c's exception code */
 } Thr;
@@ -244,6 +249,7 @@ static void thread_body(void* p) {
     /* an N64 thread that returns stops (libultra's __osCleanupThread) */
     xhw_logf("[OS] thread %d returned", (int)(int32_t)rd32(d->t + TH_ID));
     wr16(d->t + TH_STATE, OS_STATE_STOPPED);
+    d->dead = 1;
     stop_wait(d);
 }
 
@@ -254,7 +260,21 @@ ULTRA(osCreateThread) {
     (void)rdram;
     xu_lock();
     d = find(t);
+    if (!d && XRC_THREAD_REUSE && XRC_THREAD_RESUME) {
+        /* DIVERGES: a destroyed thread's record and host thread, parked in
+         * stop_wait, serve a new OSThread (Pokemon Snap makes and destroys
+         * object threads by the dozen: "Too many N64 threads" at its first
+         * course). -DXRC_THREAD_REUSE=0: a new record every time. */
+        int i;
+        for (i = 0; i < s_nthr; i++)
+            if (s_thr[i].dead && s_thr[i].stopped && s_thr[i].kt && s_thr[i].t) {
+                d = &s_thr[i];
+                d->t = t;
+                break;
+            }
+    }
     if (!d) d = add(t);
+    d->dead = 0;
     if (d->kt && XRC_THREAD_RESUME) d->fresh = 1;   /* the old one is stopped: starts over */
     d->entry = ARG(2);
     d->arg = ARG(3);
@@ -346,11 +366,16 @@ ULTRA(osDestroyThread) {
     TRACE("[OS] trace: destroy %08x by %08x", (unsigned)t, (unsigned)self()->t);
     if (!t || t == self()->t) {
         if (t) wr16(t + TH_STATE, OS_STATE_STOPPED);
+        self()->dead = 1;
         stop_wait(self());
         return;
     }
     /* another thread: stopped (HAL's object manager stops them first) or
      * stopped now, until it is created and started again */
+    {
+        Thr* o = find(t);
+        if (o) o->dead = 1;
+    }
     if (s_logged++ < 4) xhw_logf("[OS] osDestroyThread of another thread (%08x): it stops", (unsigned)t);
     halt_other(t, NULL);
 }
