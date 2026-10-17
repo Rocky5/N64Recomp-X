@@ -1172,3 +1172,13 @@ two banks); `texconv_deswizzle32` (host-tested, `XGFX_DESWIZZLE32`). The
 portraits and names are sharp now (xemu, scripted). Any game with RGBA32
 dxt-0 loads gains the same. Console: to confirm (a new Smash build).
 
+**Staged for the console at `6ae7cf0` (red off; these replace `vzel1` and
+`vsm1`, never deployed):** ThinLTO releases, ROM inside, each booted 35 s
+in xemu with no crash.
+
+| build | game | xbe sha1 | title ID / folder | to check |
+|---|---|---|---|---|
+| `vssb2` | Super Smash Bros. | 6c0f23177dfd | 4E520101, `/F/Applications/N64Recomp-X-SSB` | the character portraits sharp (the RGBA32 fix), the rest as `vssb1` |
+| `vzel2` | Ocarina of Time 1.2 | 41935c861b7d | 4E52B837, `/F/Applications/N64Recomp-X-ZEL` (new: make both folders) | title, new file, the intro, Kokiri Forest, music, fps, free memory |
+| `vsm2` | Super Mario 64 | eb5eb4bf6999 | 4E52B0E2, `/F/Applications/N64Recomp-X-SM64` (new: make both folders) | intro, castle grounds, a course, fps, sound, EEPROM save |
+
