@@ -57,7 +57,7 @@ def make(rom, bdir, base=None, learnt=None):
     # loader's (Rare's games): named on its own, a name the loader's copy has becomes <name>__2, left out of
     # the recompile and given a body that calls the runtime's (gen/xrc_alias.c, pipeline.py)
     aliases = {}
-    code_keys = {k for seg in a.img.segments if seg.name.startswith('code_') for k in a.funcs.get(seg.name, {})}
+    code_keys = {k for seg in a.img.segments if seg.name.startswith(('code_', 'tlb_')) for k in a.funcs.get(seg.name, {})}
     if code_keys:
         have = _runtime_ultra()
         ids2, _N2 = libultra.identify(a.img, {k: f for k, f in a.all_funcs().items() if k in code_keys})

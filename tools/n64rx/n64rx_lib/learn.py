@@ -123,6 +123,7 @@ def apply(a, learnt, rom_len):
     notes = []
     todo = {}
     runs = _code_runs(learnt.code)
+    runs = _rom_backed(a, runs, rom_len, notes)
     for x in sorted(learnt.funcs):
         d = next((d for d in reversed(learnt.dmas) if d[1] <= x < d[1] + d[2]), None)
         # where overlays share the address, the one the newest DMA put there
@@ -168,6 +169,62 @@ def apply(a, learnt, rom_len):
     _table_sources(a, runs, notes)
     a.notes += notes
     return notes
+
+
+def _rom_backed(a, runs, rom_len, notes):
+    """captured KUSEG pages the ROM holds as they are: code a game pages in
+    through its TLB straight from the ROM (GoldenEye's 0x7F000000, romCopy
+    from its game segment's ROM start + the page's offset, tlb_manage.c in
+    its decomp). Pages that agree on one ROM offset for their vram become one
+    ROM-backed segment, from its 1 MB base to the last such page and 64 KB
+    on, so the whole of it is found from the ROM rather than a page a
+    learning round. Returns the runs left for capture segments.
+    N64RX_TLB_ROM=0: every page stays a capture, as before."""
+    if os.environ.get('N64RX_TLB_ROM', '1') == '0':
+        return runs
+    rom = a.img.rom
+    pages = {}
+    for blk, data in runs.items():
+        for off in range(0, len(data), 0x1000):
+            v, b = blk + off, data[off:off + 0x1000]
+            if v >= 0x80000000 or len(b) < 0x1000 or b.count(b[:4]) * 4 == len(b):
+                continue
+            r = rom.find(b[:64], 0, rom_len)
+            while r != -1 and rom[r:r + 0x1000] != b:
+                r = rom.find(b[:64], r + 1, rom_len)
+            if r != -1:
+                pages[v] = r - v
+    by = {}
+    for v, d in pages.items():
+        by.setdefault((v & 0xFFF00000, d), []).append(v)
+    taken = set()
+    for (base, d), vs in sorted(by.items()):
+        if base + d < 0:
+            continue
+        end = min(max(vs) + 0x1000 + 0x10000, base + 0x100000, rom_len - d)
+        if any(s.has(base) or s.has(end - 1) for s in a.img.segments):
+            continue
+        seg = F.Segment(f'tlb_{base:08X}', base + d, base, end - base)
+        a.img.segments.append(seg)
+        a.funcs[seg.name] = {}
+        taken.update(range(base, end, 0x1000))
+        notes.append(f'{seg.name}: ROM {base + d:#x} at {base:08X}, {end - base:#x} bytes (learnt: {len(vs)} pages the '
+                     f'game mapped through its TLB match the ROM there)')
+    if not taken:
+        return runs
+    left = {}
+    for blk, data in runs.items():   # what no ROM-backed segment covers stays a capture
+        cur = None
+        for off in range(0, len(data), 0x1000):
+            v = blk + off
+            if v in taken:
+                cur = None
+                continue
+            if cur is None:
+                cur = v
+                left[cur] = b''
+            left[cur] += data[off:off + 0x1000]
+    return left
 
 
 def _table_sources(a, runs, notes):
@@ -228,7 +285,7 @@ def _cross_roots(a, notes):
     yet (Banjo-Kazooie: ~150 of them; N64Recomp refuses each caller, "No
     function found for jal target"): a root of the segment that holds it,
     until nothing new turns up"""
-    code = [s for s in a.img.segments if s.name.startswith('code_')]
+    code = [s for s in a.img.segments if s.name.startswith(('code_', 'tlb_'))]
     if not code:
         return
     added = 0
@@ -274,7 +331,7 @@ def extend_live(a, live, starts, nm, replaced):
     # code captured from RDRAM is the game's own, reached mostly through pointers the analysis
     # cannot follow: every function found in it is live
     for seg in a.img.segments:
-        if seg.name.startswith('code_'):
+        if seg.name.startswith(('code_', 'tlb_')):   # tlb_: the same code, found in the ROM (_rom_backed)
             todo += [k for k in a.funcs.get(seg.name, {}) if k in funcs]
     before = len(live)
     while todo:

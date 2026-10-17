@@ -85,6 +85,9 @@
 #ifndef XGFX_TEX_MEMO
 #define XGFX_TEX_MEMO 1        /* per-frame (load address, tile key) -> texture memo */
 #endif
+#ifndef XGFX_FILL32
+#define XGFX_FILL32 1          /* a fill into a 32-bit colour image takes its colour as RGBA8888, as the RDP */
+#endif
 #ifndef XGFX_TRI4
 #define XGFX_TRI4 1            /* Fast3D's 0xB1 as Rare's G_TRI4 */
 #endif
@@ -1206,6 +1209,11 @@ static void do_fillrect(uint32_t w0, uint32_t w1) {
         s_st.prim[0] = (uint8_t)(((c >> 11) & 31) * 255 / 31);
         s_st.prim[1] = (uint8_t)(((c >> 6) & 31) * 255 / 31);
         s_st.prim[2] = (uint8_t)(((c >> 1) & 31) * 255 / 31);
+        if (XGFX_FILL32 && s_cimg_siz == 3) {   /* a 32-bit colour image: the fill colour is RGBA8888 */
+            s_st.prim[0] = (uint8_t)(R.fill >> 24);
+            s_st.prim[1] = (uint8_t)(R.fill >> 16);
+            s_st.prim[2] = (uint8_t)(R.fill >> 8);
+        }
         s_st.prim[3] = 255;
         s_st.blend = XGFX_BLEND_OFF;
         s_st.alpha_ref = 0;

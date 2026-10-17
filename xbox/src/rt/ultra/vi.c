@@ -135,9 +135,17 @@ ULTRA(osViSwapBuffer) {
     xrc_gfx_swap(xu_phys(fb));   /* the frame drawn into fb presented (../gfx.c) */
 }
 
+/* before the first swap libultra's __osViInit has both at K0BASE
+ * (0x80000000; vi.c in the decomps): a game that reads them then gets RDRAM's
+ * start, not NULL. -DXRC_VI_K0BASE=0: 0, as before */
+#ifndef XRC_VI_K0BASE
+#define XRC_VI_K0BASE 1
+#endif
+#define VI_FB(v) ((v) || !XRC_VI_K0BASE ? (v) : 0x80000000u)
+
 ULTRA(osViGetCurrentFramebuffer) {
     (void)rdram;
-    RET(s_cur);
+    RET(VI_FB(s_cur));
 }
 
 ULTRA(osViGetCurrentMode) {   /* the mode's type: its first byte */
@@ -147,7 +155,7 @@ ULTRA(osViGetCurrentMode) {   /* the mode's type: its first byte */
 
 ULTRA(osViGetNextFramebuffer) {
     (void)rdram;
-    RET(s_next);
+    RET(VI_FB(s_next));
 }
 
 ULTRA(osViSetMode) {

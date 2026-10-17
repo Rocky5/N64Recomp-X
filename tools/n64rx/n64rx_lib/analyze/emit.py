@@ -352,6 +352,8 @@ def recomp_hazards(a: Analysis, live, nm, replaced):
                         lo, hi = min(f.start, t), max(f.end, t + 4)
                         if seg.name.startswith('code_') and 0x80000000 <= lo and hi <= 0x80800000 and hi - lo <= 0x100000:
                             want = (lo, hi)
+                        elif f.start < 0x80000000 and 0x80000000 <= t < 0x80800000:
+                            want = (t & ~0xFFF, (t + 4 + 0xFFF) & ~0xFFF)   # TLB-mapped code, its table in KSEG0: that page
                         break
             if why:
                 out[x] = (nm[x], why, want)

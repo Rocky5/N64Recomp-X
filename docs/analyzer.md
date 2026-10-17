@@ -113,6 +113,16 @@ machine and stays in their build folder.
    ROM plus the captured code): Banjo-Kazooie's `bkmemcpy64` copies with
    `ld`/`sd`, and on 32-bit registers every `bk_realloc` lost half of each
    doubleword (the heap block found reused under its spawnable-actor list).
+   Captured KUSEG pages the ROM holds as they are (code a game pages in
+   through its TLB straight from the ROM: GoldenEye's 0x7F000000, `romCopy`
+   from its game segment's ROM start plus the page's offset,
+   `tlb_manage.c` in its decomp) that agree on one ROM offset become one
+   ROM-backed segment `tlb_<vram>` instead, from the 1 MB base to the last
+   such page and 64 KB on: the whole of it is found from the ROM, not a page
+   a learning round (GoldenEye: 173 pages, 2463 functions; `N64RX_TLB_ROM=0`
+   keeps the captures). It counts as captured code for the game's own
+   libultra and for liveness. TLB-mapped code whose jump table is in KSEG0
+   RDRAM no capture holds asks for that table's page the same way.
    Code a game pages in with its own TLB (Conker's 0x15000000) is saved a
    4 KB page at a time, read through the TLB, keyed by its virtual page
    (neighbouring virtual pages sit in any frames). The console also writes
