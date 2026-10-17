@@ -885,3 +885,14 @@ from 10 s to 50 s of the boot, then the main thread stops sending tasks
 runtime's VI); the analyser names it now and the runtime answers it from
 the mode the game set. Not verified on a console.
 
+### Super Smash Bros. and Blast Corps' menus (2026-10-17, xemu)
+
+- **Super Smash Bros.** from the ROM alone, no learning rounds: the intro
+  (Master Hand on the desk, ~50 fps), the title, the 1P character select;
+  the stick moves the token and the fighter under it shows in the panel.
+  An A press there did not drop the token in the scripted runs (open:
+  timing of the scripted presses, or how the game reads the button).
+- **Blast Corps**: the title screen, the profile screen ("Amber", its
+  portrait frame empty: a framebuffer effect) and the attract story text.
+- Not verified on a console.
+

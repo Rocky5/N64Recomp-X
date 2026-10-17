@@ -93,6 +93,8 @@ every family.
 | Mario Kart 64 | F3DEX 0.95 (F3D_OLD) | on the console (red): races at 29.9 fps, display lists 2-3 ms a frame; in xemu: the title, game/player/map select, a Luigi Raceway race driven with A held (HUD, karts, track, items, the course map), `scenarios/mk64_race`; no texture misses, no unhandled commands. At 720p 16:9 (`scenarios/mk64_hd`, Widescreen Auto) the race is hor+ (the world to the edges, the HUD in the 4:3 box), the title in the box |
 | Super Mario 64 | Fast3D | the head screen and the castle grounds (`--learn`, the TLB); the head's shading is off |
 | Paper Mario | F3DEX2 | not reached: the analyser now passes its boot; the build stops at overlays sharing a vram |
+| Super Smash Bros. | F3DEX (fifo 2.0) | the intro, the title and the character select at about 50 fps (no learning rounds) |
+| Blast Corps | Fast3D (2.0D) | the Rare logo, the attract demo at 50-56 fps with its text (the font's glyphs hashed whole), the title, the profile screen (its portrait frame empty) |
 | Banjo-Kazooie | F3DEX 1.21 | its intro: Banjo and Kazooie, textured, about 20 fps (`--learn`, captured code); the sky and a tree draw black. A tile inside a larger LOADBLOCK takes the latest load that covers its TMEM address (`XGFX_TMEM_WITHIN`: Banjo's faces) |
 
 ## Framebuffer effects (`xbox/src/gfx/fbfx.{h,c}`, f3d_interp.c)
