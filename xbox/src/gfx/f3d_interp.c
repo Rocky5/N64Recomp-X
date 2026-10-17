@@ -611,6 +611,9 @@ static TexEntry* texture_for_tile(int tidx) {
     if (t->maskt && (1u << t->maskt) < h) h = 1u << t->maskt;
     /* tiles may declare more rows than were loaded (UVBT, fonts): only loaded rows exist */
     if (h > ld->bytes / line) h = ld->bytes / line;
+    /* a load shorter than one row (Banjo-Kazooie: 48 bytes under a 64-byte
+     * line) still fills that row's start: one row, the rest as RDRAM has it */
+    if (!h && ld->bytes && XGFX_TILE_WRAP) h = 1;
     if (w == 0 || h == 0 || w > 1024 || h > 1024) { tex_miss("size", tidx); return NULL; }
     bytes = line * h;
     if (bytes > sizeof raw) { tex_miss("too big", tidx); return NULL; }

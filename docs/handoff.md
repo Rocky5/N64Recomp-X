@@ -1188,4 +1188,8 @@ interpreter's size came out 0 and the tile was dropped (`texture miss
 (size)`, hundreds a run; the name-entry boxes drew solid cyan). Tile sizes
 now wrap in 12 bits as the RDP's (`XGFX_TILE_WRAP`): 0 misses in the same
 run.
+Banjo-Kazooie had the other miss: a tile over a load shorter than one row
+(48 bytes under a 64-byte line: height 0, dropped). Such a load now counts
+as one row (with `XGFX_TILE_WRAP`); its run has 0 misses (48 before).
+Whether this was its black sky and tree is for the console to show.
 
