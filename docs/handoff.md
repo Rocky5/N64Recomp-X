@@ -1112,3 +1112,11 @@ the runtime's helpers (`docs/decisions.md`). It now presents 321 frames
 (1 before), then reads address 4 in `load_texture_impl` (from
 `mdl_load_all_textures`, a map's textures; open).
 
+**Also staged (red still off):** `vsm1`, Super Mario 64 (US), the code of
+`3248b8c` (ThinLTO release, ROM inside, 11.6 MB XBE), xbe sha1
+ea2ad2ee555d, title ID 4E52B0E2, folder `/F/Applications/N64Recomp-X-SM64`
+(make both folders on the first deploy). xemu: castle grounds with the
+Lakitu text box drawn right (test build, scripted); the release booted
+35 s, no crash. To check: the intro, the castle grounds, a course, fps,
+sound, the EEPROM save.
+
