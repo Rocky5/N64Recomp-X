@@ -19,8 +19,8 @@ done. From the ROM alone, on the console (red, 480i): Smash Bros. at 60 fps
 and Super Mario 64 perfect, Banjo-Kazooie and Mario Kart 64 playing (Banjo's
 jiggy and menu textures open), Mario Party without its flicker (its controls
 and logo fixed and staged), Ocarina of Time at its own 20 fps (textures
-open), Majora's Mask crashing (fix staged). In xemu: 720p on the working
-games, GoldenEye into the Dam, Pokémon Snap through Oak's briefing (text right), Paper Mario past its
+open; its two moons fixed in xemu), Majora's Mask crashing (fix staged). In xemu: 720p on the working
+games, GoldenEye's Dam right (textures, sky, Bond's gun, the pause watch: its cosf fell into sinf), Pokémon Snap through Oak's briefing (text right), Perfect Dark past its boot, Paper Mario past its
 copy-protection boot. The library sweep (s8: 128 of 246 still presenting at
 30 s) (`tools/xbox/sweep.py`) ranks what blocks the rest
 (`docs/analyzer.md`). CI is manual-only (free minutes).** `docs/PLAN.md` is binding on
