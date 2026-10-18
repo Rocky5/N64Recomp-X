@@ -536,11 +536,19 @@ def _io(N):
                  and ft.calls[0] not in N.name and ft.args_used == {0} and ft.size <= 0x40]
         N.one(cands, 'osContGetQuery', 'the status records at arg0, through the routine osContInit reads them with')
     # osContGetReadData(pads): a leaf copying the SI buffer into 6-byte OSContPad records at arg0
+    # (the SI buffer can be named only by the routine osContStartReadData calls to pack it, so its
+    # callees' globals count too; and an OSContPad has bytes at +2 and +3, so a halfword written at
+    # arg0 + 2 is something else: Mario Party's own ring of recorded pads, 4 shorts a call, sat
+    # within 0x100 of its last-command byte and took the name, its controls dead)
     srd = N.a_('osContStartReadData')
     if srd:
-        bufs = {g for g in f[srd].globals_}
+        pack = {g for c in f[srd].calls if c in f and c not in N.name for g in f[c].globals_}
+        bufs = set(f[srd].globals_) | pack
         cands = [a for a, ft in f.items() if a not in N.name and ft.leaf and ft.args_used == {0} and
-                 N.arg_w(a, 0, 0) and any(g in bufs or abs(g - b) < 0x100 for g in ft.globals_ for b in bufs)]
+                 N.arg_w(a, 0, 0) and not any(k[:3] == (0, 2, 2) and 'w' in v for k, v in ft.arg.items()) and
+                 any(g in bufs or abs(g - b) < 0x100 for g in ft.globals_ for b in bufs)]
+        if len(cands) > 1 and pack:   # the one that reads the buffer the pack routine fills
+            cands = [a for a in cands if set(f[a].globals_) & pack] or cands
         N.one(cands, 'osContGetReadData', 'copies the SI buffer into OSContPad records at arg0')
     # osPiReadIo: access, raw read, release
     rri = N.a_('osPiRawReadIo')

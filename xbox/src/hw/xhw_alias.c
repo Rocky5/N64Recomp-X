@@ -147,6 +147,13 @@ int xhw_alias_map(uint32_t va, uint32_t pa, uint32_t bytes) {
     return 1;
 }
 
+/* what holds va: its PDE and (no large page) its PTE, for the log when a
+ * range is refused (mem.c's KSEG1 alias on the console, 2026-10-17) */
+void xhw_alias_why(uint32_t va, uint32_t* pde, uint32_t* pte) {
+    *pde = *pde_of(va);
+    *pte = (*pde & PTE_P) && !(*pde & PDE_PS) ? *pte_of(va) : 0;
+}
+
 void xhw_alias_unmap(uint32_t va, uint32_t bytes) {
     uint32_t off, f, i;
     if (!range_ok(va, bytes)) return;

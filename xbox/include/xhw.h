@@ -84,6 +84,7 @@ void* xhw_rdram_alloc(uint32_t bytes);
  * only what _map did. */
 int xhw_alias_map(uint32_t va, uint32_t pa, uint32_t bytes);
 void xhw_alias_unmap(uint32_t va, uint32_t bytes);
+void xhw_alias_why(uint32_t va, uint32_t* pde, uint32_t* pte);   /* the PDE/PTE that hold va */
 /* Page watch (xhw_alias.c, framebuffer readback): arm (1) clears the
  * accessed bits of the whole pages inside [va, va + bytes) of the low-64 MB
  * window and returns the pages armed; a look (0) returns how many of them

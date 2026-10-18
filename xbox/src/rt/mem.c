@@ -93,9 +93,25 @@ int xrc_mem_init(uint32_t mb) {
              (unsigned)((uintptr_t)p & 0x7FFFFFFFu), (unsigned)(uintptr_t)xrc_rdram);
     if (HW_SHADOW) hw_shadow(p, bytes);
 #if XRC_KSEG1
-    if (!xhw_alias_map((uint32_t)(uintptr_t)(xrc_rdram + 0xA0000000u), (uint32_t)(uintptr_t)p & 0x7FFFFFFFu, bytes))
-        xhw_logf("[MEM] KSEG1 not aliased (host %08x in use): uncached RDRAM accesses fault",
-                 (unsigned)(uintptr_t)(xrc_rdram + 0xA0000000u));
+    if (!xhw_alias_map((uint32_t)(uintptr_t)(xrc_rdram + 0xA0000000u), (uint32_t)(uintptr_t)p & 0x7FFFFFFFu, bytes)) {
+        /* some page of the range is the kernel's (the console, 8 MB windows at
+         * 0xA3631000; not xemu): every free page aliased on its own, the
+         * first refused one logged with what holds it. Majora's Mask's first
+         * uncached write landed on an unaliased page and crashed (vmm3).
+         * DIVERGES: an access to a page left out still faults */
+        uint32_t base = (uint32_t)(uintptr_t)(xrc_rdram + 0xA0000000u), pa = (uint32_t)(uintptr_t)p & 0x7FFFFFFFu;
+        uint32_t off, refused = 0, first = 0, pde = 0, pte = 0;
+        for (off = 0; off < bytes; off += 4096)
+            if (!xhw_alias_map(base + off, pa + off, 4096)) {
+                if (!refused++) first = base + off, xhw_alias_why(first, &pde, &pte);
+            }
+        if (refused)
+            xhw_logf("[MEM] KSEG1 alias: %u of %u pages refused, the first %08x (PDE %08x, PTE %08x): uncached "
+                     "accesses there fault", (unsigned)refused, (unsigned)(bytes / 4096), (unsigned)first,
+                     (unsigned)pde, (unsigned)pte);
+        else
+            xhw_logf("[MEM] KSEG1 aliased page by page at %08x", (unsigned)base);
+    }
 #endif
     xrc_mmio_init();
 #ifdef XRC_WATCH

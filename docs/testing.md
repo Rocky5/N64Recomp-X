@@ -254,6 +254,7 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_DISPATCH_START=0` | 1 | an eret outside the game's exception code only returns; otherwise, when it is the game's own `__osDispatchThread` restoring an OSThread the runtime does not run (k0 when EPC was written), that thread is started from its context (pc, sp, a0, priority), and a boot that returns after that parks instead of the "game returned" card |
 | `-DXRC_VI_ON_EVENT=0` | 1 | the retrace thread starts only with the runtime's `osCreateViManager`; otherwise also when a game registers `OS_EVENT_VI` |
 | `-DXGFX_DESWIZZLE32=0` | 1 | an RGBA32 LOADBLOCK with dxt 0 deswizzled with the 16-bit rule (32-bit halves), as before; otherwise its odd rows swap texel pairs (TMEM's two banks) |
+| `-DXGFX_LOAD32=0` | 1 | a LOADBLOCK counts texels in SETTIMG's size always, as before; otherwise 4 bytes each when its tile is 32-bit under a 16-bit image (Mario Party's title logo) |
 | `-DXGFX_FILL32=0` | 1 | a fill rectangle's colour is RGBA5551 always, as before; otherwise RGBA8888 when the colour image is 32-bit, as the RDP takes it |
 | `-DXGFX_TRI4=0` | 1 | Fast3D's 0xB1 unhandled, as before; otherwise Rare's G_TRI4 (GoldenEye, Perfect Dark): four triangles of 4-bit indices, one of three 0s skipped |
 | `-DXHW_VIDEO_720P_KB=<kb>` | 24576 | free memory 720p asks for before pbkit starts (32768: the plan's first rule, which turned Smash Bros. and Banjo-Kazooie down to 480) |

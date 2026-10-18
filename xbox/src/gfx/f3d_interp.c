@@ -85,6 +85,9 @@
 #ifndef XGFX_TEX_MEMO
 #define XGFX_TEX_MEMO 1        /* per-frame (load address, tile key) -> texture memo */
 #endif
+#ifndef XGFX_LOAD32
+#define XGFX_LOAD32 1          /* LOADBLOCK into a 32-bit tile counts 32-bit texels */
+#endif
 #ifndef XGFX_FILL32
 #define XGFX_FILL32 1          /* a fill into a 32-bit colour image takes its colour as RGBA8888, as the RDP */
 #endif
@@ -1711,6 +1714,10 @@ static void run_dl(const uint32_t* pc) {
                 f3d_loadblock_decode(w0, w1, &tile, &uls, &ult, &lrs, &dxt);
                 ld = &R.loads[(R.tile[tile & 7].tmem >> 3) & 63];
                 bpt = R.timg_siz == 3 ? 4 : R.timg_siz == 2 ? 2 : 1;   /* LOADBLOCK in SETTIMG's size */
+                /* a 32-bit load tile under a 16-bit image: the texels are 32-bit (Mario
+                 * Party's title logo, 188x5 RGBA32 strips 3760 bytes apart, came out as
+                 * 1880-byte loads and two rows a strip) */
+                if (XGFX_LOAD32 && R.timg_siz == 2 && R.tile[tile & 7].siz == 3) bpt = 4;
                 ld->addr = R.timg_addr;
                 ld->bytes = (lrs + 1u) * bpt;
                 ld->dxt = dxt;
