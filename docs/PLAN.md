@@ -981,7 +981,7 @@ something else. Rows:
 | Volume | 0-100 | at once | `[audio] volume` |
 | Stick dead zone | 0-60 % in fives, live readout, per port | at once | `[portN] stick_deadzone` |
 | Controller Pak | per port; A opens the **Paks page**: what is in the port (Auto, Controller Pak, Rumble Pak, Nothing), which of the game's four paks (A-D; taking another port's pak swaps the two), the pak's notes (name, pages; A deletes one, X copies one to another of the game's paks, after a confirm), Format pak (after a confirm), Back. A change is a hot-swap the game sees (the status's pull bit, a new pak ID) | at once | `[portN] pak`, `pak_file` |
-| Buttons | sub-page per port, capture-the-next-button, Y = default | at once | `[portN] a = A ...` |
+| Controls | per port; A opens the **Controls page**: the Xbox controller drawn, each input's callout naming the N64 control it gives; Up / Down pick an input, Left / Right what it gives, Y = default, the live pad lit up (decisions.md "The Controls page") | at once | `[portN] a = a ...` |
 | Rumble | On, Off | at once | `[input] rumble` |
 | Save slot | 1-4 (the image file swapped at boot) | `*` | `[save] slot` |
 | Screenshots (BACK+WHITE) | On, Off; test builds | at once | `[system] screenshots` |
@@ -1001,7 +1001,11 @@ works).
 ### 5.3 The game ladder
 
 Which games, in what order, and why (facts and "verify" marks in
-`docs/research.md` §6):
+`docs/research.md` §6). Where each game stands is its tier in
+`docs/compat.md` (maintainer, 2026-10-18): **Gold** fully working on a
+real Xbox, **Silver** playable there with bugs that are not
+game-breaking, **Experimental** everything else; only a console run
+promotes. A rung is done when its game is Gold.
 
 | rung | game | class | why it is where it is |
 |---|---|---|---|

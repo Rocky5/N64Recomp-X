@@ -15,12 +15,18 @@ runs [Melee-X](https://github.com/TechProGabe/Melee-X),
 **Status: in development, not released.** `n64rx` takes your ROM and
 builds an XBE **from the ROM alone**: it finds the game's code, its
 segments and its libultra functions itself, with no decompilation and no
-per-game file needed. On a real Xbox: Pilotwings 64 (sound, saves, the
-settings menu) and Mario Kart 64 built from its ROM with nothing else
-(races at 30 fps, sound, Controller Pak saves). In xemu, Super Mario 64
-reaches the castle grounds. Across a whole library, 143 of 246 games build
-today and far fewer run yet; what blocks the rest is tracked in
-[`docs/analyzer.md`](docs/analyzer.md). The plan is
+per-game file needed.
+
+Every game has a tier ([`docs/compat.md`](docs/compat.md)), and only a
+real Xbox moves a game up:
+
+- **Gold**, fully working: Super Mario 64, Pilotwings 64, Super Smash Bros.
+- **Silver**, playable with bugs that do not stop you: Mario Kart 64,
+  GoldenEye 007, Banjo-Kazooie, Ocarina of Time.
+- **Experimental**, everything else: it may boot, run partly, or not at
+  all. Across a whole library, 245 of 246 games build today and far fewer
+  run yet; what blocks the rest is tracked in
+  [`docs/analyzer.md`](docs/analyzer.md). The plan is
 [`docs/PLAN.md`](docs/PLAN.md); what was verified, and how, is
 [`docs/handoff.md`](docs/handoff.md).
 

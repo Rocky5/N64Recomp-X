@@ -108,6 +108,9 @@ jobs:
       - name: n64rx tests
         run: python tools/xbox/test_n64rx.py
 
+      - name: Game tiers (docs/compat.md against n64rx)
+        run: python tools/xbox/test_compat.py
+
       - name: End to end, ROM-free (the test ROM through n64rx build)
         run: |
           python tools/xbox/make_test_rom.py build-host/test/test.z64

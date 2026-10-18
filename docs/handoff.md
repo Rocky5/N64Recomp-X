@@ -6,33 +6,44 @@ console).
 
 ## Where things stand (2026-10-18)
 
+Each game's tier (Gold fully working, Silver playable, Experimental the
+rest; only a console run promotes) is in `docs/compat.md`; a console
+result here moves its row there in the same change.
+
 The newest state first; the entries below are the record, oldest first.
 "xemu" is the emulator (slot runs, test builds); "red" is the maintainer's
-console. Red ran the 2026-10-17 set that evening (480i: its dashboard
-allows no 480p or 720p); the next set (`vzel12`, `vbk11`, `vmp9`, `vmm8`,
-`vsnap4`, `vge4`, commit `3ff8766`: the fix round plus the 2026-10-18
-fixes) is staged, not yet run. Anything not marked red is xemu
-only.
+console (480i: its dashboard allows no 480p or 720p). Red ran the
+`e7ad98f` set and then the Controls set on 2026-10-18 (the entries at the
+end); set 14 (every game here plus Kirby 64, with the fixes those runs led
+to) is staged and not yet on red (`build-host/deploy-set14.sh`). Anything
+not marked red is xemu only.
+
+| tier (`docs/compat.md`) | games |
+|---|---|
+| Gold | Super Mario 64, Pilotwings 64, Super Smash Bros. |
+| Silver | Mario Kart 64, GoldenEye, Banjo-Kazooie, Ocarina of Time 1.2 |
+| Experimental | Mario Party (its board: fix staged), Pokémon Snap (its camera lock: the photo check, open), Majora's Mask (boot crash: fix staged), Jet Force Gemini, Kirby 64 (E) (staged), the rest |
 
 | game (US) | how built | xemu | console (red) |
 |---|---|---|---|
 | Pilotwings 64 | its pack, or the ROM alone (`--analyze`): the same | title to results, saves, sound, 720p + hor+, the BACK menu | `vnrx1`: plays, sound, EEPROM saves, the BACK menu, the combos; 53-59 fps |
 | Mario Kart 64 | the ROM alone | title, menus, races (F3DEX), sound (nead), Controller Pak, 720p 16:9 | `vmk2`/`vmk4`: races at 29.9 fps (display lists 2-3 ms), sound, the ROM inside the XBE, the BACK menu and its Paks page, EEPROM and pak files; the map screen's TV (a framebuffer read) wrong; drift boosts in question |
-| Super Smash Bros. | the ROM alone | intro, title, 1P character select, a 1P match (Link vs Link, Hyrule Castle) at 47-50 fps with scripted input; 720p 16:9 at 45-57 fps (11.7 MB free) | `vssb6`: perfect, 59.9 fps; portraits sharp |
-| Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text; one present a frame (its frames are several tasks; presented at the swap), audio; its processes run as coroutines; 720p at 29-30 fps; START past the title to Mushroom Village (`0e5dc19`) | `vmp5`: flicker gone, 29.9 fps; the logo garbled and the controls dead (both fixed since, `vmp8` staged); the first boot's audio stuck |
+| Super Smash Bros. | the ROM alone | intro, title, 1P character select, a 1P match (Link vs Link, Hyrule Castle) at 47-50 fps with scripted input; 720p 16:9 at 45-57 fps (11.7 MB free) | `vssb6`: perfect, 59.9 fps; portraits sharp. `vssb7`: AC97 stuck on one boot, the next boot froze the Xbox in the audio boot; `vssb8` (step lines, an idle APU left alone): two clean boots |
+| Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text; one present a frame (its frames are several tasks; presented at the swap), audio; its processes run as coroutines; 720p at 29-30 fps; START past the title to Mushroom Village (`0e5dc19`) | `vmp5`: flicker gone, 29.9 fps. `vmp11`: stable to a board; the logo blocky, the board black (both fixed since: `vmp12` staged) |
 | Mario Party 2 / 3 | the ROM alone | intro, menus; 2: its audio thread, destroyed and made again by the game, plays on (58 tasks a second, 2026-10-17) | - |
-| Super Mario 64 | the ROM alone (+ three `--learn` rounds before) | head screen, Lakitu intro, castle grounds and Lakitu's text drawn right (scripted, 2026-10-17); 720p hor+ at 29-30 fps (the skybox stays in the 4:3 box) | `vsm6`: works perfectly, 29.9 fps |
-| Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, title, the photographer card, Professor Oak's lab and his whole briefing, every glyph right; the Beach course whole to the goal gate, back to the lab and out again at 29.9 fps (2026-10-18, 64 thread records); its cliffs, rails and track textured since the clamp-extent rule | `vsnap1` (before the thread-stack fix): the crash xemu had then; `vsnap4` staged (without the clamp-extent rule) |
-| Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro with the lair drawn whole, Banjo's house (~28 fps); near/far now the game's (the IPL3 copy); 720p hor+ at ~28 fps, 10 MB free (geometry the game culls shows as void at the far edges) | `vbk6`: works well, widescreen right, 29.9 fps; textures wrong as jiggies come in and in the START menu |
+| Super Mario 64 | the ROM alone (+ three `--learn` rounds before) | head screen, Lakitu intro, castle grounds and Lakitu's text drawn right (scripted, 2026-10-17); 720p hor+ at 29-30 fps (the skybox stays in the 4:3 box) | `vsm6`, `vsm7`: works perfectly, 29.9 fps |
+| Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, title, the photographer card, Professor Oak's lab and his whole briefing, every glyph right; the Beach course whole to the goal gate, back to the lab and out again at 29.9 fps (2026-10-18, 64 thread records); its cliffs, rails and track textured since the clamp-extent rule | `vsnap5`: runs well, 29.7 fps on the Beach; the camera can't be moved (found: a new save's camera lock waits for three photos with a subject, and the photo check copies the frame being drawn: open, `XGFX_PROBE` started) |
+| Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro with the lair drawn whole, Banjo's house (~28 fps); near/far now the game's (the IPL3 copy); 720p hor+ at ~28 fps, 10 MB free (geometry the game culls shows as void at the far edges) | `vbk12`: the jiggy transition right. `vbk13`: textures much better (RGBA 4-bit); static on the START screen (open) |
 | Blast Corps | the ROM alone + 15 `--learn` rounds | Rare logo, title, profile screen, the attract demo (50-56 fps) | - |
-| Majora's Mask | the ROM alone | title, file select, name entry, audio (2026-10-17) | `vmm3`: crashed at its first uncached write (KSEG1 alias refused); `vmm5` staged |
-| Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (53 MB, page cache) | title, file select, name entry, a new file, the intro text, Kokiri Forest's HUD, the Deku Tree's intro drawn, music (nead); its intermittent title stall (a dropped SP done) fixed 2026-10-18 (8 of 8 boots) | `vzel7`: runs at its own 20 fps; textures wrong, two moons on the title |
+| Majora's Mask | the ROM alone | title, file select, name entry, audio (2026-10-17) | `vmm9`: still crashes at its first uncached write (a KSEG1 alias page lost after boot; healed at the fault since, not yet on red) |
+| Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (53 MB, page cache) | title, file select, name entry, a new file, the intro text, Kokiri Forest's HUD, the Deku Tree's intro drawn, music (nead); its intermittent title stall (a dropped SP done) fixed 2026-10-18 (8 of 8 boots) | `vzel13`: lock-ups up to 2.6 s and HDD noise (learn.txt per line: fixed). `vzel14`: steadier, quieter; its own 20 fps, hitches at scene loads (relocated overlays interpreted), small audio skips, a rumble buzz at scene changes (`[PAK]` log staged) |
 | Ridge Racer 64 | the ROM alone + one `--learn` round | F3DEX2; 1732 frames in 30 s (~44 fps) | - |
 | Donkey Kong 64 | the ROM alone + `--learn` rounds | its file screen ("GAME 1"), drawing on (the IPL3 copy at RDRAM 4); audio stops once graphics start (open) | - |
 | Diddy Kong Racing, Wave Race 64, WWF No Mercy, Dr. Mario 64 | the ROM alone | present frames for the whole 30 s sweep run (DKR's microcode not decoded: grey boxes) | - |
 | Paper Mario | the ROM alone + `--learn` rounds | past its obfuscated boot (KSEG2 DMA), 321 frames, then a map's textures (open) | - |
-| GoldenEye | the ROM alone + `--learn` rounds (30) | logos, gun barrel, file select, mission select, briefing, the Dam in-game with its HUD and the pause watch; menus 37-50 fps; 7 functions refused by the recompiler (134 before); since 2026-10-18 the Dam right (cosf, palettes, the RDP-triangle sky), Bond's gun and the pause watch, ~30 fps; 720p 16:9 the same at ~30 fps, 18.6 MB free | `vge3` staged (first console run) |
-| Jet Force Gemini | the ROM alone | Rare logo, a menu screen by 70 s (its text drawn as boxes: open) since `$ra` is set at its resolver's calls (2026-10-18) | - |
+| GoldenEye | the ROM alone + `--learn` rounds (30) | logos, gun barrel, file select, mission select, briefing, the Dam in-game with its HUD and the pause watch; menus 37-50 fps; 7 functions refused by the recompiler (134 before); since 2026-10-18 the Dam right (cosf, palettes, the RDP-triangle sky), Bond's gun and the pause watch, ~30 fps; 720p 16:9 the same at ~30 fps, 18.6 MB free | `vge5`: works very well, 59.5 fps in menus; some frame-rate dips |
+| Jet Force Gemini | the ROM alone | Rare logo, a menu screen by 70 s (its text drawn as boxes: open) since `$ra` is set at its resolver's calls (2026-10-18) | `vjfg1`: boots to the Rare logo, a broken menu, slow, silent (Rare's own GBI and audio microcode: open) |
+| Kirby 64 (E) | the ROM alone | the intro, the Copy-ability question, the tutorial rooms (since osTvType from the region and the interrupt-off boost, 2026-10-18); one HUD icon garbled | `vk1` staged |
 | Conker, Castlevania | the ROM alone + `--learn` rounds | boot and stop (the entries below) | - |
 | the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s9: 132 still presenting at 30 s (s8: 128); Jet Force Gemini past its boot since (`docs/analyzer.md`) | - |
 
@@ -47,7 +58,7 @@ checked against it by `guard.c`, TLB regions); the game's own TLB (aliases,
 misses through its exception code and fault thread, KSEG2/3 through
 `XRC_HIGH_TLB`); overlays sharing a vram; the RCP register model through
 KSEG1; F3DEX/F3DEX2 and the microcode registries; audio HLE (aspMain, nead,
-`n_aspMain`); every save type and the BACK menu's Paks page; coroutines for
+`n_aspMain`); every save type and the BACK menu's Paks and Controls pages; coroutines for
 a game's own setjmp/longjmp; task done events held for their thread and
 for room in their queue; `$ra` set at calls to code that reads it (N64Recomp
 hooks); up to 64 N64 threads; threads
@@ -1747,3 +1758,236 @@ without it. Not verified: the A/B run over Mario Kart 64, Banjo-Kazooie,
 GoldenEye, Ocarina of Time and Smash Bros. was stopped before it ran
 (`build-host/clampab.sh` runs it); the staged `vsnap4` was built before
 this rule.
+
+## 2026-10-18: red runs the `e7ad98f` set; the Controls page (console + xemu)
+
+**Red ran ten builds at `e7ad98f`** (ThinLTO, the ROM inside, 480i; logs
+pulled to `C:\xemu\hw\logs<name>`; `vmp10` was not run). `[CLOCK]` 733 MHz
+on every boot. The maintainer's notes, then what the logs say:
+
+| build | maintainer | log |
+|---|---|---|
+| `vsnap5` Pokémon Snap | runs well; the camera can't be moved on the Beach | 29.7 fps on the course; `[MEM]` 17.1 MB free after nv2a; no thread or stack crash |
+| `vzel13` Ocarina of Time | much better; low fps, texture pop-in, a blocky title, 20 fps with random lock-ups; much HDD activity | 19.9 fps (its own 20), frames up to 2.6 s; 4574 `[LEARN]` lines, 2208 different, each new one rewrote learn.txt whole (below); 180 overlay functions run by the safety net (relocated overlays) |
+| `vge5` GoldenEye | works very well, some fps issues | 59.5 fps in menus |
+| `vjfg1` Jet Force Gemini | HDD churn at boot, the Rare logo, a glitched menu, very slow | 23.7-29.9 fps; graphics microcode with no version text read as Fast3D: ops 05 and 07 unhandled ~15000 times a run, 48 "no load" texture misses; its audio microcode unknown (silent) |
+| `vssb7` Smash Bros. | first boot: the audio-stuck notice, then fine; second boot (from the dashboard): locked | boot 1: `AC97 stuck ... after 6 restarts and 1 cold resets`, 52.9 fps; boot 2: the whole Xbox froze between `[AUDIO] found: codec` and the idle step (no more `[BEAT]`; the log is flushed per line before the first frame) |
+| `vmk10` Mario Kart 64 | as before, fine | 29.9 fps |
+| `vsm7` Super Mario 64 | great, to Bob-omb Battlefield | 29.9 fps |
+| `vmm9` Majora's Mask | crashes at boot | a write to host a38af402 (KSEG1 0xA027E402) at frame 15, the same as `vmm3`; no `[MEM] KSEG1` line, so the 8 MB alias was made whole at boot and lost a page later |
+| `vbk12` Banjo-Kazooie | the jiggy transition fixed; the START screen still wrong | all 48 logged texture misses RGBA at 4 bits, from 115 s (the START menu) |
+
+**Fixed since (xemu and host tests; not yet on red):**
+
+- learn.txt is written by its own thread every 3 s, outside every lock,
+  and a line is logged once a boot (`XRC_LEARN_WRITE_MS`, `learn.c`): each
+  new line had rewritten the whole file through the atomic path (temp
+  file, flush, read back, rename) on the game's thread. Ocarina of Time's
+  lock-ups and HDD noise, and likely Jet Force Gemini's.
+- A KSEG1 alias page found missing at a fault is aliased again and the
+  access retried; one the kernel holds is logged with its PDE/PTE
+  (`XRC_KSEG1_HEAL`, `mem.c` via the TLB fixup). Majora's Mask; not
+  reproducible in xemu (its alias never fails there).
+- RGBA at 4 or 8 bits reads through the palette with the TLUT on, as I4/I8
+  with it off (`XGFX_RGBA_LOWBIT`). Banjo-Kazooie's START menu.
+- The audio boot logs `[AUDIO] step:` before each step and leaves an idle
+  APU alone (`XHW_AUDIO_APU_IDLE_ALWAYS`). Smash Bros.'s frozen second
+  boot: the next log names the step if it happens again.
+- A graphics microcode with no version text is guessed from its display
+  lists, task after task (`XGFX_UCODE_GUESS`). Jet Force Gemini's vote
+  Fast3D: its 05/07 are Rare's own commands (the Perfect Dark-era GBI), so
+  its menu stays wrong until that GBI is decoded (open).
+- `-DXRC_PEEK=<addr>`: 32 bytes logged twice a second (diagnosis).
+
+**The Controls page (maintainer request, 2026-10-18).** The BACK menu's
+"Controls" row (per port) opens a page with the Xbox controller drawn on
+the card and a callout per input naming the N64 control it gives
+(`docs/look/controls-page-host.png`; `docs/architecture.md`;
+`docs/decisions.md` "The Controls page"). Stored in settings.ini per port
+(`a = a`, ... `right_stick = c_buttons`), `si.c` maps through it; the
+default table is the old fixed layout (`XRC_CONTROLS`). Verified: host
+tests (`test_settings`: defaults, round trip, values an input can't give;
+`test_splash`: the page renders and its selection shows), and xemu (Super
+Mario 64, slot 12, `build-host/scen/menuctl`): BACK, down to Controls, A
+opens the page drawn through the NV2A; X changed to Z then L by Right and
+A, logged `[MENU] port 1 X: Z`. `[MEM]` unchanged (the body layer is 219 KB
+of static memory). Not verified: the console; ports 2-4 with pads in them.
+
+**Pokémon Snap's camera (xemu, open).** The stick reaches the game:
+`osContGetReadData` gives -80/+80, and the game's own pad records at
+0x80048A08/0x80048A88 hold it (`XRC_PEEK`), Z (the left trigger) held
+brings up the camera view. The stick moves nothing in xemu either, in the
+normal view or the camera view (`build-host/scen/snap24`: LT held, the
+stick left 2.5 s); the routine at 0x800AA3A0 that turns the stick into floats
+(stick / 80.0, FR=0 pairs, checked) stops running when the course starts,
+so the course reads the stick elsewhere. A read watch on 0x80048A90
+(`XHW_WATCH_RW`) logged nothing in xemu, not even the writer, so the
+reader is still to find (on the console, or by the ROM's references to
+0x80048A88: two in the 0x8009A8C0 segment besides the copier).
+
+**On red now (2026-10-18, deployed and size-checked; built from `e7ad98f`
+plus the work above, ThinLTO, the ROM inside; `vsm8`, `vssb8`, `vzel14`,
+`vbk13` booted 40 s in xemu with no crash).** The logs of the set they
+replace were pulled first.
+
+| build | game | xbe sha1 | what to look at |
+|---|---|---|---|
+| `vsnap6` | Pokémon Snap | 3f186b31273d | the Controls page; the camera (still open) |
+| `vzel14` | Ocarina of Time 1.2 | dd8a6d8cc8ba | no lock-ups, less HDD noise (learn.txt batched) |
+| `vge6` | GoldenEye | bbecb45fed5c | as `vge5` |
+| `vjfg2` | Jet Force Gemini | b94c420f7526 | boot HDD noise (learn.txt); the menu stays wrong |
+| `vssb8` | Smash Bros. | 53f8c2fe63b0 | boots after a stuck-audio boot; if it freezes, the last `[AUDIO] step:` line |
+| `vmk11` | Mario Kart 64 | a28aa0292f91 | the controls through the table (no change meant) |
+| `vsm8` | Super Mario 64 | 5125deb1e596 | the Controls page: a change, then play |
+| `vmp11` | Mario Party | 9c9d74e83783 | its controls and logo (`vmp10` was never run) |
+| `vmm10` | Majora's Mask | e0199fe8cd01 | boots past its first uncached write, or `[MEM] KSEG1 page ...` names the page |
+| `vbk13` | Banjo-Kazooie | a9f0f56f44e6 | the START screen's textures (FB_READBACK=3) |
+
+## 2026-10-18 (later): red runs the Controls set; the Controls page's speed, Mario Party's logo and board, Snap's camera lock (console + xemu)
+
+Red ran `vbk13`, `vssb8`, `vzel14`, `vmp11` (logs in
+`C:/xemu/hw/logs{bk13,ssb8,zel14,mp11}`; the other six left no logs, not
+run). `[CLOCK] cpu 733 MHz` on every boot; `[MEM] after nv2a` free: Banjo
+13812 KB, Smash 15620 KB, Ocarina 28248 KB, Mario Party 28356 KB.
+
+| build | maintainer | the log |
+|---|---|---|
+| `vbk13` Banjo-Kazooie | textures much better; the START screen still shows static | 0 texture misses (RGBA4 fixed); readback mode 3 resolved 2 frames in 11.7 ms; the Controls page used (D-pad cycled, saved) at 14 fps |
+| `vssb8` Smash Bros. | worked fine | two clean boots in a row: every `[AUDIO] step:` line passed, the APU left alone (idle) |
+| `vzel14` Ocarina of Time | steadier, less HDD noise; audio skips a little; the pad rumbles a bit at scene changes; the frame rate still low | 19.9 fps (the game's own 20: display lists 6-13 ms, audio 6-7 ms); hitches of 443-665 ms at scene loads, each one a run of `safety net` lines (relocated actor overlays interpreted the first time) |
+| `vmp11` Mario Party | stable, played to a board; the title logo blocky; the board black | 29.9 fps; 48 texture misses (the log's cap), all `fmt 0 siz 2 line 16 s 0-64`: a 65-texel tile over a 64-texel line |
+| Controls page | "awesome" | 14 fps while open on Banjo (the rows page runs ~30) |
+
+**Fixed since (xemu or host verified):**
+
+- The Controls page's cost. Host timing (`padbench`, scratch): the page
+  took 2.34 ms a frame against the rows page's 1.02; the controller's
+  shapes were the difference (leader lines walked their whole bounding
+  boxes with a 64-bit divide and a square root a pixel, the blend divided
+  by 255 three times a pixel). Now the shapes skip what they cannot
+  cover, the blend has no divide, and the controller and the callouts
+  live in a cached premultiplied layer drawn again only when the pad,
+  the selection or a mapping changes (`XHW_PAD_LAYER`): 1.10 ms, within
+  3 levels of the old picture. `test_splash` checks a press shows and a
+  release puts the picture back. Not verified: red's frame rate.
+- Mario Party's title logo: its 188x5 RGBA32 strips come by LOADTILE,
+  whose rows were counted at the 32-bit tile's line (one TMEM bank, half
+  a row): two rows, stretched (`XGFX_LOADTILE32`). Right in xemu (title,
+  test build); `test_f3dex` checks a 5-row strip.
+- Mario Party's black board: a tile one texel wider than its line is cut
+  to the line instead of refused (`XGFX_TILE_LINEW`). Host-tested; the
+  scripted run did not reach a board in xemu: red will tell.
+- `XGFX_DXT32` (an RGBA32 LOADBLOCK whose dxt does not divide its line):
+  written for the logo before the trace showed it was a LOADTILE; kept
+  behind its switch, no game known to need it.
+- Ocarina's rumble: each motor change is logged now (`[PAK] port N:
+  motor on/off at T ms`, the first 64), to tell the game's own rumble at a
+  scene change from a short pulse held through a hitch.
+
+**Pokémon Snap's camera (xemu, found; not fixed).** On the Beach the stick
+reaches the game (0x80049758 = +80 / -80 under the autopad's SR / SL,
+`-DXRC_PEEK=0x80049750u`, `XRC_PEEK2` is new). The course's camera code
+(segment 0x80350200, ROM 0x4F0610) turns the view only while the flag
+0x80382D0C is 0; it is 1 on our runs. The flag is set at the course's
+start when byte 0x803AE515 is 1, which is when progress bit 0x100 is clear
+(set once `func_800BF864()` returns 4 or more: a progress count), and a
+process (0x803554EC) clears it once `func_8009BBF4()` (the word
+0x800AE27C) reaches 3. That word is added to by `func_8009C9E8` from the
+course (0x803537F8, when bit 4 of 0x803AE774 is set, with a subject
+pointer). In xemu 28 photos with Butterfree in view left it at 0 and the
+stick locked. Red's Snap save is blank (`npfe.fla: none yet`), so every
+run there was a first run.
+
+Why the count never moves (ROM read, not yet tried): the photo check is
+the RDP's. Each frame the course (0x80359080) appends to its display
+list a call to 0x80382DF0, which LOADTILEs the 8x8 texels at the
+screen's centre (156..163 x 116..123, under the crosshair) of a 320-wide
+RGBA16 image at segment 0xF, then a SETCIMG of an 8-wide RGBA16 image
+(from a table at 0x803AE578) and a call to 0x80382E38, which copies
+the block there with a COPY-mode texrect (scissor 8 wide); the CPU reads
+the small image afterwards (0x80358E98 copies the result 0x803AE758..764
+to 0x803AE768..774 under the interrupt mask; bit 4 of 0x803AE774 means a
+subject). Here neither half reaches RDRAM: Snap builds without
+framebuffer readback, so segment 0xF's picture is not in RDRAM, and an
+off-screen colour image is drawn on the screen, never into RDRAM. Next:
+segment 0xF is the colour image being drawn (logged: it alternates
+with the two framebuffers). 0x80359244 then compares each pair of
+consecutive copies and calls the Pokémon drawn between them the subject
+when 32 or more of the 64 pixels changed. Started (not finished): a
+software grid of the copied rectangle follows the frame's triangles with
+their depths and each copy writes, per pixel, the copy it was last drawn
+before (`XGFX_PROBE`, on by default; `test_f3dex` checks a triangle
+between two copies changes all 64 and nothing changes none). In xemu the
+probe turns on ("the game copies 8x8 at 156,116"), but 28 photos with
+Butterfree in view still left 0x800AE27C at 0 and the camera locked.
+Next: the test-build line `[GFX] probe copy N: n of 64 pixels drawn
+since the last` (added, not yet run) says whether the Pokémon's
+triangles reach the grid; then where the objects are drawn relative to
+the copies. Not in staged set 14 (built before it).
+
+**Banjo's START screen static:** not reproduced. The xemu scripts reach
+the file select but not the game (`scen/bk3`..`bk6`: on slot 13 A picks
+game 1 and the next A leaves "Press A to play" as it was; `bkgame` reached
+the intro in an earlier session; red's `vbk13` got into the game with the
+same input code, so this is the slot, not the pad). One run stalled
+reading the ROM with three emulators at once.
+
+Open from this round: Ocarina's scene-load hitches (its relocated actor
+overlays: recompiling them is the cure; the next big item for its frame
+pacing and the audio skips), Banjo's pause static, Snap's camera lock,
+Jet Force Gemini's GBI.
+
+**Staged for red (not deployed: its FTP did not answer).** Set 13
+(`vsnap7`..`vbk14`, `deploy-set13.sh`) was replaced before it reached the
+console by set 14 (`build-host/hwbuild14.sh`, `deploy-set14.sh`: makes
+Kirby's folders, pulls the logs of the builds each replaces, deploys):
+ThinLTO releases of `e7ad98f` plus this round and the Kirby round below
+(the interrupt boost and the PAL region are in every one), each booted
+40 s in xemu (`hwsmoke.sh`):
+
+| build | game | xbe sha1 | what to look at |
+|---|---|---|---|
+| `vsnap8` | Pokémon Snap | 00c327bb20da | as before (the camera lock needs the photo check: open) |
+| `vzel16` | Ocarina of Time 1.2 | 527ed07a425d | `[PAK]` lines against the scene-change buzz |
+| `vge8` | GoldenEye | 1b4a4e3218c1 | as before |
+| `vjfg4` | Jet Force Gemini | b199f3de7dcb | as before |
+| `vssb10` | Smash Bros. | 3c809bff6b39 | as before (Gold: a regression check of the interrupt boost) |
+| `vmk13` | Mario Kart 64 | a78936bde17c | as before |
+| `vsm10` | Super Mario 64 | 957937fba34b | the Controls page's frame rate (Gold: a regression check) |
+| `vmp13` | Mario Party | 367d3601ebaa | the title logo, the board |
+| `vmm12` | Majora's Mask | 814eb5e26015 | boot (not run on red since `vmm9`) |
+| `vbk15` | Banjo-Kazooie | 2459564a9855 | the START screen; the Controls page's frame rate |
+| `vk1` | Kirby 64 (E) | f9adc6e2f628 | first console run (new folders `N64Recomp-X-K64`, UDATA 4E52F739): boot, the intro, the tutorial, 50 Hz pacing on a 60 Hz console |
+
+## 2026-10-18 (night): Kirby 64 from the ROM alone (xemu)
+
+Kirby 64 - The Crystal Shards (E) (`NK4P`, 32 MB, F3DEX2 2.04H + S2DEX2,
+n_aspMain, EEPROM 4 Kbit) built as a test build with no learn logs
+(`build-host/k64-shot.sh`, slot 14, `scen/k64`). The sweep had it at 5
+frames, all threads waiting.
+
+- **Its region lockout.** The boot block told every game NTSC; the PAL
+  ROM showed "This game is not designed for use on this system" and
+  looped there. osTvType comes from the header's region byte now, and a
+  PAL game gets 50 retraces a second (`XRC_TV_FROM_REGION`,
+  `XRC_PAL_50HZ`, `docs/decisions.md`). Every PAL ROM of the library
+  was told NTSC before this: the next sweep should move.
+- **A deadlock, about one boot in two.** After the intro the main thread
+  (N64 priority 50) spins on its music player's state
+  (`while (func_80020DB8(0))` at 0x800A77F8) waiting for the audio
+  thread; the stall log showed the scheduler with an empty VI queue while
+  retraces counted on: the VI thread was blocked on the runtime's lock,
+  held by a priority-0 thread with its interrupts off that the spinner
+  had preempted. A thread with interrupts off now runs at level 14 until
+  it turns them on (`XRC_INTS_BOOST`). Before: 2 of 3 runs stalled
+  (1331 frames); after: 4 of 4 ran on (2774-3007 frames by 75-80 s).
+- **What it shows now** (xemu, 480i): the Dream Land intro (in its
+  letterboxed window), Ribbon in space, "Do you know how to use Kirby's
+  Copy ability?", the tutorial rooms (Kirby, a Waddle Dee, the move
+  names). Open: a HUD icon garbled in one tutorial room ("Lift"); one CI4
+  texture drawn with the TLUT off (the intro; read through its palette
+  here, which the RDP may not do); the letterbox's vertical place under
+  PAL's 288 lines; speed and sound on the console.
+- Test builds can log every texture made: `-DXGFX_TEXLOG=<n>` (`[TEX]`,
+  format, size, palette mode, the first two palette entries, the source).
+  `XRC_PEEK2` peeks a second address. `osViSetEvent` is logged.

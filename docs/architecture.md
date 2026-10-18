@@ -24,7 +24,7 @@ tools/xbox/          build: compile_game.py, thinlto_link.py, patch_pbkit.py, xb
 xbox/include/        xhw.h, xgfx.h, xrom.h (the structs both triples share), xbuiltin.h
 xbox/include/xrc/    recomp.h (the generated code's contract), librecomp/sections.h, xrc_game.h, xrc_prelude.h
 xbox/src/hw/         the platform (nxdk triple): Wings64-X's, plus xhw_combo.c (exit combos), the loading
-                     screen and the BACK menu's card (xhw_splash_draw.c), xhw_rom.c ($ROM, the SHA-1),
+                     screen and the BACK menu's card (xhw_splash_draw.c; the Controls page's controller: xhw_panel_pad.c), xhw_rom.c ($ROM, the SHA-1),
                      xhw_romcache.c (the ROM page cache), xhw_alias.c (page-table aliases for the TLB),
                      asp_hle.c + asp_abis.inc (audio HLE: aspMain, nead, n_aspMain, on the word-swapped image)
 xbox/src/gfx/        the display-list interpreter (game triple): Wings64-X's Fast3D reading RDRAM by N64
@@ -41,7 +41,7 @@ xbox/src/rt/ultra/   libultra's surface: thread, time, vi, pi (ROM reads, domain
                      (every save type), more2 (the TLB family, __osEnqueueAndYield), more3 (internals
                      N64Recomp leaves bodiless)
 tests/xbox/          the host tests' C
-docs/look/           baseline shots: the loading screen (xemu, STILL); the BACK menu card and Paks page (host)
+docs/look/           baseline shots: the loading screen (xemu, STILL); the BACK menu card, Paks and Controls pages (host)
 ```
 
 ## Boot
@@ -218,6 +218,18 @@ OSPfs's ID with the pak's as libultra's `__osCheckId` does, so a game sees
 (`xu_pak_note_delete`: osPfsDeleteFile's work), a copy to another of the
 game's paks (`xu_pak_note_copy`: X on a note, Left / Right pick the pak) and
 a format (a new ID) mark the pak dirty, so the save writer and the exit combos' flush write them.
+
+The "Controls" row (per port) opens the **Controls page**
+(`docs/look/controls-page-host.png`): the Xbox controller drawn on the card
+(`xhw_panel_pad.c`: a body shaded once from distance fields, then its
+buttons, sticks and d-pad every frame), a callout per input naming the N64
+control it gives (A blue, B green, C yellow, Start red; a dot when changed
+from the default), the selected input pulsing, and what is held on that
+port's pad lit up as it happens (the sticks lean). Up / Down walk the port
+line and the inputs (left column, then right), Left / Right or A change
+what the selected one gives, Y puts the port's defaults back, B returns.
+The table lives in settings.ini (`[portN] a = a ...`); `si.c` maps every
+controller read through it, so a change works the moment the menu closes.
 
 ## The exit combos
 

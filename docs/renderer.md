@@ -122,7 +122,31 @@ RDP rules added 2026-10-17 (each with its switch in `docs/testing.md`):
 - a fill into a 32-bit colour image takes its colour as RGBA8888
   (`XGFX_FILL32`);
 - a LOADBLOCK into a 32-bit tile under a 16-bit image counts 32-bit
-  texels (`XGFX_LOAD32`; Mario Party's title logo).
+  texels (`XGFX_LOAD32`).
+
+Added 2026-10-18 (the `e7ad98f` console round):
+- small copies of the frame being drawn (a LOADTILE of the colour image
+  under construction, a COPY texrect into an image at most 32 wide) come
+  from a software grid of that rectangle, following the frame's triangles
+  with their own depths; the copy writes, per pixel, the number of the
+  copy it was last drawn before, so what the game compares (changed or
+  not) is right though no colour exists (`XGFX_PROBE`): Pokémon Snap's
+  photo check (0x80359080 draws, 0x80359244 counts the changed pixels of
+  each Pokémon; 32 of 64 or more and it is the photo's subject);
+- a LOADTILE into a 32-bit tile counts a row as twice the tile's line (the
+  line covers one of TMEM's two banks): Mario Party's title logo, 188x5
+  RGBA32 strips, came out 2 rows tall and stretched, blocky on red
+  (`XGFX_LOADTILE32`; right in xemu since);
+- a tile one texel wider than its line (Mario Party's board: 0-64 tiles
+  over 64-texel rows, for the filter's last column) is cut to the line
+  and its edge clamped instead of refused (`XGFX_TILE_LINEW`; on red the
+  board was black, 48 refusals logged; not reached in xemu);
+- an RGBA32 LOADBLOCK whose dxt does not divide its line places its texel
+  pairs by the RDP's line counter (`XGFX_DXT32`, the 16-bit rule carried
+  over; no game seen needing it yet);
+- RGBA at 4 or 8 bits (no such format) reads through the palette when the
+  TLUT is on, as intensity when it is off (`XGFX_RGBA_LOWBIT`; Banjo's
+  START screen).
 
 Added 2026-10-18:
 - an axis whose mask is 0 clamps whatever its clamp bit (the RDP has no
@@ -166,7 +190,7 @@ every family.
 | Blast Corps | Fast3D (2.0D) | the Rare logo, the attract demo at 50-56 fps with its text (the font's glyphs hashed whole), the title, the profile screen (its portrait frame empty) |
 | Banjo-Kazooie | F3DEX 1.21 | its intro: Banjo and Kazooie, textured, about 20 fps (`--learn`, captured code); the sky and a tree draw black. A tile inside a larger LOADBLOCK takes the latest load that covers its TMEM address (`XGFX_TMEM_WITHIN`: Banjo's faces) |
 | GoldenEye | Fast3D 2.0G with Rare's G_TRI4 | Nintendo/Rare logos, the gun barrel, the 440x330 file select and mission menus, the Dam in-game; the pause watch's model missing, the sky purple, one block's texture garbled (open) |
-| Mario Party | F3DEX | the intro's 3D scenes, the title (its 32-bit logo strips: `XGFX_LOAD32`), Mushroom Village; on red its frames whole since present-on-swap |
+| Mario Party | F3DEX | the intro's 3D scenes, the title (its 32-bit logo strips: `XGFX_LOADTILE32`), Mushroom Village; on red its frames whole since present-on-swap |
 | Ocarina of Time 1.2 | F3DZEX2 (+ S2DEX2 `[Safe]`, JPEG task) | the title, file select, name entry, Kokiri Forest; on red its textures wrong and two moons on the title (open) |
 
 ## Framebuffer effects (`xbox/src/gfx/fbfx.{h,c}`, f3d_interp.c)

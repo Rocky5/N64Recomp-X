@@ -779,3 +779,66 @@ moving the pin stays deliberate (a patch that no longer applies stops the
 build with that message). Rejected: a fork of N64Recomp (a second
 repository to keep in step), working around it in the analyser (it cannot
 change where the recompiler reads).
+
+## The Controls page: a drawn controller, not capture-the-next-button (2026-10-18, `settings_menu.c`, `xhw_panel_pad.c`)
+
+PLAN.md 5.2 listed a Buttons sub-page per port that captures the next
+button pressed. The maintainer asked for a customised control screen with
+the Xbox controller drawn on it (2026-10-18). Built: the BACK menu's
+"Controls" row (per port) opens a page that draws the controller on the
+card (a shaded body from distance fields, its buttons in their colours, the
+sticks leaning with the real pad), every Xbox input with a callout naming
+the N64 control it gives; the selected one pulses, what is held lights up
+live, changed callouts carry a dot. The mapping goes the other way from
+capture: an Xbox input is picked (Up / Down) and what it gives is chosen
+(Left / Right): N64 buttons are things the Xbox controller cannot press,
+so capturing "the next N64 button" has nothing to capture, and choosing
+per Xbox input shows the whole layout at once. A button gives one N64
+button or nothing; the d-pad and the sticks give a direction set (the
+stick, the C buttons, the N64 d-pad, nothing). Stored per game and port in
+settings.ini (`[portN] a = a ...`; one key per input, PLAN.md 5.2's form);
+`si.c` maps through it, the default table is the old fixed layout
+(`-DXRC_CONTROLS=0` forces it). BACK stays the menu's and is shown as such;
+the exit combos read the raw pad, so no layout can lock a user out (and
+BACK + START at boot resets every setting).
+
+## Interrupts off runs above every game thread (2026-10-18, Kirby 64)
+
+On the N64 a thread with its interrupts off is never preempted: nothing
+can run until it turns them on. Here "interrupts off" is the runtime's
+lock (`ints_off` in `ultra/thread.c`), and the game's threads are kernel
+threads at fixed levels, so a low thread holding it could be preempted by
+a higher one that never blocks. Kirby 64 did exactly that: its idle
+thread (N64 priority 0, level 2) took the lock, the main thread (level
+10) spun on its music player's state (0x800A77F8) waiting for the audio
+thread, the VI thread blocked on the lock, no retrace reached the
+scheduler, and nothing moved again. The holder now runs at level 14 while
+it holds the lock and drops back when it lets go (`XRC_INTS_BOOST`). The
+other way, a timeslice yield in the spinner, would need a hook in
+generated code; this keeps the N64's rule instead. Costs a kernel call at
+each interrupt-off and -on of game code (libultra's own are HLE'd).
+
+## osTvType from the ROM's region; 50 retraces for PAL (2026-10-18)
+
+The boot block said NTSC for every game; a PAL ROM checks and stops at
+its lockout screen (Kirby 64 (E)). The region byte decides now (PAL for
+D, F, H, I, L, P, S, U, W, X, Y; MPAL for B), and a PAL game gets 50
+retraces a second from the console's 60 Hz vblank by skipping every
+sixth, so its speed and music are right (the frame pacing is a little
+uneven: 5 frames in 6 vblanks). Switches `XRC_TV_FROM_REGION`,
+`XRC_PAL_50HZ`. The output stays the dashboard's mode (60 Hz on an NTSC
+console).
+
+## Three tiers of game status (maintainer, 2026-10-18)
+
+Each game is **Gold** (fully working), **Silver** (playable: bugs, none
+game-breaking) or **Experimental** (everything else). `docs/compat.md`
+holds the tiers and the rules. Only a console run promotes a game, because
+xemu is not hardware: an xemu-only game is Experimental however well it
+runs there, a staged fix promotes nothing until the console run with it,
+and a console regression demotes at once. One row per ROM (region and
+revision), since another version is another build. The first table
+(2026-10-18): Gold Super Mario 64, Pilotwings 64 and Super Smash Bros.
+(named by the maintainer); Silver Mario Kart 64, GoldenEye, Banjo-Kazooie,
+Ocarina of Time; the rest Experimental.
+

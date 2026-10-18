@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 
-from . import ROOT, VERSION, N64rxError, engines, packs, romonly, rom as romlib, saves
+from . import ROOT, VERSION, N64rxError, compat, engines, packs, romonly, rom as romlib, saves
 from . import learn as learnmod
 
 GEN_VERSION = 12   # bump when what n64rx writes into gen/ changes (the cache key)
@@ -495,12 +495,12 @@ def rom_pins_c(pack):
     return f'static const uint32_t rom_pins[] = {{ {rows} }};\n'
 
 
-def readme(pack, folder, rom_beside=False):
+def readme(pack, folder, rom_beside=False, status=''):
     where = ('The ROM next to it is yours,\nnormalised; the game reads it from here and checks its SHA-1.'
              if rom_beside else
              'Your ROM is inside default.xbe\n(normalised); the game reads it from there and checks its SHA-1.')
     return f'''{pack.title} for the original Xbox, built by N64Recomp-X {VERSION}
-
+{status}
 Copy this whole folder to your Xbox, for example to
     E:\\Games\\{folder}\\    or    F:\\Games\\{folder}\\
 and start default.xbe from your dashboard. {where}
@@ -676,12 +676,15 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     prog.step('Writing the folder for the Xbox')
     if rom_beside:
         (folder / f'{folder_name(pack.title)}.z64').write_bytes(rom.data)
-    (folder / 'README.txt').write_text(readme(pack, folder.name, rom_beside), encoding='utf-8', newline='\r\n')
+    status = compat.line(rom.code, rom.version)   # its tier (docs/compat.md)
+    (folder / 'README.txt').write_text(readme(pack, folder.name, rom_beside, status + '\n'), encoding='utf-8',
+                                       newline='\r\n')
     shutil.copy2(bdir / 'xbox/n64recomp_x.map', folder / 'debug/n64recomp_x.map')
     prog.done()
     (cache_dir() / 'last.json').write_text(json.dumps({'pack': pack.id, 'log': str(log), 'folder': str(folder),
                                                         'time': time.time()}))
     echo(f'\nDone: {folder}')
+    echo(status)
     echo(f'Copy that folder to your Xbox (E:\\Games\\{folder.name}\\) and start default.xbe.')
     return folder
 
