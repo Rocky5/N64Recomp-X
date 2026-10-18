@@ -11,7 +11,8 @@
  * present the frame. */
 void f3d_run(uint32_t dl, int present);   /* present: 0 leaves the frame open for the next task */
 void f3d_present_frame(void);   /* the open frame presented (none open: nothing) */
-int f3d_swap(uint32_t fb);   /* osViSwapBuffer: presents the open frame if it is fb's; 1 when it did */
+int f3d_swap(uint32_t fb);
+void f3d_fb_inval(uint32_t addr, uint32_t bytes);   /* osInvalDCache: a staged frame there into RDRAM (XGFX_FB_READBACK) */   /* osViSwapBuffer: presents the open frame if it is fb's; 1 when it did */
 unsigned f3d_presents(void);   /* frames presented so far */
 void f3d_split_frames(int on);
 int f3d_frame_open(void);   /* a frame is open (drawn into, not presented yet) */   /* frames may span tasks: a task that draws into another swapped buffer presents the open frame */

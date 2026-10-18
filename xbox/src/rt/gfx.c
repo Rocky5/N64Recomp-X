@@ -113,6 +113,14 @@ void xrc_gfx_task(uint32_t task) {
     xrc_gfx_unlock();
 }
 
+/* osInvalDCache (ultra/misc.c): a frame there about to be read by the CPU */
+void xrc_gfx_inval(uint32_t addr, uint32_t len) {
+    if (!s_up) return;
+    xrc_gfx_lock();
+    f3d_fb_inval(addr, len);
+    xrc_gfx_unlock();
+}
+
 /* sp.c: whether the task just run raises DP done (its list's FullSync) */
 int xrc_gfx_task_dp(void) { return !s_up || s_dp; }
 

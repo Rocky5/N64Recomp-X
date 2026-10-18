@@ -127,6 +127,7 @@ uint32_t xu_vi_framebuffer(void);       /* the one shown now */
 
 /* sp.c: a graphics task for the interpreter (weak until it exists) */
 void xrc_gfx_task(uint32_t task);
+void xrc_gfx_inval(uint32_t addr, uint32_t len);   /* ../gfx.c: osInvalDCache over a frame */
 void xrc_audio_task(uint32_t task);
 unsigned xu_gfx_tasks(void);
 unsigned xu_aud_tasks(void);

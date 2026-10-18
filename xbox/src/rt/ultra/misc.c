@@ -23,7 +23,7 @@ ULTRA(osWritebackDCacheAll) {
 }
 ULTRA(osInvalDCache) {
     (void)rdram;
-    (void)ctx;
+    xrc_gfx_inval(ARG(0), ARG(1));   /* a frame there the CPU will read: from the GPU first (../gfx.c) */
 }
 ULTRA(osInvalICache) {
     (void)rdram;

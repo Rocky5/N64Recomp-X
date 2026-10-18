@@ -2646,7 +2646,9 @@ void f3d_present_held(const uint32_t* img, int tw, int th, int pw, int ph, int f
  * after) converts it first (fb_touch).
  * XGFX_FB_READBACK (default 0, off): 1 as above, 2 every frame (Pokemon Snap's one-shot
  * photo reads would need it; ~1 ms a frame of CPU on the console, not
- * measured), 0 off (the old renderer: RDRAM keeps what the game wrote).
+ * measured), 3 staged every frame but converted only when the game
+ * invalidates the data cache over it (osInvalDCache, f3d_fb_inval) or
+ * textures from it, 0 off (the old renderer: RDRAM keeps what the game wrote).
  * Not done: a colour image drawn and textured from within the same frame
  * (render to texture: Zelda's pause, Banjo's jigsaw) draws on the screen as
  * before (XGFX_FB_RTT is reserved for it; docs/renderer.md). */
@@ -2704,15 +2706,43 @@ static void fb_touch(uint32_t addr, uint32_t bytes) {
     while ((i = fbfx_find(seg(addr), bytes)) >= 0) fb_resolve(i);
 }
 
+/* osInvalDCache over a colour image: the game is about to read it with the
+ * CPU (Banjo-Kazooie copies its frame into the jigsaw transition's 80
+ * textures, model_copyFramebufferToTextures, right after invalidating it):
+ * the staged picture into RDRAM now. The trigger of XGFX_FB_READBACK 3, and
+ * a no-op in the other modes' frames already resolved (gfx lock held). */
+#ifndef XGFX_FB_INVAL_SHOT
+#define XGFX_FB_INVAL_SHOT 0   /* debug: n > 0 takes a screenshot n frames after each such readback */
+#endif
+static unsigned s_inval_shot;
+void f3d_fb_inval(uint32_t addr, uint32_t bytes) {
+    unsigned before = s_fb_reads;
+    int i;
+    if (!XGFX_FB_READBACK || !bytes) return;
+    addr = seg(addr);
+    /* only a range that covers at least half of a frame: a DMA's destination
+     * invalidated over an old frame's memory is not a read of the picture */
+    for (i = 0; i < FBFX_SLOTS; i++) {
+        const FbfxSlot* sl = fbfx_slot(i);
+        uint32_t lo, hi;
+        if (!sl || !sl->addr || !sl->stale) continue;
+        lo = addr > sl->addr ? addr : sl->addr;
+        hi = addr + bytes < sl->addr + fbfx_bytes(sl) ? addr + bytes : sl->addr + fbfx_bytes(sl);
+        if (hi > lo && (hi - lo) * 2u >= fbfx_bytes(sl)) fb_resolve(i);
+    }
+    if (XGFX_FB_INVAL_SHOT && s_fb_reads != before) s_inval_shot = XGFX_FB_INVAL_SHOT;
+}
+
 /* the start of a frame: the frames read lately into RDRAM, the watch armed again */
 static void fb_frame_start(void) {
     int i;
     if (!XGFX_FB_READBACK) return;
+    if (XGFX_FB_INVAL_SHOT && s_inval_shot && !--s_inval_shot) xhw_shot_request(1);
     for (i = 0; i < FBFX_SLOTS; i++) {
         const FbfxSlot* sl = fbfx_slot(i);
         int touched;
         if (!sl->addr) continue;
-        touched = XGFX_FB_READBACK == 2 || fb_watch(sl, 0) > 0;
+        touched = XGFX_FB_READBACK == 2 || fb_watch(sl, 0) > 0;   /* 3: never here; osInvalDCache resolves */
         s_fb_touched += touched && XGFX_FB_READBACK == 1;
         if (fbfx_frame_start(i, touched)) fb_resolve(i);
         fb_watch(sl, 1);

@@ -183,6 +183,14 @@ Luigi Raceway's (the Mario GP's first course). What is built
   RGBA8888, word-swapped) every frame (`xgfx_stage_read`: wait for the GPU,
   `wbinvd`, read);
 - a texture load from a frame not converted yet converts it first;
+- mode 3 (`-DXGFX_FB_READBACK=3`, 2026-10-18): no page watch; a frame is
+  converted when the game invalidates the data cache over at least half of
+  it (`osInvalDCache`, `f3d_fb_inval`), which games do before reading
+  RDP output with the CPU. Banjo-Kazooie's jigsaw transition copies its
+  frame into the pieces' 80 32x32 textures that way
+  (`model_copyFramebufferToTextures`): the pieces now carry the picture
+  (xemu; 2 conversions per 600 frames, ~60 ms each in xemu); Smash Bros. at
+  720p is unchanged by the staging. Staged for the console in `vbk10`;
 - `[GFX] framebuffer readback` (every 600 frames) and `[NV2A] ... stage
   reads` count it.
 

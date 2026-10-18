@@ -316,7 +316,7 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXGFX_UCODE_F3DEX=0` | 1 | F3DEX 0.9x/1.x microcodes (and F3DLX, F3DLP, L3DEX, .NoN/.Rej) read as Fast3D, the build before the registry (`docs/renderer.md`) |
 | `-DXGFX_UCODE_F3DEX2=0` | 1 | F3DEX2 microcodes (F3DZEX, F3DLX2, .NoN/.Rej) read as Fast3D |
 | `-DXGFX_UCODE_S2DEX=0` | 1 | S2DEX 1.x/2.x read as Fast3D (its own commands are skipped either way; not drawn yet) |
-| `-DXGFX_FB_READBACK=1` | 0 | framebuffer readback (docs/renderer.md "Framebuffer effects"): each frame copied N64-size to a cached stage; frames whose pages the game touched (x86 accessed bits) converted into RDRAM every frame for 2 s. 2: every frame, no watch. Off by default: Pilotwings 64 went hot every ~2 s and ran at ~14 fps in xemu |
+| `-DXGFX_FB_READBACK=1` | 0 | framebuffer readback (docs/renderer.md "Framebuffer effects"): each frame copied N64-size to a cached stage; frames whose pages the game touched (x86 accessed bits) converted into RDRAM every frame for 2 s. 2: every frame, no watch. 3: staged every frame, converted only when the game invalidates the data cache over at least half a frame (`osInvalDCache`) or textures from it: Banjo-Kazooie's jigsaw transition (it copies its frame into the pieces' textures) right, 2 conversions per 600 frames, Smash Bros. at 720p unchanged (xemu). `-DXGFX_FB_INVAL_SHOT=n` (debug): a screenshot n frames after each such conversion. Off by default: Pilotwings 64 went hot every ~2 s and ran at ~14 fps in xemu with 1 |
 | `-DXGFX_FB_DUMP=<n>` | 0 | debug: `[FBDUMP]` of the RDRAM frame after the n-th readback |
 
 Wings64-X's platform switches (`XHW_*`, `XGFX_*`) carry over; its
