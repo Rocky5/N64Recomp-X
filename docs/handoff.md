@@ -4,7 +4,7 @@ One entry per milestone: what was verified, how, and where ("xemu" results
 are emulator-only; timing, audio, memory and HDD latency are judged on the
 console).
 
-## Where things stand (2026-10-17)
+## Where things stand (2026-10-18)
 
 The newest state first; the entries below are the record, oldest first.
 "xemu" is the emulator (slot runs, test builds); "red" is the maintainer's
@@ -22,7 +22,7 @@ only.
 | Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text; one present a frame (its frames are several tasks; presented at the swap), audio; its processes run as coroutines; 720p at 29-30 fps; START past the title to Mushroom Village (`0e5dc19`) | `vmp5`: flicker gone, 29.9 fps; the logo garbled and the controls dead (both fixed since, `vmp8` staged); the first boot's audio stuck |
 | Mario Party 2 / 3 | the ROM alone | intro, menus; 2: its audio thread, destroyed and made again by the game, plays on (58 tasks a second, 2026-10-17) | - |
 | Super Mario 64 | the ROM alone (+ three `--learn` rounds before) | head screen, Lakitu intro, castle grounds and Lakitu's text drawn right (scripted, 2026-10-17); 720p hor+ at 29-30 fps (the skybox stays in the 4:3 box) | `vsm6`: works perfectly, 29.9 fps |
-| Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, title, the photographer card, Professor Oak's lab and his whole briefing, every glyph right; the Beach course whole to the goal gate, back to the lab and out again at 29.9 fps (2026-10-18, 64 thread records); some cliff and tunnel walls flat grey (open) | `vsnap1` (before the thread-stack fix): the crash xemu had then; `vsnap3` staged |
+| Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, title, the photographer card, Professor Oak's lab and his whole briefing, every glyph right; the Beach course whole to the goal gate, back to the lab and out again at 29.9 fps (2026-10-18, 64 thread records); its cliffs, rails and track textured since the clamp-extent rule | `vsnap1` (before the thread-stack fix): the crash xemu had then; `vsnap4` staged (without the clamp-extent rule) |
 | Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro with the lair drawn whole, Banjo's house (~28 fps); near/far now the game's (the IPL3 copy); 720p hor+ at ~28 fps, 10 MB free (geometry the game culls shows as void at the far edges) | `vbk6`: works well, widescreen right, 29.9 fps; textures wrong as jiggies come in and in the START menu |
 | Blast Corps | the ROM alone + 15 `--learn` rounds | Rare logo, title, profile screen, the attract demo (50-56 fps) | - |
 | Majora's Mask | the ROM alone | title, file select, name entry, audio (2026-10-17) | `vmm3`: crashed at its first uncached write (KSEG1 alias refused); `vmm5` staged |
@@ -32,7 +32,7 @@ only.
 | Diddy Kong Racing, Wave Race 64, WWF No Mercy, Dr. Mario 64 | the ROM alone | present frames for the whole 30 s sweep run (DKR's microcode not decoded: grey boxes) | - |
 | Paper Mario | the ROM alone + `--learn` rounds | past its obfuscated boot (KSEG2 DMA), 321 frames, then a map's textures (open) | - |
 | GoldenEye | the ROM alone + `--learn` rounds (30) | logos, gun barrel, file select, mission select, briefing, the Dam in-game with its HUD and the pause watch; menus 37-50 fps; 7 functions refused by the recompiler (134 before); since 2026-10-18 the Dam right (cosf, palettes, the RDP-triangle sky), Bond's gun and the pause watch, ~30 fps; 720p 16:9 the same at ~30 fps, 18.6 MB free | `vge3` staged (first console run) |
-| Jet Force Gemini | the ROM alone | Rare logo, a menu screen (its text boxes) by 70 s since `$ra` is set at its resolver's calls (2026-10-18) | - |
+| Jet Force Gemini | the ROM alone | Rare logo, a menu screen by 70 s (its text drawn as boxes: open) since `$ra` is set at its resolver's calls (2026-10-18) | - |
 | Conker, Castlevania | the ROM alone + `--learn` rounds | boot and stop (the entries below) | - |
 | the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s9: 132 still presenting at 30 s (s8: 128); Jet Force Gemini past its boot since (`docs/analyzer.md`) | - |
 
@@ -48,7 +48,9 @@ misses through its exception code and fault thread, KSEG2/3 through
 `XRC_HIGH_TLB`); overlays sharing a vram; the RCP register model through
 KSEG1; F3DEX/F3DEX2 and the microcode registries; audio HLE (aspMain, nead,
 `n_aspMain`); every save type and the BACK menu's Paks page; coroutines for
-a game's own setjmp/longjmp; task done events held for their thread; threads
+a game's own setjmp/longjmp; task done events held for their thread and
+for room in their queue; `$ra` set at calls to code that reads it (N64Recomp
+hooks); up to 64 N64 threads; threads
 stopped by others; the library sweep and the V track's `decomp_check.py`
 (0 wrong libultra names on Paper Mario and Mario Kart 64). Diagnosis:
 `-DXRC_WATCH` (a hardware write watch), `XRC_WATCH_QUEUE`/`XRC_WATCH_RECV`,
@@ -74,7 +76,7 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
    first round (52).
 5. Per game: Paper Mario's map textures, Donkey Kong 64's audio, Bomberman
    64's loader, Perfect Dark (past its boot: a TLB miss through its own
-   exception code, round 8), Snap's flat grey cliff walls on the Beach, Mario Party's 720p title logo.
+   exception code, round 8), Jet Force Gemini's menu text (boxes), Mario Party's 720p title logo.
 6. Renderer: S2DEX's own commands, F3DDKR, framebuffer effects by default;
    hor+ for orthographic backgrounds (Super Mario 64's sky); MusyX and the
    other audio microcodes.
@@ -1728,3 +1730,20 @@ Oak's lab ("Welcome back!") and onto the course again, with no stall.
 (17.0 after nv2a); `[CLOCK]` 733 MHz (xemu). Open: some cliff and tunnel
 walls draw flat grey. Not verified: the console, the other courses, the
 photo review.
+
+**Pokémon Snap's flat grey cliffs: the RDP clamps at the tile, not the
+mask (xemu, test build, slot 14).** A traced course frame
+(`-DXGFX_TRACE_MS=208000`, `build-host/scen/snap20`; the bind line now
+prints the tile's shifts and the `G_TEXTURE` scale) showed the cliff
+draws: a 64x64 CI4 texture, mask 6, clamp set on both axes, on a tile 768
+texels wide, at coordinates 324..383. The RDP wraps by the mask inside the
+tile and clamps only past its extent; the interpreter clamped at the
+texture's edge, one flat colour. An axis with a mask and a clamped tile
+wider than 2^mask now repeats (or mirrors) (`XGFX_CLAMP_EXTENT`, default
+1; host test `test_clamp_extent`). The Beach's cliffs, rails and wooden
+track are textured since (they were flat grey and smeared). Verified:
+Snap's course (xemu); Super Mario 64's head screen the same with and
+without it. Not verified: the A/B run over Mario Kart 64, Banjo-Kazooie,
+GoldenEye, Ocarina of Time and Smash Bros. was stopped before it ran
+(`build-host/clampab.sh` runs it); the staged `vsnap4` was built before
+this rule.

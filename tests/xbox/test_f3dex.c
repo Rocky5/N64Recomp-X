@@ -512,6 +512,34 @@ static void test_tile_rowhash(void) {
           s_wrap_t);
 }
 
+/* a clamped axis with a mask clamps at the tile's extent: a tile wider than
+ * the mask repeats the texture (XGFX_CLAMP_EXTENT: Pokemon Snap's cliffs, a
+ * 64-texel texture on a 768-texel clamped tile) */
+static void clamp_frame(const GfxUcode* u, unsigned size) {
+    uint32_t clampmask = (2u << 18) | (3u << 14) | (2u << 8) | (3u << 4);   /* clamp, mask 3, both axes */
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xFD000000u | (4u << 21) | (1u << 19) | (8u - 1u), TEXI_AT);
+    cmd(0xF5000000u | (4u << 21) | (1u << 19) | (1u << 9), 7u << 24);
+    cmd(0xF4000000u, (7u << 24) | (28u << 12) | 28u);
+    cmd(0xF5000000u | (4u << 21) | (1u << 19) | (1u << 9), clampmask);   /* SETTILE 0 */
+    cmd(0xF2000000u, (((size - 1u) * 4u) << 12) | ((size - 1u) * 4u));    /* SETTILESIZE 0 */
+    cmd(0xE4000000u | (64u << 12) | 64u, 0);
+    cmd(0xE1000000u, 0);
+    cmd(0xF1000000u, (1u << 26) | (1u << 10));
+    cmd(0xDF000000u, 0);
+    run(u);
+}
+static void test_clamp_extent(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    clamp_frame(&u, 8);
+    CHECK(s_wrap_s == XGFX_WRAP_CLAMP && s_wrap_t == XGFX_WRAP_CLAMP, "clamp extent: an 8-texel tile, mask 3: wrap %u/%u (want clamp)",
+          s_wrap_s, s_wrap_t);
+    clamp_frame(&u, 32);
+    CHECK(s_wrap_s == XGFX_WRAP_REPEAT && s_wrap_t == XGFX_WRAP_REPEAT, "clamp extent: a 32-texel tile, mask 3: wrap %u/%u (want repeat)",
+          s_wrap_s, s_wrap_t);
+}
+
 /* a 4 KB block load whose change the 16 samples miss is found by the whole-
  * texture recheck within 8 frames, and every frame after that (XGFX_TEX_RECHECK:
  * Pokémon Snap's 3952-byte dialogue strip) */
@@ -677,6 +705,7 @@ int main(void) {
     test_deswizzle32();
     test_readback();
     test_tile_rowhash();
+    test_clamp_extent();
     test_tex_recheck();
     test_rdp_tri();
     test_tlut_offset();

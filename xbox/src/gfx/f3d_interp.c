@@ -115,6 +115,9 @@
 #ifndef XGFX_MASK0_CLAMP
 #define XGFX_MASK0_CLAMP 1     /* an axis with mask 0 clamps, as the RDP's */
 #endif
+#ifndef XGFX_CLAMP_EXTENT
+#define XGFX_CLAMP_EXTENT 1    /* a clamp bit clamps at the tile's extent: wider than the mask, the texture repeats */
+#endif
 #ifndef XGFX_TILE_ROWHASH
 #define XGFX_TILE_ROWHASH 1    /* a LOADTILE's change check hashes every row, not the first and last */
 #endif
@@ -879,8 +882,17 @@ static float shift_scale(int sh) {
  * wrap without a mask): Ocarina of Time's moon is a 64x64 tile on a quad
  * whose coordinates run to 128, and repeating drew four moons.
  * -DXGFX_MASK0_CLAMP=0: the clamp bit alone, as before */
-static uint32_t wrap_of(uint8_t cm, uint8_t mask) {
+/* The RDP clamps at the tile's extent (SH - SL), not at the mask: an axis
+ * with its clamp bit set and a tile wider than 2^mask texels repeats (or
+ * mirrors) the masked texture across the tile and clamps only past its
+ * edge. Pokemon Snap's Beach cliffs are a 64x64 texture (mask 6) on a 768
+ * texel tile with clamp set, at coordinates 324..383: clamped at 64 they
+ * drew one flat grey. The GPU has no clamp at a distance, so such an axis
+ * repeats. -DXGFX_CLAMP_EXTENT=0: the clamp bit at the texture's edge */
+static uint32_t wrap_of(uint8_t cm, uint8_t mask, unsigned extent) {
     if (XGFX_MASK0_CLAMP && !mask) return XGFX_WRAP_CLAMP;
+    if (XGFX_CLAMP_EXTENT && (cm & 2) && mask < 16 && extent > (1u << mask))
+        return (cm & 1) ? XGFX_WRAP_MIRROR : XGFX_WRAP_REPEAT;
     return (cm & 2) ? XGFX_WRAP_CLAMP : (cm & 1) ? XGFX_WRAP_MIRROR : XGFX_WRAP_REPEAT;
 }
 
@@ -903,12 +915,13 @@ static void bind_unit(int u, int tidx) {
     TexEntry* e = texture_for_tile(tidx & 7);
     s_st.tex[u] = e ? e->handle : 0;
     if (s_trace)
-        xhw_logf("[DRAW] bind %d tile %d fmt %u siz %u line %u tmem %u sl %u tl %u sh %u th %u pal %u cm %u/%u mask %u/%u -> addr %08x %ux%u",
+        xhw_logf("[DRAW] bind %d tile %d fmt %u siz %u line %u tmem %u sl %u tl %u sh %u th %u pal %u cm %u/%u mask %u/%u shift %u/%u -> addr %08x %ux%u (scale %04x/%04x)",
                  u, tidx & 7, t->fmt, t->siz, t->line, t->tmem, t->uls >> 2, t->ult >> 2, t->lrs >> 2, t->lrt >> 2,
-                 t->palette, t->cms, t->cmt, t->masks, t->maskt, e ? (unsigned)e->addr : 0u, e ? e->pw : 0u, e ? e->ph : 0u);
+                 t->palette, t->cms, t->cmt, t->masks, t->maskt, t->shifts, t->shiftt, e ? (unsigned)e->addr : 0u,
+                 e ? e->pw : 0u, e ? e->ph : 0u, (unsigned)R.tex_ss, (unsigned)R.tex_st);
     if (!e) return;
-    s_st.wrap_s[u] = wrap_of(t->cms, t->masks);
-    s_st.wrap_t[u] = wrap_of(t->cmt, t->maskt);
+    s_st.wrap_s[u] = wrap_of(t->cms, t->masks, t->lrs > t->uls ? (unsigned)((t->lrs - t->uls) >> 2) + 1u : 1u);
+    s_st.wrap_t[u] = wrap_of(t->cmt, t->maskt, t->lrt > t->ult ? (unsigned)((t->lrt - t->ult) >> 2) + 1u : 1u);
     if (XHW_TEST_BUILD && u == 0) {   /* test builds: what the mask-0 clamp changes (flush logs it) */
         s_m0[0] = !t->masks && !(t->cms & 2) ? (float)e->w / (float)e->pw : -1.0f;
         s_m0[1] = !t->maskt && !(t->cmt & 2) ? (float)e->h / (float)e->ph : -1.0f;

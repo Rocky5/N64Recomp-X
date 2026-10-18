@@ -128,6 +128,13 @@ Added 2026-10-18:
 - an axis whose mask is 0 clamps whatever its clamp bit (the RDP has no
   wrap without a mask): Ocarina of Time's moon, a 64x64 tile on a quad
   whose coordinates run to 128, drew several moons (`XGFX_MASK0_CLAMP`);
+- a clamp bit clamps at the tile's extent (SH - SL), not at the mask: an
+  axis whose tile is wider than 2^mask texels repeats (or mirrors) and the
+  GPU's clamp is not used (it would clamp at the texture's edge). Pokémon
+  Snap's Beach cliffs, rails and wooden track are 64-texel textures on
+  768-texel clamped tiles at coordinates in the hundreds: clamped at 64
+  they drew flat grey and smeared (`XGFX_CLAMP_EXTENT`). Past the tile's
+  edge the RDP clamps and this repeats (no game seen there yet);
 - the texture cache's change check: LOADTILE textures hash every row
   (`XGFX_TILE_ROWHASH`); a block load over 2 KB, checked by 16 samples
   each use, is also hashed whole every 8th frame and every frame once its
