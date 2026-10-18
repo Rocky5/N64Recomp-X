@@ -228,15 +228,24 @@ def cross_funcs(a: Analysis, live, nm, replaced):
     stays recompiled for its own callers."""
     from .mips import Ins, words
     out = {}
+    ovl = a.overlays()
     for seg in a.img.segments:
         fs = a.funcs.get(seg.name, {})
         spans = sorted((f.start, f.end) for f in fs.values())
         starts = [s for s, _ in spans]
         import bisect
         for x, f in fs.items():
-            if x not in live or x == a.entry or nm[x] in replaced:
+            # an overlay's functions are keyed by their ROM too (a.key): checked by vram
+            # alone they were never live here, and Ocarina of Time's learnt overlays with
+            # cross branches reached the recompiler. N64RX_XBRANCH_OVL=0: as before
+            kx = a.key(seg, x, ovl) if os.environ.get('N64RX_XBRANCH_OVL', '1') != '0' else x
+            if kx not in live or x == a.entry or nm.get(kx) in replaced:
                 continue
-            n = (f.end - f.start) // 4
+            # the range the recompiler translates (_size: with a fallen-into
+            # neighbour's body), scanned whole: a branch out of that body is
+            # one out of this function
+            end = f.start + _size(a, seg, f, fs)
+            n = (end - f.start) // 4
             ws = words(a.img.rom, seg.rom + (f.start - seg.vram), n)
             for i, w in enumerate(ws):
                 ins = Ins(w, f.start + 4 * i)
@@ -246,16 +255,19 @@ def cross_funcs(a: Analysis, live, nm, replaced):
                     t = ins.target
                 else:
                     continue
-                if f.start <= t < f.end:
+                if f.start <= t < end:
                     continue
                 k = bisect.bisect_right(starts, t) - 1
                 inside = k >= 0 and spans[k][0] < t < spans[k][1]
                 start = k >= 0 and spans[k][0] == t
-                if inside or (not start and ins.is_branch and seg.has(t)):
+                cond = ins.is_branch and not ins.is_unconditional_branch
+                if inside or (not start and ins.is_branch and seg.has(t)) or                         (cond and start and os.environ.get('N64RX_XBRANCH_COND', '1') != '0'):
                     # into another function's body, or a conditional branch out to
-                    # code no function holds (the recompiler only turns a j or
-                    # an unconditional branch to a start into a tail call)
-                    out[x] = nm[x]
+                    # code no function holds or to another function's start: the
+                    # recompiler only turns a j or an unconditional branch to a
+                    # start into a tail call, a conditional one stays a goto
+                    # (Ocarina of Time's learnt overlays: "use of undeclared label")
+                    out[kx] = nm[kx]
                     break
     return out
 

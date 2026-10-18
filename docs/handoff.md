@@ -1662,3 +1662,14 @@ in 100 calls; 0x803A1854, 0x801E7248, 0x803A119C): relocated overlay code
 the ROM-only build cannot place, and OoT has had no learning rounds. A
 likely part of red's "low FPS"; learning rounds (`--learn`, the captured
 code checked by `guard.c`) are the next thing to try for it.
+
+**Learning Ocarina of Time's overlays does not work yet.** Round 1 (title,
+file select, the intro, the house: `zel-learn1.log`, 1410 functions)
+built into round 2 only after two analyser fixes (`emit.cross_funcs`: a
+conditional branch to another function's start is a goto N64Recomp cannot
+compile, and overlays sharing a vram were never checked: their functions
+are keyed with their ROM), and round 2 then never presented a frame: its
+`learn_` segments compile the overlays' ROM bytes, but OoT relocates each
+overlay as it loads it, so the recompiled code has the unrelocated
+addresses. Learning a relocating game needs the captured, relocated bytes
+(the `code_` path) for those overlays, with `guard.c` checking each load.
