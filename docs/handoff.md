@@ -65,7 +65,8 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
    console (red's dashboard has it off); Mario Kart 64's drift boosts.
 2. GoldenEye: on the console (`vge3`); the watch model and the walker's
    RDRAM tables are fixed in xemu (cosf), the rest of the missions unseen.
-3. Ocarina of Time stalls on an A/START press before its title settles
+3. Ocarina of Time stalls at its title now and then (a lost task completion,
+   not the press: see the 2026-10-18 entry); its overlays run interpreted
    (also at `vzel5`'s commit).
 4. The s8 categories: NULL reads through KUSEG (23; Chopper Attack's is a
    hand-written task switcher, which needs strands like Mario Party's),
@@ -1644,3 +1645,20 @@ at least half of it: the pieces now show the picture (the guitar scene,
 the title logo, `-DXGFX_FB_INVAL_SHOT=20` shots). Mode 1 also did it, but
 its page watch went hot in the levels (60-120 conversions per 600 frames,
 15 fps). Default still 0; `vbk10` is built with 3 for red.
+
+**Ocarina of Time's title stall is not the press (xemu).** A run with the
+new-file scenario froze at frame 421, before the first scripted press (every
+autopad event then fired at frame 421): all threads waiting, the graphics
+thread on its task-done queue (`0x8011F9B4`), the scheduler idle on its own,
+the fault path's input loop running (0x8007E64C, 0x80218194, 0x8008FE7C...).
+So the "early press" stall is an intermittent lost task completion at the
+title; the press only coincided. Next: `XRC_LOG_SP_STARTS` plus
+`XRC_WATCH_QUEUE=0x8011D978` over repeated title runs to catch which done
+event goes missing.
+
+**Ocarina of Time interprets its overlays.** At the title, 7.7 million
+instructions per 300 retraces run interpreted (0x801E88A4 alone 5.8 million
+in 100 calls; 0x803A1854, 0x801E7248, 0x803A119C): relocated overlay code
+the ROM-only build cannot place, and OoT has had no learning rounds. A
+likely part of red's "low FPS"; learning rounds (`--learn`, the captured
+code checked by `guard.c`) are the next thing to try for it.
