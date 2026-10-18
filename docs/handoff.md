@@ -72,7 +72,8 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
    Rare's compressed boots before learning rounds (19), no frames in the
    first round (52).
 5. Per game: Paper Mario's map textures, Donkey Kong 64's audio, Bomberman
-   64's loader, Perfect Dark's 0x70000000 mapping, Snap's courses (never
+   64's loader, Perfect Dark (past its boot: a TLB miss through its own
+   exception code, round 8), Snap's courses (never
    reached), Mario Party's 720p title logo.
 6. Renderer: S2DEX's own commands, F3DDKR, framebuffer effects by default;
    hor+ for orthographic backgrounds (Super Mario 64's sky); MusyX and the
@@ -1597,3 +1598,24 @@ model (the face, the health and armour arcs, the PP7), so both old faults
 were `cosf`. The walker's tables are on by default again: the level's
 interpreted instructions fall from 8.4 million to 42 thousand per 300
 retraces, 26 to 30 fps in the Dam (xemu).
+
+### Perfect Dark past its boot (2026-10-18, xemu slot 13)
+
+Its 0x70000000 code is mapped through the TLB as GoldenEye's, and three
+things stood in the way: (1) the RDRAM window had moved
+(`XRC_RDRAM_USER`) so 0x70000000 lands at host 16 MB, but something else
+was there by the time its TLB mapped it: the learnt KUSEG span's host range
+is now held at the very start of boot (`XRC_KUSEG_HOLD`,
+`xhw_alias_hold`; `[MEM] KUSEG 70000000-704fffff at host 01000000: held`);
+(2) it maps 0x70400000 onto physical 0x400000, the Expansion Pak's half, in
+a 4 MB window: the TLB logs `[LEARN] rdram 8` and the next build gets 8 MB;
+(3) its first two pages at 0x70000000 match the ROM's start, so the
+analyser made a ROM-backed segment of the whole region and compiled
+0x70003EE0 from unrelated ROM bytes (`lw $ra, 0x16FE($s3)`): a ROM-backed
+TLB segment now never covers a captured page of its region that differs
+from the ROM (`N64RX_TLB_ROM_RUN`; GoldenEye's 0x7F segment unchanged).
+Rounds 6-8 (`pd-learn6..8.log`): no crash for 100 s, no frame yet; round 8
+ends in a TLB miss at 0xD2D2D3A2 (a stack-fill pattern used as a pointer)
+through the game's exception code, then a NULL read in 0x70003D14. Rounds
+9 and 10 were starved by the sweep's builds (retrace 5; logs removed).
+`[MEM]` 8 MB window, 29 MB free; `[CLOCK]` 733 MHz (xemu).
