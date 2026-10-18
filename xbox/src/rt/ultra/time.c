@@ -11,7 +11,7 @@
 
 static int64_t s_offset;   /* osSetTime / mtc0 Count against the clock */
 
-static uint64_t clock_count(void) { return xhw_time_us() * 46875ull / 1000ull; }
+static uint64_t clock_count(void) { return xhw_game_time_us() * 46875ull / 1000ull; }
 uint64_t xu_count64(void) { return clock_count() + (uint64_t)s_offset; }
 
 ULTRA(osGetCount) {

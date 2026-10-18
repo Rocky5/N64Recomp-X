@@ -91,6 +91,7 @@ void xhw_fbdump(const void* fb, int w, int h, int bpp, int pitch) {
         return;
     }
     xhw_watchdog_busy(1);
+    xhw_game_time_hold(1);
     xhw_logf("[FBDUMP] BEGIN %d %d %d %d", w, h, bpp, pitch);
     for (y = 0; y <= h; y++) {
         int flush = y == h ? Z_FINISH : Z_NO_FLUSH;
@@ -113,6 +114,7 @@ void xhw_fbdump(const void* fb, int w, int h, int bpp, int pitch) {
     }
     xhw_log("[FBDUMP] END");
     deflateEnd(&zs);
+    xhw_game_time_hold(0);
     xhw_watchdog_busy(0);
 }
 
@@ -143,6 +145,7 @@ void xhw_fbdump_file(const void* fb, int w, int h, int bpp, int pitch) {
         return;
     }
     xhw_watchdog_busy(1);
+    xhw_game_time_hold(1);
     memset(hdr, 0, sizeof hdr);
     hdr[0] = 'B'; hdr[1] = 'M';
     memcpy(hdr + 2, &size, 4);
@@ -172,6 +175,7 @@ void xhw_fbdump_file(const void* fb, int w, int h, int bpp, int pitch) {
         if (!(ok = WriteFile(f, row, stride, &done, NULL) && done == stride)) err = GetLastError();
     }
     CloseHandle(f);
+    xhw_game_time_hold(0);
     xhw_watchdog_busy(0);
     if (!ok) {   /* E: full: no half picture left behind */
         DeleteFileA(path);

@@ -41,6 +41,8 @@ uint64_t xhw_ticks(void);            /* ACPI timer ticks */
 uint64_t xhw_ticks_per_sec(void);    /* 3375000 */
 uint64_t xhw_time_ns(void);          /* monotonic */
 uint64_t xhw_time_us(void);
+uint64_t xhw_game_time_us(void);       /* xhw_time_us held still while a screenshot is written (the N64's clock) */
+void xhw_game_time_hold(int on);
 void xhw_clock_calibrate(void);      /* boot: [CLOCK] cpu N MHz */
 uint32_t xhw_cpu_mhz(void);          /* measured at boot (log and diagnostics only) */
 void xhw_sleep_ms(uint32_t ms);

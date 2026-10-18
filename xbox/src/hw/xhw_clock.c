@@ -49,6 +49,34 @@ uint64_t xhw_time_us(void) {
     return (t / f) * 1000000ull + (t % f) * 1000000ull / f;
 }
 
+/* The game's clock (osGetTime/osGetCount, ../rt/ultra/time.c): the ACPI
+ * timer, held still while a screenshot is written. An [FBDUMP] over COM1
+ * takes ~10 s inside the present, and a game that times its RCP saw a hang:
+ * Ocarina of Time's 3 s "RCP is HUNG UP" timer fired and the game stopped
+ * after every xemu shot. DIVERGES: none for the game (a shot is not part of
+ * it). -DXHW_SHOT_FREEZE=0: the shot's time shows, as before. */
+#ifndef XHW_SHOT_FREEZE
+#define XHW_SHOT_FREEZE 1
+#endif
+static uint64_t s_hidden, s_held_at;   /* read and written whole (__atomic: 64-bit on a 32-bit CPU) */
+
+uint64_t xhw_game_time_us(void) {
+    uint64_t held = __atomic_load_n(&s_held_at, __ATOMIC_ACQUIRE);
+    return (held ? held : xhw_time_us()) - __atomic_load_n(&s_hidden, __ATOMIC_ACQUIRE);
+}
+
+void xhw_game_time_hold(int on) {
+    uint64_t held;
+    if (!XHW_SHOT_FREEZE) return;
+    held = __atomic_load_n(&s_held_at, __ATOMIC_ACQUIRE);
+    if (on && !held) {
+        __atomic_store_n(&s_held_at, xhw_time_us(), __ATOMIC_RELEASE);
+    } else if (!on && held) {
+        __atomic_store_n(&s_hidden, __atomic_load_n(&s_hidden, __ATOMIC_ACQUIRE) + (xhw_time_us() - held), __ATOMIC_RELEASE);
+        __atomic_store_n(&s_held_at, 0, __ATOMIC_RELEASE);
+    }
+}
+
 uint32_t xhw_cpu_mhz(void) { return s_cpu_mhz; }
 
 #if XHW_CLOCK_TSC

@@ -74,8 +74,7 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
    first round (52).
 5. Per game: Paper Mario's map textures, Donkey Kong 64's audio, Bomberman
    64's loader, Perfect Dark's 0x70000000 mapping, Snap's courses (never
-   reached), Mario Party's 720p title logo, Ocarina of Time stopping after
-   an xemu screenshot.
+   reached), Mario Party's 720p title logo.
 6. Renderer: S2DEX's own commands, F3DDKR, framebuffer effects by default;
    hor+ for orthographic backgrounds (Super Mario 64's sky); MusyX and the
    other audio microcodes.
@@ -1513,15 +1512,15 @@ interval behind kept a deadline in the past; the timer thread's wait
 with it off). Any hitch longer than a timer's interval on the console (an
 HDD spin-up, a long load) could do this.
 
-**Open: Ocarina of Time stops after a screenshot (xemu).** An autopad
-`SHOT` (an `[FBDUMP]` over COM1, ~10 s inside `osViSwapBuffer` on the
-scheduler's thread) leaves OoT with one more graphics task and then none:
-the graphics thread waits for its task's done (`gfxCtx->queue`), IrqMgr
-still forwards retraces, the scheduler runs audio tasks. Not the timer bug
-(still there with the fix) and no event was dropped (`[OS] event ...
-dropped` never logged). Earlier 720p runs had it too (`presented` stuck
-after the first shot). One shot per OoT run until then; it may be related
-to the console's early-press stall.
+**Ocarina of Time stopped after every xemu screenshot: its own RCP-hang
+check.** An autopad `SHOT` (an `[FBDUMP]` over COM1, ~10 s inside
+`osViSwapBuffer` on the scheduler's thread) outlasted the 3 s timer the
+graphics thread sets on each task (`Graph_TaskSet00`): `0x29A` arrived on
+its queue (`XRC_WATCH_QUEUE=0x8011f9b4`), the game took it for "RCP is HUNG
+UP!!" and stopped, as on an N64. The game's clock (osGetTime/osGetCount)
+now stands still while a shot is written (`xhw_game_time_us`,
+`XHW_SHOT_FREEZE`): three shots in a row and the title runs on. Not the
+console's early-press stall (no shot there).
 
 **Regressions checked (xemu 720p, slot 10, the hd720 scenario):** Smash's
 1P menu, Banjo's intro (Spiral Mountain), Super Mario 64's file select and

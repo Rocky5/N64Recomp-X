@@ -29,6 +29,7 @@ static int s_fail, s_checks;
 /* ---- the platform, stubbed ---- */
 static uint64_t s_us;
 uint64_t xhw_time_us(void) { return s_us; }
+uint64_t xhw_game_time_us(void) { return s_us; }
 static uint8_t s_ram[1u << 16] __attribute__((aligned(8)));
 uint8_t* xrc_rdram = s_ram;
 uint32_t xrc_tlb_to_phys(uint32_t vaddr) { (void)vaddr; return ~0u; }   /* no TLB on the host */
