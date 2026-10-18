@@ -1619,3 +1619,16 @@ ends in a TLB miss at 0xD2D2D3A2 (a stack-fill pattern used as a pointer)
 through the game's exception code, then a NULL read in 0x70003D14. Rounds
 9 and 10 were starved by the sweep's builds (retrace 5; logs removed).
 `[MEM]` 8 MB window, 29 MB free; `[CLOCK]` 733 MHz (xemu).
+
+### Ocarina of Time in game (2026-10-18, xemu slot 13)
+
+A new-file scenario (`build-host/scen/ootgame`: START, file 1, END on the
+name, start, A through the intro; screenshots no longer stop it) reaches
+the Great Deku Tree's intro, Link's bed with Navi's "You finally woke up!"
+and the house, all textured, at the game's 20 fps. One later frame (going
+outside) showed the view covered by flat PRIM-only polygons: a near green
+one (z 0.11) and a far blue one drawn first, the textured room geometry
+after them. Not seen again (the run's timing varies); it may be a
+transition or the "texture issues" red reported. Its S2DEX2 `G_BG_COPY`
+(0x0A, the pre-rendered backgrounds) is still unhandled (`[GFX] unhandled op
+0A`).
