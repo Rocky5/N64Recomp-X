@@ -1422,3 +1422,27 @@ To test on red: 720p on Smash Bros. and Banjo-Kazooie (the `[MEM]` and
 flicker and Banjo's clipping (the earlier fixes, never confirmed); Smash's
 portraits; in Ocarina of Time, wait for the title logo to settle before
 START (an earlier press stalls it, open).
+
+**Red, the set's first run (2026-10-17 evening; logs in
+`C:\xemu\hw\logs<build>`).** Red's dashboard allows neither 480p nor
+720p (`AV pack 1, 480p 0, 720p 0`): everything ran 480i, 720p untested.
+`[CLOCK]` cpu 733 MHz on each.
+
+| build | the maintainer | the log |
+|---|---|---|
+| `vssb6` Smash Bros. | perfect, 60 fps | 59.9 fps, display lists 3.5 ms |
+| `vsm6` Super Mario 64 | works perfectly | 29.9 fps |
+| `vbk6` Banjo-Kazooie | works well, widescreen right; textures wrong as the jiggies come in and in the START menu | 29.9 fps, display lists 2 ms |
+| `vmk9` Mario Kart 64 | - | no log (not run) |
+| `vmp5` Mario Party | flicker gone; the logo's texture wrong; the controls dead (START does nothing); the first boot's audio stuck, fine after a reboot | 29.9 fps; `boot_prev.log` has the stuck AC97 |
+| `vzel7` Ocarina of Time | textures wrong, low frame rate, two moons on the title | 19.9 fps (the game's own 20) |
+| `vmm3` Majora's Mask | crashes | a write to host a38af402 (KSEG1 0xA027E402) at its first frame |
+
+Found and fixed the same night (`0e5dc19`): Mario Party's controls (the
+analyser named the game's own pad ring `osContGetReadData`; Mario Party
+2 and 3 the same), its title logo (32-bit LOADBLOCKs counted at 16 bits),
+and the KSEG1 alias of 8 MB windows, refused on the console as a whole
+(`[MEM] KSEG1 not aliased (host a3631000 in use)` in OoT's log too): now
+aliased page by page, the first refused page logged. Open: Banjo's jiggy
+and START-menu textures, Ocarina of Time's textures and two moons, the
+first-boot audio hang.
