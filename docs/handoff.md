@@ -1545,5 +1545,5 @@ in xemu (slot 12) with no crash.
 | `vsnap2` | Pokémon Snap | c3ee0df70ec5 | past the main menu (vsnap1 crashed there), Oak's lab with its text right; play on to the Beach: the course is untested anywhere |
 | `vzel10` | Ocarina of Time 1.2 | 8b90eaa8c938 | one moon; the KSEG1 and 32-bit load fixes of `vzel9` |
 | `vbk8` | Banjo-Kazooie | cde875ad6a88 | the jiggy and START-menu textures (texture change checks, the mask-0 clamp) |
-| `vmp7` | Mario Party | 2ee1dcb46902 | the controls and the title logo (`vmp6`'s fixes) |
+| `vmp7` | Mario Party | f0d439236a40 | the controls and the title logo (`vmp6`'s fixes); rebuilt alone at `15b1a94` (its first build overlapped a test build of the same game) |
 | `vmm6` | Majora's Mask | 9f5ead6efb6e | the first uncached write no longer crashes it |
