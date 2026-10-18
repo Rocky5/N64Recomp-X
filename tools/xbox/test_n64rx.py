@@ -332,5 +332,17 @@ class Cli(unittest.TestCase):
         self.assertIn('What to do:', err.getvalue())
 
 
+class ReadsRa(unittest.TestCase):
+    """emit._reads_ra: code that uses $ra as a value gets it set at its calls"""
+    def test_reads(self):
+        from n64rx_lib.analyze import emit
+        # addiu $t5, $ra, -8 (Jet Force Gemini's resolver), after a store of ra
+        self.assertTrue(emit._reads_ra([0xAFBF0034, 0x27EDFFF8], 0x80054530))
+        self.assertTrue(emit._reads_ra([0x8FE80000], 0x80000000))           # lw $t0, 0($ra)
+        # an ordinary function: sw ra, move ra, jal (writes ra), jr ra
+        self.assertFalse(emit._reads_ra([0xAFBF0014, 0x03E04025, 0x0C000100, 0x03E00008], 0x80000000))
+        self.assertFalse(emit._reads_ra([0x0C000100, 0x27EDFFF8], 0x80000000))   # after a jal: its own
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=1)

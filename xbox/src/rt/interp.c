@@ -605,7 +605,7 @@ static void hot_note(uint32_t entry, unsigned steps) {
     __sync_lock_release(&s_hot_busy);
 }
 
-static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learning, uint32_t caller, int exc) {
+static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learning, uint32_t caller, int exc, uint32_t ra) {
     St st;
     gpr saved_ra = ctx->r31;
     uint32_t pc = entry, steps = 0;
@@ -613,7 +613,7 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
     St* outer = last->st;
     regs_in(&st, ctx);
     st.fcc = 0, st.learning = learning, st.nframes = 0, st.exc = exc, st.epc_k0 = 0;
-    st.r[31] = SX32(SENTINEL);
+    st.r[31] = SX32(ra ? ra : SENTINEL);
     if (learning) st.fr[st.nframes++] = (Frame){entry, SENTINEL, entry, caller};
     xrc_trace_vram(entry);   /* trace.c: what the crash report names */
     while (pc != SENTINEL) {
@@ -655,7 +655,7 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
             }
         }
 #endif
-        if (br.target == SENTINEL) break;
+        if (br.target == SENTINEL || (ra && br.jreg && br.target == ra)) break;   /* back to the caller */
         if (br.target == pc && !br.link && !fetch(rdram, pc + 4)) pause_self(rdram);   /* b . (an idle loop), as the recompiler does */
         if (br.link) {   /* a call */
             recomp_func_t* f = xrc_try_function(br.target);
@@ -751,7 +751,7 @@ int xrc_interp_refill(uint32_t vaddr, int store) {
         static unsigned s_n;
         if (s_n++ < 8) xhw_logf("[TLB] miss %08x: the game's exception code from %08x", (unsigned)vaddr, (unsigned)start);
     }
-    run(rdram, &ctx, start, 0, 0, 1);
+    run(rdram, &ctx, start, 0, 0, 1, 0);
 #ifdef XRC_RUNNING_THREAD
     MEM_W(0, XRC_RUNNING_THREAD) = (int32_t)running;
 #endif
@@ -766,11 +766,24 @@ static unsigned s_logged;
 
 void xrc_interp(uint8_t* rdram, recomp_context* ctx, uint32_t entry) {
     if (s_logged < 16) s_logged++, xhw_logf("[INTERP] %08x: hand-written code, interpreted", (unsigned)entry);
-    run(rdram, ctx, entry, 0, 0, 0);
+    run(rdram, ctx, entry, 0, 0, 0, 0);
+}
+
+/* hand-written code that reads $ra as a value (Jet Force Gemini's call-site
+ * resolver finds its jal at ra - 8): it starts with the caller's ra, which
+ * the recompiled call site set (an N64Recomp hook, romonly.py) or an
+ * interpreted jal linked, instead of the sentinel; a jump back to it
+ * returns. N64RX_RA_HOOKS=0 (the analyser): xrc_interp, as before */
+void xrc_interp_ra(uint8_t* rdram, recomp_context* ctx, uint32_t entry);
+void xrc_interp_ra(uint8_t* rdram, recomp_context* ctx, uint32_t entry) {
+    uint32_t ra = (uint32_t)ctx->r31;
+    if (s_logged < 16) s_logged++, xhw_logf("[INTERP] %08x: hand-written code that reads ra (%08x), interpreted",
+                                            (unsigned)entry, (unsigned)ra);
+    run(rdram, ctx, entry, 0, 0, 0, ra >= 0x80000000u && ra != SENTINEL ? ra : 0);
 }
 
 /* learn.c's safety net: code the analyser missed */
 void xrc_interp_learn(uint8_t* rdram, recomp_context* ctx, uint32_t entry, uint32_t caller);
 void xrc_interp_learn(uint8_t* rdram, recomp_context* ctx, uint32_t entry, uint32_t caller) {
-    run(rdram, ctx, entry, 1, caller, 0);
+    run(rdram, ctx, entry, 1, caller, 0, 0);
 }

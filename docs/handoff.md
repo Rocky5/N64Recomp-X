@@ -26,13 +26,14 @@ only.
 | Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro with the lair drawn whole, Banjo's house (~28 fps); near/far now the game's (the IPL3 copy); 720p hor+ at ~28 fps, 10 MB free (geometry the game culls shows as void at the far edges) | `vbk6`: works well, widescreen right, 29.9 fps; textures wrong as jiggies come in and in the START menu |
 | Blast Corps | the ROM alone + 15 `--learn` rounds | Rare logo, title, profile screen, the attract demo (50-56 fps) | - |
 | Majora's Mask | the ROM alone | title, file select, name entry, audio (2026-10-17) | `vmm3`: crashed at its first uncached write (KSEG1 alias refused); `vmm5` staged |
-| Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (53 MB, page cache) | title, file select, name entry, a new file, the intro text, Kokiri Forest's HUD, the Deku Tree's intro drawn, music (nead); an A/START press before the title logo settles stalls it | `vzel7`: runs at its own 20 fps; textures wrong, two moons on the title |
+| Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (53 MB, page cache) | title, file select, name entry, a new file, the intro text, Kokiri Forest's HUD, the Deku Tree's intro drawn, music (nead); its intermittent title stall (a dropped SP done) fixed 2026-10-18 (8 of 8 boots) | `vzel7`: runs at its own 20 fps; textures wrong, two moons on the title |
 | Ridge Racer 64 | the ROM alone + one `--learn` round | F3DEX2; 1732 frames in 30 s (~44 fps) | - |
 | Donkey Kong 64 | the ROM alone + `--learn` rounds | its file screen ("GAME 1"), drawing on (the IPL3 copy at RDRAM 4); audio stops once graphics start (open) | - |
 | Diddy Kong Racing, Wave Race 64, WWF No Mercy, Dr. Mario 64 | the ROM alone | present frames for the whole 30 s sweep run (DKR's microcode not decoded: grey boxes) | - |
 | Paper Mario | the ROM alone + `--learn` rounds | past its obfuscated boot (KSEG2 DMA), 321 frames, then a map's textures (open) | - |
 | GoldenEye | the ROM alone + `--learn` rounds (30) | logos, gun barrel, file select, mission select, briefing, the Dam in-game with its HUD and the pause watch; menus 37-50 fps; 7 functions refused by the recompiler (134 before); since 2026-10-18 the Dam right (cosf, palettes, the RDP-triangle sky), Bond's gun and the pause watch, ~30 fps; 720p 16:9 the same at ~30 fps, 18.6 MB free | `vge3` staged (first console run) |
-| Conker, Jet Force Gemini, Castlevania | the ROM alone + `--learn` rounds | boot and stop (the entries below) | - |
+| Jet Force Gemini | the ROM alone | Rare logo, a menu screen (its text boxes) by 70 s since `$ra` is set at its resolver's calls (2026-10-18) | - |
+| Conker, Castlevania | the ROM alone + `--learn` rounds | boot and stop (the entries below) | - |
 | the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s8: 128 still presenting at 30 s (s7: 121); Airboarders 64 fixed since (`docs/analyzer.md`) | - |
 
 **What exists** (each piece with host tests and a kill switch; the entries
@@ -65,9 +66,8 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
    console (red's dashboard has it off); Mario Kart 64's drift boosts.
 2. GoldenEye: on the console (`vge3`); the watch model and the walker's
    RDRAM tables are fixed in xemu (cosf), the rest of the missions unseen.
-3. Ocarina of Time stalls at its title now and then (a lost task completion,
-   not the press: see the 2026-10-18 entry); its overlays run interpreted
-   (also at `vzel5`'s commit).
+3. Ocarina of Time's overlays run interpreted (also at `vzel5`'s commit);
+   its title stall (a dropped SP done) is fixed in xemu, not yet on red.
 4. The s8 categories: NULL reads through KUSEG (23; Chopper Attack's is a
    hand-written task switcher, which needs strands like Mario Party's),
    Rare's compressed boots before learning rounds (19), no frames in the
@@ -1673,3 +1673,39 @@ are keyed with their ROM), and round 2 then never presented a frame: its
 overlay as it loads it, so the recompiled code has the unrelocated
 addresses. Learning a relocating game needs the captured, relocated bytes
 (the `code_` path) for those overlays, with `guard.c` checking each load.
+
+## 2026-10-18: Ocarina of Time's title stall found and fixed; Jet Force Gemini boots (overnight, xemu)
+
+**The stall.** `build-host/ootstall.sh` (title boots, no input, with
+`-DXRC_WATCH_QUEUE=0x8011D978 -DXRC_WATCH_QUEUE_ALL=1
+-DXRC_LOG_SP_STARTS=100000`) caught it on its third run. The scheduler's
+thread fell a few retraces behind (the host busy with the library sweep);
+its 8-slot queue filled with the IRQ manager's retrace messages; then the
+retrace's flush of the held SP done (`sp.c`, two retraces old) posted into
+the full queue and `post()` dropped it ("event 4 dropped: queue 8011d978
+full (8)"). The graphics task never completed and the graphics thread
+waited for good. Held done events now wait for room in their queue (both
+slots when SP and DP done share one), in order, and the next flush tries
+again (`XRC_RCP_ROOM`, default 1). On the N64 the scheduler drains its
+queue long before eight messages build up. Verified: 8 of 8 title boots
+since, under the same sweep load, with no drop and no stall (two brief
+60-retrace loading pauses in one run, also in the logs from before).
+`[MEM]` 21.4 MB free at the title; `[CLOCK]` 733 MHz (xemu).
+
+**Jet Force Gemini past its boot (xemu, test build, slot 13).** It wrote
+through a null pointer at boot in every sweep (s8, s9). Its call-site
+resolver (`0x80054530`, hand-written, interpreted) finds the `jal` that
+called it at `ra - 8` in the relocation tables of its relocatable code,
+loads that code, and jumps to the function. N64Recomp's generated code never
+sets `ctx->r31` at a call, and the interpreter starts with a sentinel in
+`$ra`, so it found nothing. The analyser now finds the functions that read
+`$ra` as a value (`emit._reads_ra`) and gives every `jal` to them in
+recompiled code an N64Recomp `[[patches.hook]]` that sets `ctx->r31` first
+(JFG: 1 function, 497 calls). Such a function, when interpreted, enters
+through `xrc_interp_ra` with that ra and returns on a jump back to it
+(`N64RX_RA_HOOKS`, default 1). JFG then shows the Rare logo right and
+reaches a menu screen (a panel drawn, its text as boxes) by 70 s, 1091
+frames in 55 s. The relocatable code runs interpreted inline (4.7 million
+instructions per 300 retraces at its busiest). `[MEM]` 32.5 MB free after
+nv2a; `[CLOCK]` 733 MHz (xemu). Not verified: past the menu, and the
+console.

@@ -71,6 +71,16 @@ ULTRA(osSpTaskLoad) {
 #ifndef XRC_RCP_OWNER
 #define XRC_RCP_OWNER 1
 #endif
+/* The events wait for room, too: a queue that is full (the scheduler's
+ * thread late by a few retraces, its queue filled with retrace messages)
+ * keeps them held, and the next flush tries again, in order. Posting into
+ * a full queue dropped the SP done, and Ocarina of Time's scheduler waited
+ * for it forever (its intermittent title stall). On the N64 the scheduler
+ * drains its queue long before eight messages build up. Kill switch:
+ * -DXRC_RCP_ROOM=0 (posted regardless, dropped when full). */
+#ifndef XRC_RCP_ROOM
+#define XRC_RCP_ROOM 1
+#endif
 #define MAX_PEND 16
 static struct { void* thr; int dp; unsigned at; } s_pend[MAX_PEND];   /* oldest first */
 static int s_npend;
@@ -81,6 +91,13 @@ int xu_thr_blocked(void* thr);
 static void post_done(int dp) {
     if (dp) xu_post_event_first(OS_EVENT_DP);   /* jammed in reverse: SP done is read first */
     xu_post_event_first(OS_EVENT_SP);
+}
+
+/* room for the SP done (and the DP done) in their queues; one queue for both needs two */
+static int room(int dp) {
+    int sp = xu_event_room(OS_EVENT_SP);
+    if (!dp) return sp >= 1;
+    return xu_event_room(OS_EVENT_DP) >= 1 && sp >= (xu_event_same(OS_EVENT_SP, OS_EVENT_DP) ? 2 : 1);
 }
 
 static void take(int i) {
@@ -98,6 +115,8 @@ int xu_rcp_flush(void* mine) {
         int go = !XRC_RCP_OWNER ||
                  (mine ? s_pend[i].thr == mine
                        : xu_thr_blocked(s_pend[i].thr) || xu_retrace() - s_pend[i].at >= 2);
+        if (go && XRC_RCP_ROOM && !room(s_pend[i].dp))
+            break;   /* no room: this one and those after it wait for the next flush */
         if (go) take(i), n++;
         else i++;
     }

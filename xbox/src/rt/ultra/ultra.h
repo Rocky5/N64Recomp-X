@@ -111,6 +111,8 @@ void xu_post_event(int event);
 /* the same at the front of its queue (osJamMesg order): a synchronous
  * task's done events, ahead of the retraces that queued while it ran */
 void xu_post_event_first(int event);
+int xu_event_room(int event);   /* thread.c: free slots in its queue */
+int xu_event_same(int a, int b);   /* thread.c: both events go to one queue */
 /* the N64 thread priority onto the kernel's levels 2..14 */
 int xu_level_of(int pri);
 void xu_stall_report(const char* why);   /* test builds: what each N64 thread waits on */

@@ -272,6 +272,63 @@ def cross_funcs(a: Analysis, live, nm, replaced):
     return out
 
 
+def _reads_ra(ws, start):
+    """whether code reads $ra as a value before anything writes it: an
+    offset from it, a load through it, arithmetic on it (Jet Force Gemini's
+    call-site resolver finds the jal that called it at ra - 8). jr $ra, a
+    store of it and a plain move do not count"""
+    from .mips import Ins, RA, LOADS
+    for i, w in enumerate(ws):
+        ins = Ins(w, start + 4 * i)
+        if ins.op in (8, 9, 24, 25) and ins.rs == RA and ins.simm and ins.rt != RA:   # addi(u)/daddi(u) ra, k
+            return True
+        if ins.op in LOADS and ins.rs == RA:
+            return True
+        if ins.op == 0 and ins.funct in (34, 35, 42, 43, 46, 47) and RA in (ins.rs, ins.rt):   # sub, slt
+            return True
+        if ins.op == 0 and ins.funct in (32, 33, 36, 37, 38, 39, 44, 45) and RA in (ins.rs, ins.rt) and                 0 not in (ins.rs, ins.rt):   # add/and/or/xor of ra with another register (not a move)
+            return True
+        if ins.is_jal or ins.is_jalr or ins.is_link_branch or ins.dest == RA or ins.is_jr_ra:
+            return False
+    return False
+
+
+def ra_hooks(a: Analysis, live, nm, replaced, interp):
+    """functions that read $ra as a value (_reads_ra) and the jal sites in
+    recompiled code that call them: N64Recomp's generated code never sets
+    ctx->r31 at a call, so each such site gets a hook that does (before the
+    jal, its return address), and an interpreted one enters the interpreter
+    with that ra instead of its sentinel (xrc_interp_ra). Returns ({key:
+    name} of the readers, [(func, site vram, return address)])"""
+    from .mips import Ins, words
+    ovl = a.overlays()
+    readers, rows = {}, []
+    for seg in a.img.segments:
+        fs = a.funcs.get(seg.name, {})
+        for x, f in fs.items():
+            kx = a.key(seg, x, ovl)
+            if kx not in live or nm.get(kx) in replaced:
+                continue
+            ws = words(a.img.rom, seg.rom + (f.start - seg.vram), min(64, (f.end - f.start) // 4))
+            if _reads_ra(ws, f.start):
+                readers[kx] = nm[kx]
+    if not readers:
+        return readers, rows
+    want = {k & 0xFFFFFFFF for k in readers}
+    for seg in a.img.segments:
+        fs = a.funcs.get(seg.name, {})
+        for x, f in fs.items():
+            kx = a.key(seg, x, ovl)
+            if kx not in live or kx in interp or nm.get(kx) in replaced or x == a.entry:
+                continue
+            n = _size(a, seg, f, fs) // 4
+            for i, w in enumerate(words(a.img.rom, seg.rom + (f.start - seg.vram), n)):
+                ins = Ins(w, f.start + 4 * i)
+                if ins.is_jal and ins.target in want:
+                    rows.append((nm[kx], ins.pc, ins.pc + 8))
+    return readers, rows
+
+
 def _n64recomp_tables(ws, vram):
     """the jump tables N64Recomp's analysis finds in a function (its
     analysis.cpp, a straight pass over the words: lui, one addiu, an addu of

@@ -487,7 +487,10 @@ int xu_send(uint32_t mq, uint32_t msg, int block, int jam) {
     if (mq == (uint32_t)(XRC_WATCH_QUEUE)) {   /* diagnosis: what goes into one queue, from whom */
         static unsigned s_n;
         Thr* who = self();
-        if (((s_n < 8 || msg != 1u) && s_n < 64) || s_n % 600 == 0)
+#ifndef XRC_WATCH_QUEUE_ALL   /* -DXRC_WATCH_QUEUE_ALL=1: every message both ways (the first 20000) */
+#define XRC_WATCH_QUEUE_ALL 0
+#endif
+        if (((s_n < 8 || msg != 1u) && s_n < 64) || s_n % 600 == 0 || (XRC_WATCH_QUEUE_ALL && s_n < 20000))
             xhw_logf("[OS] queue %08x <- %08x by N64 thread %08x (ra %08x)%s #%u valid %u", (unsigned)mq, (unsigned)msg,
                      (unsigned)who->t, who->ctx ? (unsigned)who->ctx->r31 : 0u, jam ? " jammed" : "", s_n, (unsigned)rd32(mq + MQ_VALIDCOUNT));
         s_n++;
@@ -567,7 +570,7 @@ ULTRA(osRecvMesg) {
 #ifdef XRC_WATCH_QUEUE
     if (mq == (uint32_t)(XRC_WATCH_QUEUE)) {   /* diagnosis: who takes what */
         static unsigned s_r;
-        if (s_r++ < 64)
+        if (s_r++ < 64 || (XRC_WATCH_QUEUE_ALL && s_r < 20000))
             xhw_logf("[OS] queue %08x -> %08x to N64 thread %08x, %d left", (unsigned)mq,
                      (unsigned)rd32(rd32(mq + MQ_MSG) + 4 * (uint32_t)first), me ? (unsigned)me->t : (unsigned)self()->t,
                      (int)(valid - 1));
@@ -610,6 +613,15 @@ static void post(int e, int jam) {
 }
 
 void xu_post_event(int e) { post(e, 0); }
+
+/* free slots in event e's queue (a large number when it has none set) */
+int xu_event_room(int e) {
+    uint32_t mq;
+    if (e < 0 || e >= OS_NUM_EVENTS || !(mq = s_events[e].mq)) return 1 << 30;
+    return (int)((int32_t)rd32(mq + MQ_MSGCOUNT) - (int32_t)rd32(mq + MQ_VALIDCOUNT));
+}
+
+int xu_event_same(int a, int b) { return s_events[a].mq && s_events[a].mq == s_events[b].mq; }
 
 /* the crash report's tail (trace.c): the crashing N64 thread's registers as
  * its context last held them (the generated code keeps them there) */

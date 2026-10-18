@@ -130,6 +130,18 @@ def make(rom, bdir, base=None, learnt=None):
                                           encoding='utf-8')   # every one, with why (the notes show six)
         (pdir / 'want.txt').write_text(''.join(f'{n} 0x{w[0]:08X} 0x{w[1]:08X}\n' for n, _why, w in hz.values() if w),
                                        encoding='utf-8')
+    # code that reads $ra as a value (Jet Force Gemini's call-site resolver): each jal to it in
+    # recompiled code sets ctx->r31 first (an N64Recomp hook), and an interpreted one starts with that ra
+    # (N64RX_RA_HOOKS=0: neither, as before)
+    hooks, ra_interp = [], {}
+    if os.environ.get('N64RX_RA_HOOKS', '1') != '0':
+        readers, hooks = emit.ra_hooks(a, live, nm, replaced, interp)
+        hooks = [h for h in hooks if h[0] not in ignored and h[0] not in interp.values()]
+        ra_interp = {k: n for k, n in readers.items() if k in interp}
+        if readers:
+            a.notes.append(f'{len(readers)} functions read $ra as a value ({", ".join(list(readers.values())[:4])}'
+                           f'{"..." if len(readers) > 4 else ""}): {len(hooks)} calls set it first')
+    (pdir / 'interp_ra.txt').write_text(''.join(f'{n}\n' for n in sorted(ra_interp.values())), encoding='utf-8')
     ignored |= set(interp.values())
     (pdir / 'interp.txt').write_text(''.join(f'{n} 0x{x:08X}\n' for x, n in sorted(interp.items())),
                                      encoding='utf-8')
@@ -141,6 +153,9 @@ def make(rom, bdir, base=None, learnt=None):
     for func, vram, value, why in patches:
         cfg += [f'# {why}', '[[patches.instruction]]', f'func = "{func}"', f'vram = 0x{vram:08X}',
                 f'value = 0x{value:08X}', '']
+    for func, site, ret in hooks:
+        cfg += ['[[patches.hook]]', f'func = "{func}"', f'before_vram = 0x{site:08X}',
+                f'text = "ctx->r31 = (gpr)(int32_t)0x{ret:08X}u;"', '']
     (pdir / 'recomp.toml').write_text('\n'.join(cfg), encoding='utf-8', newline='\n')
     (pathlib.Path(bdir) / 'analysis.txt').write_text(emit.report(a, ids, live, nm, replaced), encoding='utf-8')
     uses_eep = any(n in ('osEepromProbe', 'osEepromRead', 'osEepromLongRead') for n, _w in ids.values())
