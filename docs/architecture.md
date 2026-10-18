@@ -157,6 +157,15 @@ docs/look/           baseline shots: the loading screen (xemu, STILL); the BACK 
 - The VI (`ultra/vi.c`): `osViGetCurrentFramebuffer`/`NextFramebuffer`
   answer K0BASE until the first swap, as libultra's `__osViInit` leaves
   them (`XRC_VI_K0BASE`); `xu_vi_rows` gives the renderer the mode's rows.
+- A game whose learnt KUSEG regions could not be aliased gets its RDRAM
+  window moved (`XRC_RDRAM_USER`) and that span's host range held at the
+  start of boot, before the ROM's page cache and the rest are placed
+  (`XRC_KUSEG_HOLD`, `xhw_alias_hold`, `boot.c`: Perfect Dark's 0x70000000
+  at host 16 MB). The TLB mapping physical memory past the window logs
+  `[LEARN] rdram 8`: the next build gets the Expansion Pak's 8 MB.
+- Screenshots (`[FBDUMP]`, the BMP shot) hold the game's clock still while
+  they are written (`xhw_game_time_us`, `XHW_SHOT_FREEZE`): a game that
+  times its RCP (Ocarina of Time's 3 s check) saw a hang.
 - A call through a pointer into a KUSEG page the TLB does not map runs the
   game's refill code and fault path first, as the CPU's miss would
   (`XRC_LOOKUP_TLB`, `learn.c`; GoldenEye's evicted 0x7F000000 pages).
