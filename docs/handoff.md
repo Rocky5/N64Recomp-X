@@ -63,9 +63,8 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
    `boot_prev.log`); whether `vzel10`/`vbk8`/`vmp7`/`vmm6`/`vsnap2` fix
    what they are meant to; 720p on the
    console (red's dashboard has it off); Mario Kart 64's drift boosts.
-2. GoldenEye: the pause watch's model (0x7F054000-0x7F05B000, older than
-   the walker change), the walker's RDRAM tables
-   (`N64RX_WALK_RDRAM`, off: its level drew black).
+2. GoldenEye: on the console (`vge3`); the watch model and the walker's
+   RDRAM tables are fixed in xemu (cosf), the rest of the missions unseen.
 3. Ocarina of Time stalls on an A/START press before its title settles
    (also at `vzel5`'s commit).
 4. The s8 categories: NULL reads through KUSEG (23; Chopper Attack's is a
@@ -1590,3 +1589,10 @@ the cloudy blue sky (the RDP-triangle layer), the tunnel, and Bond's hand
 and PP7, which were missing. `test_analyze.py` 6 pairs, 0 failures. The
 pause watch's model (the same range) is still to see (the scripted pause
 missed); the earlier "dark sky" was this, not the palettes alone.
+
+Then with the walker's RDRAM jump tables on (`N64RX_WALK_RDRAM`, off since
+the black level): the level is right and the pause watch draws its whole
+model (the face, the health and armour arcs, the PP7), so both old faults
+were `cosf`. The walker's tables are on by default again: the level's
+interpreted instructions fall from 8.4 million to 42 thousand per 300
+retraces, 26 to 30 fps in the Dam (xemu).

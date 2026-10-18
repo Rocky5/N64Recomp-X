@@ -257,9 +257,10 @@ def _table_sources(a, runs, notes):
                      f'there (decompressed at boot): read for jump tables only, at {off:#x}')
     a.img.rom = rom
     # the walker reads jump tables there too (funcs.Image.word): GoldenEye's 0x7F000000 functions with
-    # their tables at 0x8005xxxx then recompile, and its level drew black or its watch without its model
-    # (being narrowed down): off until that is found. N64RX_WALK_RDRAM=1: on
-    if os.environ.get('N64RX_WALK_RDRAM', '0') == '1':
+    # their tables at 0x8005xxxx then recompile (its level's interpreted instructions 8.4 million per 300
+    # retraces -> 42 thousand, 26 -> 30 fps in xemu). Its black level and modelless watch with this on
+    # were its cosf falling into sinf (emit._size), not the tables. N64RX_WALK_RDRAM=0: off
+    if os.environ.get('N64RX_WALK_RDRAM', '1') == '1':
         a.img.table_sources = a.table_sources
 
 
