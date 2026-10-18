@@ -31,7 +31,7 @@ only.
 | Donkey Kong 64 | the ROM alone + `--learn` rounds | its file screen ("GAME 1"), drawing on (the IPL3 copy at RDRAM 4); audio stops once graphics start (open) | - |
 | Diddy Kong Racing, Wave Race 64, WWF No Mercy, Dr. Mario 64 | the ROM alone | present frames for the whole 30 s sweep run (DKR's microcode not decoded: grey boxes) | - |
 | Paper Mario | the ROM alone + `--learn` rounds | past its obfuscated boot (KSEG2 DMA), 321 frames, then a map's textures (open) | - |
-| GoldenEye | the ROM alone + `--learn` rounds (30) | logos, gun barrel, file select, mission select, briefing, the Dam in-game with its HUD and the pause watch; menus 37-50 fps; 7 functions refused by the recompiler (134 before); the watch's model missing; its CI textures (palettes after their texels) and the RDP-triangle cloud layer right since 2026-10-18 | `vge1` staged (first console run) |
+| GoldenEye | the ROM alone + `--learn` rounds (30) | logos, gun barrel, file select, mission select, briefing, the Dam in-game with its HUD and the pause watch; menus 37-50 fps; 7 functions refused by the recompiler (134 before); the watch's model missing; its CI textures (palettes after their texels) and the RDP-triangle cloud layer right since 2026-10-18 | `vge2` staged (first console run) |
 | Conker, Jet Force Gemini, Castlevania | the ROM alone + `--learn` rounds | boot and stop (the entries below) | - |
 | the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s8: 128 still presenting at 30 s (s7: 121); Airboarders 64 fixed since (`docs/analyzer.md`) | - |
 
@@ -1555,7 +1555,7 @@ in xemu (slot 12) with no crash.
 | `vbk8` | Banjo-Kazooie | cde875ad6a88 | the jiggy and START-menu textures (texture change checks, the mask-0 clamp) |
 | `vmp7` | Mario Party | f0d439236a40 | the controls and the title logo (`vmp6`'s fixes); rebuilt alone at `15b1a94` (its first build overlapped a test build of the same game) |
 | `vmm6` | Majora's Mask | 9f5ead6efb6e | the first uncached write no longer crashes it |
-| `vge1` | GoldenEye (new: `/F/Applications/N64Recomp-X-GE`, 4E52481C; deploy-set makes the folders) | 73c0fa49bc84 | superseded by `vge2` (below) before it ran |
+| `vge2` | GoldenEye (new: `/F/Applications/N64Recomp-X-GE`, 4E52481C; deploy-set makes the folders) | efe47ab8ff9b | first console run (`f1ed86c`, its 30 learn logs): logos, menus, the Dam with its textures, sky, cliffs, Bond's gun right in xemu (the cosf and palette fixes); `vge1` was superseded before it ran |
 
 ### GoldenEye's palettes and its sky (2026-10-18, xemu)
 
