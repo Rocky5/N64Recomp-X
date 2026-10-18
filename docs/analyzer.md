@@ -346,6 +346,13 @@ the biggest class; three looked at: Chopper Attack's task switcher
 (stack-switching coroutines), Jet Force Gemini's call-site resolver (fixed
 since: `ra_hooks`), Body Harvest and Pokémon Puzzle League (no cause yet).
 
+**2026-10-18.** Two rules from games that failed: a far `j` inside a big
+function is decided after the walk (`N64RX_J_LATER`; s9's six "undeclared
+label" compile failures, Mario Golf's 19 KB function), and a libultra
+built without IDO's divide has its osSendMesg/osRecvMesg named
+(`N64RX_MESG_NODIV`; Mario Tennis: past its crash, to a stall at pc
+80031254, `docs/handoff.md`).
+
 ## Known gaps
 
 - Code loaded with computed addresses (overlay tables, compressed code) is

@@ -22,7 +22,9 @@ alone on the console (red, 480i): Gold (the maintainer's): Super Mario 64,
 Pilotwings 64, Super Smash Bros. Silver: Mario Kart 64, GoldenEye,
 Banjo-Kazooie, Ocarina of Time. Experimental: Mario Party (its board: fix staged), Pokémon Snap (its
 camera), Majora's Mask (boot crash: fix staged), Jet Force Gemini, Kirby 64
-(staged) and the rest; the BACK menu's Controls page. In xemu: 720p on the working
+(staged) and the rest; the BACK menu's Controls page. The loading screen is the deep-space title card (red, `vsm12`/`vsm13`:
+6 ms a frame; hold BACK for the settings before the game, L + R for 480i).
+In xemu: 720p on the working
 games, GoldenEye's Dam right (textures, sky, Bond's gun, the pause watch: its cosf fell into sinf), Pokémon Snap through its Beach course (its camera locked: the photo check copies the frame being drawn), Kirby 64 (E) to its tutorial, Jet Force Gemini past its boot, Perfect Dark past its boot, Paper Mario past its
 copy-protection boot. The library sweep (s9: 132 of 246 still presenting at
 30 s) (`tools/xbox/sweep.py`) ranks what blocks the rest
@@ -66,12 +68,15 @@ the approach (§1), the architecture (§3), the build, game packs and tests
   vblank and the ACPI timer**, never the TSC or an assumed CPU clock, so an
   upgraded or overclocked CPU changes nothing but headroom (`docs/PLAN.md`
   §3.13). Each handoff entry records the `[MEM]` and `[CLOCK]` lines.
-- **The loading screen is built on Melee-X's `xhw_splash.c`** ("TechProGabe
-  Presents...": its wordmark, font, palette, "Hold BACK for 480i" line and
-  behaviours are kept; `docs/PLAN.md` §5.5 adds the rest). It draws in the
-  dashboard's 640x480 mode before pbkit so it shows on any TV, and the four
-  ways back to a picture (BACK, BACK + START, the init fallback, the 15 s
-  probation) are never removed.
+- **The loading screen is the deep-space title card** (maintainer,
+  2026-10-18; `docs/PLAN.md` §5.5's note, `docs/decisions.md`): built on
+  Melee-X's `xhw_splash.c` thread and holds, drawn by the CPU in the
+  dashboard's 640x480 mode before pbkit so it shows on any TV; the game's
+  title and ROM facts, never the app's logo as if it were the game's;
+  "TechProGabe Presents" as its label; a frame costs a few ms (red: 6 ms)
+  and the boot thread always gets the CPU it needs. The four ways back to a
+  picture (L + R, L + R + START, the init fallback, the 15 s probation) are
+  never removed; BACK held there opens the BACK menu before the game.
 - **The tool is cross-platform and easy**: `n64rx` must work on Windows,
   macOS and Linux; the Docker engine gives identical results everywhere;
   `doctor` explains or installs the native toolchain; every error says what

@@ -865,3 +865,84 @@ widgets, drag-drop or HiDPI).
 Experimental ones too, each with its "keeps it from the next tier" in a
 player's words: the known problems the app shows. The rule in
 `docs/compat.md` changed with it.
+
+## The deep-space title card (maintainer, 2026-10-18, `xhw_splash_draw.c`)
+
+The maintainer: the first loading screen "says Searching for ROM when the
+ROM may already be in the XBE" and "shows the logo of the app, almost as if
+it's the game's logo". Four mockups (title card, stage rail, halo, tiles)
+on a design canvas; A was picked with "more space theming", A2 approved,
+then its console render approved. What changed and why:
+
+- **No game art, no app logo as a game's.** The card is the game's title
+  (Sora Bold, 46 px, 32 px or two lines when long) and facts the runtime
+  has: the header's code, region and revision, the size and where the ROM
+  is ("built into this XBE" or beside it), "SHA-1 verified" when it is. The
+  platform is a small mark and name top right; "TechProGabe Presents"
+  stays, as a label (the family's line, no longer a 3x wordmark).
+- **Type the CPU can afford:** Sora (SIL OFL 1.1) baked once by
+  `tools/xbox/make_fonts.py` into 4-bit coverage tables (170 KB in the
+  XBE, Latin-1), blended per pixel; no FreeType on the console.
+- **Fast on a P3:** red's first build drew the whole sky every frame
+  (~70 ms) at level 9 over the boot thread (level 8): the controllers took
+  10 s and the SHA-1 never finished (the watchdog's hang card). Now the
+  sky that does not move (nebula, constellation, planet) is drawn once
+  into a 1.2 MB cache (freed at the mode switch); a frame copies it and
+  adds ~120 stars (drifting at three depths, twinkling, two lines tall for
+  480i), a shooting star and the text: red `vsm12` 6 ms a frame (the first
+  64 ms). The splash thread also sleeps at least 12 ms a frame however
+  long a frame took, so the boot always gets the CPU.
+- **Nothing pops in:** the screen fades up from black (400 ms), the title
+  fades and settles 10 px (350 ms) and is set on the first frame
+  (`xrc_splash_early`, before the controllers' 1.6-2.9 s bring-up), the
+  chips fade (300 ms), the stage label fades (180 ms), the bar eases to
+  where the stage is and never jumps.
+- `-DXHW_SPLASH_CLASSIC=1` draws the first screen (kept: it is small).
+
+## The boot holds swapped: L + R is safe video, BACK the menu (maintainer, 2026-10-18)
+
+"Hold triggers for settings ... literally the same menu from BACK", then
+"flip flop: safe video L + R, the menu BACK; either one, you have to hold
+it". Both latch after 500 ms held: L + R (both triggers past 100, no BACK)
+is safe video, with START also the defaults; BACK with no trigger opens the
+BACK menu before the game (`xrc_menu_preboot`). L + R + BACK is the exit
+combos' start, so neither latches while all three are down, and a combo
+finished on the loading screen quits before any hold is applied (nothing
+is saved). The menu before the game is the same code and rows
+(`settings_menu.c`, `s_pre`): drawn by the CPU into two 512x416 images
+(allocated for it, freed after) that the splash thread lays over its frozen,
+dimmed screen with a 200 ms fade; the controllers are read by the boot
+thread at 30 a second (the splash thread stops reading them). The video
+mode is not set yet, so a Video output change is used as the game starts
+(no `*`, no restart), "Return" reads "Start the game", Restart and Exit
+leave as in the game. The four ways back to a picture are unchanged in
+kind: L + R, L + R + START, the init fallback, the probation.
+
+## A far `j` is decided after the walk (2026-10-18, `funcs.walk`, `N64RX_J_LATER`)
+
+Six games of the s9 sweep failed to compile with `goto` to an undeclared
+label (Mario Golf, A Bug's Life, Clayfighter SC, CyberTiger, Fighting
+Force, Toy Story 2): a `j` forward inside a big function was taken for a
+tail call because the walk had not yet reached that far (Mario Golf's
+19 KB function at 0x8003327C jumps 0x4000 ahead early in a depth-first
+walk), its target became a function start, and the functions around it
+were cut short, so their branches pointed past their end. A `j` forward
+beyond the end so far is now kept aside and walked once the rest is
+known, if the function reaches within `INTRA_J` of it by then; only the
+rest are tail calls. Host-checked on Mario Golf's analysis; the sweep's
+next run says how many of the six now build.
+
+## libultra built without IDO's divide (2026-10-18, Mario Tennis, `N64RX_MESG_NODIV`)
+
+Mario Tennis's own libultra (captured from RDRAM) has an osJamMesg that
+divides like IDO's but an osSendMesg and osRecvMesg that wrap the ring by
+a compare and end in `j __osRestoreInt` (a tail call). The queue rule
+wanted the divide, so neither was named, the game's own osSendMesg ran on
+the runtime's queues and read `*mtqueue` = NULL (round 2 onwards crashed
+at once). The rule now also takes, beside IDO's shape, a function without
+a divide that calls `__osDisableInt`, calls or tail-jumps to
+`__osRestoreInt`, reads and writes validCount and reads msgCount and the
+ring; osRecvMesg by "writes `first`, reads the fullqueue (+4), not the
+mtqueue (+0)" when its arg1 is spilled to the stack. Features carry a
+function's tail calls (`Feat.tails`). With it Mario Tennis runs on to a
+stall (below, `docs/handoff.md`).

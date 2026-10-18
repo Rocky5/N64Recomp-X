@@ -33,6 +33,7 @@
  * BACK) when something changed. Kill switch -DXRC_MENU=0: BACK does
  * nothing, settings.ini still works. */
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "f3d_interp.h"
 #include "settings.h"
@@ -75,6 +76,7 @@ static const char* const k_label[N_ROWS] = {
 #define SLIDE_PX 14
 
 static volatile int s_open, s_want, s_close, s_leave, s_apply;
+static int s_pre;   /* the menu before the game (xrc_menu_preboot): over the loading screen */
 static int s_sel, s_port, s_inited;
 static uint32_t s_prev;
 static uint64_t s_repeat_at;   /* us */
@@ -192,7 +194,7 @@ static int out_used(const XrcSettings* st) {
     if (i == 2 && !s_dash_480p) return 1;
     return i;
 }
-static int restart_needed(void) { return out_index(&g_xrc_settings) != out_index(&s_boot); }
+static int restart_needed(void) { return !s_pre && out_index(&g_xrc_settings) != out_index(&s_boot); }
 
 static int wide_now(const XrcSettings* st) {
     const xhw_video_mode* vm = xhw_video();
@@ -240,7 +242,7 @@ static void row_value(int r, char* v, size_t cap, int* star) {
         if (i == 0) snprintf(v, cap, "Auto, %s", k_out[u]);
         else if (u != i) snprintf(v, cap, "%s -> %s", k_out[i], k_out[u]);
         else snprintf(v, cap, "%s", k_out[i]);
-        *star = i != out_index(&s_boot);
+        *star = !s_pre && i != out_index(&s_boot);
         break;
     }
     case ROW_WIDE:
@@ -267,7 +269,7 @@ static void info_text(char* out, size_t cap) {
     switch (s_sel) {
     case ROW_VIDEO:
         if (out_used(g) != out_index(g) && out_index(g)) snprintf(out, cap, "The dashboard does not allow %s", k_out[out_index(g)]);
-        else snprintf(out, cap, "Applies after a restart");
+        else snprintf(out, cap, s_pre ? "Used when the game starts" : "Applies after a restart");
         break;
     case ROW_WIDE:
         if (xhw_video()->height >= 720) snprintf(out, cap, "Off: the 4:3 picture in the middle");
@@ -289,7 +291,7 @@ static void info_text(char* out, size_t cap) {
     case ROW_CONTROLS: snprintf(out, cap, "A: what each button of port %d gives the game", s_port + 1); break;
     case ROW_RESTART: snprintf(out, cap, "Saves settings.ini and restarts the game"); break;
     case ROW_EXIT: snprintf(out, cap, "L + R + BACK + BLACK does it from anywhere"); break;
-    default: snprintf(out, cap, "Saves settings.ini (B and BACK do too)"); break;
+    default: snprintf(out, cap, s_pre ? "Saves settings.ini and starts the game" : "Saves settings.ini (B and BACK do too)"); break;
     }
 }
 
@@ -448,6 +450,8 @@ static void fill_controls(xhw_panel* p) {
     snprintf(p->footer, sizeof p->footer, "Y defaults     B back");
 }
 
+static uint32_t* s_pre_img[2];   /* the menu before the game: allocated for it, freed after */
+
 /* the card's frame: fade 0..256, slide in pixels */
 static void draw(int fade, int slide) {
     const xhw_video_mode* vm = xhw_video();
@@ -458,9 +462,11 @@ static void draw(int fade, int slide) {
     s_panel.rows = N_ROWS;
     snprintf(s_panel.title, sizeof s_panel.title, "%s", xrc_game.title ? xrc_game.title : "N64Recomp-X");
     snprintf(s_panel.sub_left, sizeof s_panel.sub_left, "SETTINGS");
-    snprintf(s_panel.sub_right, sizeof s_panel.sub_right, "running %s %s",
-             vm->height >= 720 ? "720p" : vm->progressive ? "480p" : "480i",
-             vm->height >= 720 || (vm->widescreen && s_dash_wide) ? "16:9" : "4:3");
+    if (s_pre) snprintf(s_panel.sub_right, sizeof s_panel.sub_right, "before the game starts");
+    else
+        snprintf(s_panel.sub_right, sizeof s_panel.sub_right, "running %s %s",
+                 vm->height >= 720 ? "720p" : vm->progressive ? "480p" : "480i",
+                 vm->height >= 720 || (vm->widescreen && s_dash_wide) ? "16:9" : "4:3");
     if (s_page == 2) {
         fill_controls(&s_panel);
     } else if (s_page) {
@@ -471,7 +477,7 @@ static void draw(int fade, int slide) {
             int star;
             if (r == ROW_PAK && !HAS_PAKS) continue;
             if (r == s_sel) s_panel.sel = n;
-            snprintf(s_panel.label[n], sizeof s_panel.label[n], "%s", k_label[r]);
+            snprintf(s_panel.label[n], sizeof s_panel.label[n], "%s", s_pre && r == ROW_RETURN ? "Start the game" : k_label[r]);
             row_value(r, s_panel.value[n], sizeof s_panel.value[n], &star);
             s_panel.star[n] = star;
             s_panel.kind[n] = r >= ROW_RESTART                     ? XHW_PANEL_ACTION
@@ -482,7 +488,15 @@ static void draw(int fade, int slide) {
         s_panel.rows = n;
         info_text(s_panel.info, sizeof s_panel.info);
         if (restart_needed()) snprintf(s_panel.note, sizeof s_panel.note, "* used after a restart");
-        snprintf(s_panel.footer, sizeof s_panel.footer, "A / Left / Right change     B return");
+        snprintf(s_panel.footer, sizeof s_panel.footer, s_pre ? "A / Left / Right change     B start the game"
+                                                             : "A / Left / Right change     B return");
+    }
+    if (s_pre) {   /* over the loading screen: the splash thread draws it (two images, one being shown) */
+        static int s_flip;
+        uint32_t* img = s_pre_img[s_flip ^= 1];
+        xhw_panel_render(img, XHW_PANEL_W, &s_panel);
+        xhw_splash_panel(img, XHW_PANEL_W);
+        return;
     }
     xhw_panel_render(s_img, 512, &s_panel);
     f3d_present_held(s_img, 512, 512, XHW_PANEL_W, XHW_PANEL_H, fade, slide);
@@ -518,7 +532,7 @@ static void open_menu(void) {
     s_dash_720p = xhw_video_720p_allowed();
     s_dash_480p = xhw_video_480p_allowed();
     s_dash_wide = xhw_video_widescreen_set();
-    f3d_hold_last(1);
+    if (!s_pre) f3d_hold_last(1);
     s_open_us = xhw_time_us();
     s_open = 1;
     xhw_logf("[MENU] opened");
@@ -752,16 +766,23 @@ static void controls_input(uint32_t press) {
 }
 
 /* the VI thread, once a retrace: the controllers while the menu is open */
+static void menu_step(unsigned retrace);
+
 void xrc_menu_vi(unsigned retrace) {
     static int s_started;
-    uint32_t cur = 0, press;
-    uint64_t now;
     if (!XRC_MENU || !xrc_gfx_ready()) return;
     if (!s_started) s_started = 1, xu_spawn(menu_thread, NULL, 13, 64 * 1024);
     if (!s_open || s_close || s_leave) {
         if (!s_open && s_release > 0 && !s_want) s_release--;
         return;
     }
+    menu_step(retrace);
+}
+
+/* one look at the controllers while the menu is open */
+static void menu_step(unsigned retrace) {
+    uint32_t cur = 0, press;
+    uint64_t now;
     if (!poll(&cur)) return;
     now = xhw_time_us();
     if (XHW_TEST_BUILD) {   /* retraces seen in the menu's first two seconds */
@@ -822,4 +843,56 @@ void xrc_menu_vi(unsigned retrace) {
             xhw_logf("[MENU] Paks page, port %d", s_pport + 1);
         } else change(+1, 1);
     }
+}
+
+/* BACK held on the loading screen (xhw_splash_settings): the same menu
+ * before the game starts, over the loading screen (the splash thread draws
+ * the card), the controllers read here at 30 a second. The video mode is
+ * not set yet, so a change to it is used as the game starts (no restart);
+ * "Return" reads "Start the game". The other rows act as in the game:
+ * Restart and Exit to dashboard leave, the Paks and Controls pages work on
+ * the files the game will use. */
+void xrc_menu_preboot(void) {
+    unsigned frame = 0;
+    int i;
+    if (!XRC_MENU) return;
+    s_pre_img[0] = (uint32_t*)malloc(XHW_PANEL_W * XHW_PANEL_H * 4);
+    s_pre_img[1] = (uint32_t*)malloc(XHW_PANEL_W * XHW_PANEL_H * 4);
+    if (!s_pre_img[0] || !s_pre_img[1]) {
+        xhw_log("[MENU] no room for the menu before the game");
+        free(s_pre_img[0]), free(s_pre_img[1]);
+        s_pre_img[0] = s_pre_img[1] = NULL;
+        return;
+    }
+    s_pre = 1;
+    for (i = 0; i < 4; i++) s_back_down[i] = 1, s_back_clean[i] = 0;   /* the BACK that was held is not a tap */
+    open_menu();
+    xhw_log("[MENU] before the game (BACK held at boot)");
+    while (!s_close && !s_leave) {
+        uint64_t t0 = xhw_time_us(), t;
+        menu_step(frame++);
+        s_apply = 0;   /* the renderer is not up: the game's start reads the settings */
+        if (HAS_PAKS) {
+            pak_do();
+            if (s_page) pak_refresh();
+        }
+        draw(256, 0);
+        t = xhw_time_us() - t0;
+        if (t < 33000u) xhw_sleep_ms((unsigned)((33000u - t) / 1000u));
+    }
+    if (HAS_PAKS) pak_do();
+    if (s_leave) leave(s_leave == 2);
+    {
+        int ok = save_if_changed();
+        xhw_logf("[MENU] closed before the game (%s)",
+                 !ok ? "settings.ini could not be saved" : ok == 2 ? "settings.ini saved" : "nothing changed");
+    }
+    xhw_splash_panel(NULL, 0);
+    xhw_sleep_ms(70);   /* the splash thread's last frame with the card is done with it */
+    s_open = 0;
+    s_close = 0;
+    s_pre = 0;
+    s_inited = 1, s_boot = g_xrc_settings;   /* what the game runs with */
+    free(s_pre_img[0]), free(s_pre_img[1]);
+    s_pre_img[0] = s_pre_img[1] = NULL;
 }

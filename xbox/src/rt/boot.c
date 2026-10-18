@@ -18,7 +18,9 @@
  *                 thread (it becomes the boot code; the game's first
  *                 osStartThread parks it, ultra/thread.c).
  *   the holds     xhw_splash_finish waits out the minimum hold and returns
- *                 what BACK / BACK + START latched; the settings apply it
+ *                 what L + R / L + R + START latched; the settings apply it.
+ *                 BACK held there opens the BACK menu before the game
+ *                 (xrc_menu_preboot), before the video mode is set
  */
 #include <stdio.h>
 #include <string.h>
@@ -54,6 +56,8 @@ static void video_line(void) {
     xhw_splash_video(line, note);
     xhw_logf("[BOOT] video line: %s%s%s", line, note[0] ? " " : "", note);
 }
+
+void xrc_menu_preboot(void);   /* settings_menu.c */
 
 static void finish_loading_screen(void) {
     int hold = xhw_splash_finish();
@@ -257,6 +261,7 @@ static void game(void) {
     xhw_splash_stage(line);
     xhw_splash_progress(1.0f);
     finish_loading_screen();
+    if (xhw_splash_settings()) xrc_menu_preboot();   /* BACK held: the settings first */
     /* the hold may have changed the settings: the mode follows them */
     xhw_video_set_pref(g_xrc_settings.output, g_xrc_settings.progressive);
     xhw_video_set_confirmed(g_xrc_settings.video_confirmed);
@@ -272,6 +277,13 @@ static void game(void) {
         for (;;) xhw_sleep_ms(1000);
     }
     xhw_fatal("The game returned", "The boot code came back; the game's threads never started.");
+}
+
+/* xhw_main.c, right after the loading screen comes up: the title at once */
+void xrc_splash_early(void) {
+    if (xrc_game.id)
+        xhw_splash_card_set(xrc_game.title, xrc_game.test_rom ? "the ROM-free end-to-end test" : xrc_game.id,
+                            xrc_game.icon);
 }
 
 void xrc_boot(void) {

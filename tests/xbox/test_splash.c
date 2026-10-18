@@ -8,9 +8,10 @@
  *     alone lies inside it, for the loading screen with the longest strings
  *     it can be given, for every hold state, and for a full error card
  *   - every stage label, with the longest title a pack may have, fits its
- *     line; the card title at the zoom the renderer picks fits the frame
- *   - the background stays in the family's palette (dark and cool: navy,
- *     teal, violet; sparks pale teal)
+ *     line; the title in the face the renderer picks fits the frame; the
+ *     footer's hints and every hold's line fit
+ *   - the background stays cool and dark (the deep-space card: navy,
+ *     violet, teal; stars white or blue)
  *   - -DXHW_SPLASH_STILL frames are the same whatever the time
  *   - the BACK menu's card (xhw_panel_render): its shape in alpha (corners
  *     and the outside clear, the body opaque), every row of the fullest
@@ -84,13 +85,17 @@ static xhw_splash_state loading(void) {
     st.progress = 0.6f;
     snprintf(st.video, sizeof st.video, "%s", "Video: 720p 16:9 (the last boot did not confirm its mode).");
     snprintf(st.video_note, sizeof st.video_note, "%s", "First time at 720p here: press A within 15 s to keep it.");
+    snprintf(st.rom_id, sizeof st.rom_id, "%s", "NSME \xC2\xB7 Australia \xC2\xB7 1.15");
+    snprintf(st.rom_where, sizeof st.rom_where, "%s", "64 MB \xC2\xB7 built into this XBE");
+    st.rom_ok = 1;
+    st.step = 4;
     return st;
 }
 
 static uint32_t s_icon[64 * 64];
 
 int main(int argc, char** argv) {
-    static const char* const stages[] = { "Looking for a ROM...", "Reading ROM (64 MB)", "Checking the ROM (SHA-1)",
+    static const char* const stages[] = { "Reading the ROM from this XBE (64 MB)", "Verifying the ROM (64 MB, SHA-1)",
                                           "Preparing memory", "Loading code", "No game in this build" };
     xhw_splash_state st = loading();
     size_t i;
@@ -109,9 +114,34 @@ int main(int argc, char** argv) {
         snprintf(what, sizeof what, "hold %d", h);
         check_safe(what, st);
     }
+    st.hold = st.holding = 0;
+    for (h = 1; h <= 2; h++) {   /* BACK: the settings before the game */
+        char what[64];
+        st.settings = h;
+        snprintf(what, sizeof what, "settings %d", h);
+        check_safe(what, st);
+    }
+    st.settings = 0;
     st.layers = XHW_SPLASH_ALL;
     xhw_splash_render(s_full, W, &st);
     save("splash_loading", s_full);
+    {   /* a usual boot, for the eye (docs/look/loading-space-host.png) */
+        xhw_splash_state d;
+        memset(&d, 0, sizeof d);
+        d.t_ms = 2600;
+        snprintf(d.card_title, sizeof d.card_title, "%s", "Super Mario 64");
+        snprintf(d.version, sizeof d.version, "%s", "N64Recomp-X 0.1.0-dev");
+        snprintf(d.rom_id, sizeof d.rom_id, "%s", "NSME \xC2\xB7 USA \xC2\xB7 1.0");
+        snprintf(d.rom_where, sizeof d.rom_where, "%s", "8 MB \xC2\xB7 built into this XBE");
+        d.rom_ok = 1;
+        snprintf(d.stage, sizeof d.stage, "%s", "Loading code");
+        d.step = 3;
+        d.progress = 0.72f;
+        snprintf(d.video, sizeof d.video, "%s", "Video: 720p 16:9 (the dashboard allows 720p).");
+        d.layers = XHW_SPLASH_ALL;
+        xhw_splash_render(s_full, W, &d);
+        save("splash_demo", s_full);
+    }
     {   /* a card with every line full */
         xhw_splash_state c = loading();
         c.card = 1;
@@ -126,20 +156,32 @@ int main(int argc, char** argv) {
         save("splash_card", s_full);
     }
 
-    /* the stage labels fit the line from the bar's left end to the safe edge */
-    for (i = 0; i < sizeof stages / sizeof stages[0]; i++)
-        CHECK(XHW_SPLASH_BAR_X + xhw_splash_text_width(stages[i], 1) <= W - SAFE, "stage '%s' too wide", stages[i]);
-    CHECK(XHW_SPLASH_BAR_X + xhw_splash_text_width(st.stage, 1) <= W - SAFE, "'%s' too wide", st.stage);
-    CHECK(xhw_splash_text_width(st.video, 1) <= W - 2 * SAFE, "the video line is too wide");
-    CHECK(xhw_splash_text_width(st.video_note, 1) <= W - 2 * SAFE, "the probation note is too wide");
+    /* the stage labels, with the step count beside them, fit the line (48..592) */
+    {
+        int right = xhw_splash_face_width(XHW_FACE_LABEL, "99999 ms \xC2\xB7 step 4 of 4", 0);
+        for (i = 0; i < sizeof stages / sizeof stages[0]; i++)
+            CHECK(xhw_splash_face_width(XHW_FACE_STAGE, stages[i], 0) + 16 + right <= 544, "stage '%s' too wide", stages[i]);
+        CHECK(xhw_splash_face_width(XHW_FACE_STAGE, st.stage, 0) + 16 + right <= 544, "'%s' too wide", st.stage);
+    }
+    CHECK(xhw_splash_face_width(XHW_FACE_BODY, st.video_note, 0) <= W - 2 * SAFE, "the probation note is too wide");
     for (h = 0; h <= XHW_HOLD_SAFE_RESET; h++)
-        CHECK(xhw_splash_text_width(xhw_splash_hold_text(h, h), 1) <= W - 2 * SAFE, "hold line %d too wide", h);
-    CHECK(xhw_splash_title_zoom("Pilotwings 64", 1) == XHW_SPLASH_TITLE_ZOOM, "a short title is not 2x");
-    CHECK(xhw_splash_title_zoom(st.card_title, 1) == 1, "the longest title is not 1x");
+        CHECK(xhw_splash_face_width(XHW_FACE_BODY, xhw_splash_hold_text(h, h), 0) + 80 <= W - 2 * SAFE,
+              "hold line %d too wide", h);
+    CHECK(xhw_splash_title_face("Pilotwings 64") == XHW_FACE_TITLE, "a short title is not in the big face");
+    CHECK(xhw_splash_title_face(st.card_title) == XHW_FACE_TITLE2, "the longest title is not in the smaller face");
+    {
+        char l1[64], l2[64];
+        int n = xhw_splash_title_lines(st.card_title, l1, l2, sizeof l1);
+        CHECK(n == 2 && xhw_splash_face_width(XHW_FACE_TITLE2, l1, 0) <= 544 && xhw_splash_face_width(XHW_FACE_TITLE2, l2, 0) <= 544,
+              "the longest title does not fit on two lines ('%s' / '%s')", l1, l2);
+        CHECK(xhw_splash_title_lines("Super Mario 64", l1, l2, sizeof l1) == 1, "a short title is broken");
+    }
+    CHECK(xhw_splash_face_width(XHW_FACE_TITLE, "Pokémon Snap", 0) > xhw_splash_face_width(XHW_FACE_TITLE, "Pokmon Snap", 0),
+          "UTF-8 Latin-1 letters have no width");
 
     /* the background's palette: dark and cool */
     {
-        int warm = 0, bright = 0;
+        int warm = 0, lit = 0;
         st.layers = XHW_SPLASH_BG;
         for (i = 0; i < 4; i++) {
             st.t_ms = (uint32_t)(i * 7919);
@@ -149,11 +191,11 @@ int main(int argc, char** argv) {
                     uint32_t c = s_bg[y * W + x];
                     int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
                     if (b < r) warm++;
-                    if (r > 120 || g > 220 || b > 230) bright++;
+                    if (r + g + b > 240) lit++;   /* stars, the rim, the constellation */
                 }
         }
         CHECK(!warm, "%d background pixels warmer than the palette (blue under red)", warm);
-        CHECK(!bright, "%d background pixels brighter than the palette allows", bright);
+        CHECK(lit < 4 * W * H / 50, "%d background pixels bright: the sky is not dark", lit);
     }
 
     /* STILL: the same frame at any time */

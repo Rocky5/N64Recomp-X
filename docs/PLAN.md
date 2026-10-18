@@ -1029,13 +1029,13 @@ and the texture pool).
 
 | tier | framebuffer | aspect | when |
 |---|---|---|---|
-| 480i | 640x480x32 + Z24S8 | 4:3, or 16:9 anamorphic when Widescreen is On | always available; the safe mode (BACK held at boot) |
+| 480i | 640x480x32 + Z24S8 | 4:3, or 16:9 anamorphic when Widescreen is On | always available; the safe mode (L + R held at boot) |
 | 480p | same | same | HDTV/VGA pack, the dashboard's 480p flag, NTSC |
 | **720p** | 1280x720 R5G6B5 + Z24S8 | 16:9 | HDTV/VGA pack, the dashboard's 720p flag, ≥ 32 MB free before `pb_init`; **Auto's choice where allowed** |
 
 Defaults: `output = auto` (720p where the dashboard allows it, else 480p,
 else 480i) and `widescreen = auto`. The ways back to a picture are §5.5's
-four: BACK held during the loading screen (480i 4:3, saved), BACK + START
+four: L + R held during the loading screen (480i 4:3, saved), L + R + START
 (the same plus default settings), a `pb_init` or allocation failure falling
 to 480, and a mode not yet confirmed on this console on probation
 (`video_pending.txt`, "New video mode 720p. Press A to keep it.", 15 s,
@@ -1055,6 +1055,20 @@ right for most 3D on the first day; edge pop-in is the listed defect until
 the culling patch lands.
 
 ### 5.5 The loading screen, and the ways back to a picture
+
+> **Changed 2026-10-18 (maintainer):** the screen is now the "deep space
+> title card" (mockup A2, approved, then its console render approved:
+> `docs/look/loading-space-host.png`): a cached starfield, nebula and
+> planet limb, the game's title in Sora (SIL OFL) with the ROM's chips
+> (code, region, revision; size and place; SHA-1 verified), "step n of 4"
+> over a slim bar, nothing popping in (fades, an eased bar). "TechProGabe
+> Presents" stays as a small label; the app's logo is never shown as if it
+> were the game's. The holds swapped: **L + R** (both triggers) held is
+> safe video, **L + R + START** safe video and defaults, **BACK** held opens
+> the BACK menu before the game starts (the same menu, drawn over the
+> frozen screen; a video change is used at once). The text below is the
+> first version; where it differs, `docs/decisions.md` "The deep-space
+> title card" and `xhw_splash_draw.c` are current.
 
 Maintainer request (2026-10-16): **a loading screen worth looking at, in the
 line of the siblings' "TechProGabe Presents..." splash, with safe 480i
@@ -1123,8 +1137,8 @@ logged):
 
 | # | when | what happens |
 |---|---|---|
-| 1 | BACK held while the loading screen shows (the controllers are opened before it, Melee-X's order; without a splash the boot still waits 1.5 s for them, OpenCrossing's rule) | this boot runs 480i 4:3 and saves `output = 480i`, `progressive = 0`, `widescreen = off`; the menu's Video output row goes back to Auto later |
-| 2 | BACK + START held | as 1, and `settings.ini` is rewritten with the defaults, so a bad binding, dead zone or volume cannot lock a user out; `[SETTINGS] reset at boot` |
+| 1 | L + R (both triggers; BACK before 2026-10-18) held while the loading screen shows (the controllers are opened before it, Melee-X's order; without a splash the boot still waits 1.5 s for them, OpenCrossing's rule) | this boot runs 480i 4:3 and saves `output = 480i`, `progressive = 0`, `widescreen = off`; the menu's Video output row goes back to Auto later |
+| 2 | L + R + START held (BACK + START before 2026-10-18) | as 1, and `settings.ini` is rewritten with the defaults, so a bad binding, dead zone or volume cannot lock a user out; `[SETTINGS] reset at boot` |
 | 3 | `pb_init` or a contiguous allocation fails at 720p | `xhw_video_fallback_480`: 480p where allowed, else 480i; the bridge frame says so; never a black screen because of memory |
 | 4 | a mode not yet confirmed on this console | `video_pending.txt` is written before `XVideoSetMode`; the first frames carry "New video mode 720p. Press A to keep it. Back to 480i in 15 s." as CPU text (`xhw_overlay.c`); A confirms and saves `video_confirmed`; no A → restart into 480i, saved; a reset or power-off with the file present → 480i next boot. 480i is never on probation |
 

@@ -278,12 +278,12 @@ void xrc_settings_apply_hold(int hold) {
     if (hold >= XHW_HOLD_SAFE_RESET) {
         xrc_settings_defaults(s);
         xu_pak_apply_settings(0);
-        xhw_log("[SETTINGS] reset at boot (BACK + START): defaults");
+        xhw_log("[SETTINGS] reset at boot (L + R + START): defaults");
     }
     s->output = XHW_OUT_480I;
     s->progressive = 0;
     s->widescreen = XRC_WS_OFF;
-    xhw_log("[SETTINGS] BACK held at boot: 480i 4:3 (saved)");
+    xhw_log("[SETTINGS] L + R held at boot: 480i 4:3 (saved)");
     log_settings();
     xrc_settings_save();
 }

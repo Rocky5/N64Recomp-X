@@ -523,8 +523,9 @@ and start default.xbe from your dashboard. {where}
 
 On the console:
   BACK                     the settings menu (video, widescreen, volume, ...)
-  hold BACK while loading  safe video: 480i 4:3, saved
-  hold BACK + START        safe video and default settings
+  hold L + R while loading safe video: 480i 4:3, saved
+  hold L + R + START       safe video and default settings
+  hold BACK while loading  the settings menu before the game
   L + R + BACK + BLACK     back to the dashboard, anywhere
   L + R + BACK + WHITE     restart, anywhere
 

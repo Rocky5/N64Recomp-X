@@ -299,7 +299,16 @@ void xhw_splash_card_set(const char* title, const char* sub, const uint32_t* ico
 /* the video line ("Video: 720p 16:9 (the dashboard allows 720p).") and the
  * probation note, or NULL */
 void xhw_splash_video(const char* line, const char* note);
-/* the safe-video holds the loading screen latched */
+/* the ROM's chips on the title card (UTF-8, NULL keeps what is there):
+ * "NSME · USA · 1.0", "8 MB · built into this XBE"; verified: SHA-1 ok */
+void xhw_splash_rom(const char* id, const char* where, int verified);
+/* the BACK menu's card (XHW_PANEL_W x XHW_PANEL_H, alpha = coverage) drawn
+ * over the loading screen, which also stops reading the controllers; NULL
+ * takes it away (the menu before the game, xrc_menu_preboot) */
+void xhw_splash_panel(const uint32_t* img, int pitch_px);
+/* BACK was held on the loading screen: the BACK menu opens before the game */
+int xhw_splash_settings(void);
+/* the safe-video holds the loading screen latched (L + R; L + R + START) */
 enum { XHW_HOLD_NONE = 0, XHW_HOLD_SAFE = 1, XHW_HOLD_SAFE_RESET = 2 };
 /* waits out the minimum hold (XHW_SPLASH_MS; any button but BACK and START
  * skips it) and a BACK hold in progress; returns XHW_HOLD_*. Without a

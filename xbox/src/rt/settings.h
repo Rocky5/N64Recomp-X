@@ -62,7 +62,7 @@ const char* xrc_controls_input_name(int input);   /* "Left trigger" */
 void xrc_settings_load(void);
 int xrc_settings_save(void);
 /* the loading screen's latched hold (XHW_HOLD_*): safe video, and with
- * BACK + START the defaults too; saved, logged as [SETTINGS] */
+ * L + R + START the defaults too; saved, logged as [SETTINGS] */
 void xrc_settings_apply_hold(int hold);
 
 #endif

@@ -14,7 +14,12 @@ Version notes: rules lean on what is stable from libultra 2.0D to 2.0L
 (field offsets, which registers a function writes, which helpers it calls);
 where versions differ (osPiStartDma through osEPiStartDma, __osInitialize_
 common behind osInitialize) the rule covers both shapes."""
+import os
+
 from .features import features
+
+# kill switch: N64RX_MESG_NODIV=0 keeps the queue rule to IDO's divide
+MESG_NODIV = os.environ.get('N64RX_MESG_NODIV', '1') != '0'
 
 AI, PI, SI, SP, VI, MI, DP = 0x04500000, 0x04600000, 0x04800000, 0x04040000, 0x04400000, 0x04300000, 0x04100000
 
@@ -230,9 +235,19 @@ def _structure(N):
     if di and ri:
         mesg = [a for a, ft in f.items() if di in ft.calls and ri in ft.calls and 'div' in ft.special
                 and N.arg_r(a, 0, 8) and N.arg_r(a, 0, 16)]
+        if MESG_NODIV:
+            # a libultra built another way (Mario Tennis: its osJamMesg divides, its
+            # osSendMesg and osRecvMesg do not): the ring index wraps by a compare,
+            # __osRestoreInt is a tail jump; validCount written, the ring read
+            mesg += [a for a, ft in f.items() if a not in mesg and 'div' not in ft.special and di in ft.calls and
+                     (ri in ft.calls or ri in ft.tails) and N.arg_r(a, 0, 8) and N.arg_w(a, 0, 8) and
+                     N.arg_r(a, 0, 16) and N.arg_r(a, 0, 20) and ft.size <= 0x200]
         for a in mesg:
             if N.arg_w(a, 1, 0) or any(k[0] == 1 and 'w' in v for k, v in f[a].arg.items()):
                 N.one([a], 'osRecvMesg', 'queue at arg0: validCount, msgCount, first; stores the message at *arg1')
+            elif 'div' not in f[a].special and N.arg_w(a, 0, 12) and N.arg_r(a, 0, 4) and not N.arg_r(a, 0, 0):
+                # arg1 spilled and reloaded (Mario Tennis): advances `first`, wakes the fullqueue (+4)
+                N.one([a], 'osRecvMesg', 'queue at arg0: takes from `first`, wakes a sender (no divide)')
             elif N.arg_w(a, 0, 12):
                 N.one([a], 'osJamMesg', 'queue at arg0: moves `first` back and puts the message there')
             else:

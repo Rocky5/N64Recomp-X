@@ -44,7 +44,7 @@ xbox/src/rt/ultra/   libultra's surface: thread, time, vi, pi (ROM reads, domain
                      (every save type), more2 (the TLB family, __osEnqueueAndYield), more3 (internals
                      N64Recomp leaves bodiless)
 tests/xbox/          the host tests' C
-docs/look/           baseline shots: the loading screen (xemu, STILL); the BACK menu card, Paks and Controls pages (host);
+docs/look/           baseline shots: the loading screen (xemu, STILL; the deep-space card, host: loading-space-host.png); the BACK menu card, Paks and Controls pages (host);
                      the app's screens (app-*.png, its fake n64rx); logo/ (the mark, mono, lockups)
 ```
 
@@ -53,10 +53,14 @@ docs/look/           baseline shots: the loading screen (xemu, STILL); the BACK 
 1. `xhw_main.c` `main_body`: RAM lock, E:, `boot.log`, previous exit, code
    check, watchdog, clock.
 2. `xhw_splash_show`: `XVideoSetMode(640, 480, 32)` and the loading screen's
-   thread (level 9: the aurora, sparks, wordmark, game card, stage line,
-   bar, video line).
-3. The controllers come up (SDL, USB; ~1.5 s) behind it; the BACK window
-   starts.
+   thread (level 9, at most a frame every 33 ms and at least 12 ms asleep:
+   the deep-space title card, `xhw_splash_draw.c`: the cached sky, stars,
+   the title and the ROM's chips, the stage and its step, the bar, the
+   footer's hints); `xrc_splash_early` puts the title up at once.
+3. The controllers come up (SDL, USB; 1.5-3 s) behind it; the hold window
+   starts (L + R safe video, L + R + START and the defaults, BACK the BACK
+   menu before the game: `xrc_menu_preboot`, after the stages, before the
+   video mode is set).
 4. `xrc_boot` (`rt/boot.c`): `settings.ini`, the video line, then no game
    (a card), the test pack (its checks on a card), or a game:
    - **the ROM** (`xhw_rom.c`): `default.xbe`'s own `$ROM` section, found in

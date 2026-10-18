@@ -82,8 +82,9 @@ python tools/xbox/make_test_rom.py build-host/test/test.z64
 
 | | |
 |---|---|
-| hold BACK while it loads | safe video: this boot runs 480i 4:3, and it is saved |
-| hold BACK + START | safe video and the default settings |
+| hold L + R (both triggers) while it loads | safe video: this boot runs 480i 4:3, and it is saved |
+| hold L + R + START | safe video and the default settings |
+| hold BACK while it loads | the settings menu opens before the game starts |
 | BACK (a tap) | the port's settings menu, over the paused game (video, widescreen, volume, controllers, Controller Paks per port) |
 | BACK + WHITE | a screenshot (test builds, or with screenshots on) |
 | L + R + BACK + BLACK | back to the dashboard, anywhere |

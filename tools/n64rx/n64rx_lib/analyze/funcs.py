@@ -12,12 +12,14 @@ reachable instruction; then the gaps between functions inside the code are
 tried as functions, and words in the segment's data that point at the
 start of such a gap. The result is what N64Recomp needs: contiguous,
 non-overlapping functions, each sized to its last instruction."""
+import os
 from dataclasses import dataclass, field
 
 from .mips import Ins, RA
 
 MAX_FUNC = 0x10000          # a function larger than this is a walk gone wrong
 INTRA_J = 0x2000            # a j this close and not onto a known start stays in the function
+WALK_LATER = os.environ.get('N64RX_J_LATER', '1') != '0'   # a far j decided after the walk (kill switch)
 
 
 @dataclass
@@ -277,7 +279,17 @@ def walk(img, start, starts):
     `starts`: known function starts (a j onto one is a tail call)."""
     f = Func(start, start + 4)
     seen, todo = set(), [start]
-    while todo:
+    later = set()   # j targets past the end so far: decided once the rest is walked
+    while True:
+        if not todo:
+            # a j forward stays in the function when the function reaches that
+            # far anyway: the end is only known once every branch is walked
+            # (Mario Golf's 19 KB function jumps 0x4000 ahead before the
+            # branches that reach there are walked)
+            todo = [t for t in sorted(later) if t not in seen and t < f.end + INTRA_J]
+            later.difference_update(todo)
+            if not todo:
+                break
         pc = todo.pop()
         run = []
         while pc not in seen:
@@ -321,6 +333,8 @@ def walk(img, start, starts):
                     t = ins.target
                     if t not in starts and start <= t < f.end + INTRA_J:
                         todo.append(t)
+                    elif t not in starts and t > start and WALK_LATER:
+                        later.add(t)
                     else:
                         f.tails.add(t)
                     break
@@ -340,6 +354,7 @@ def walk(img, start, starts):
             if ins.is_eret:
                 break
             pc = nxt
+    f.tails.update(later)
     return f
 
 

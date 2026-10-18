@@ -5,7 +5,8 @@
 ```sh
 python tools/xbox/rom_leak_check.py     # the tree holds nothing from a ROM
 python tools/xbox/test_pad_combo.py     # the exit-combo detector (xhw_combo.c's core)
-python tools/xbox/test_splash.py        # the loading screen's layout, palette, STILL (needs nxdk's font)
+python tools/xbox/test_splash.py        # the loading screen's layout, palette, STILL, the holds' lines, titles on two lines (needs nxdk's font)
+python tools/xbox/make_fonts.py         # (not a test) Sora -> xbox/src/hw/xhw_fonts.inc, after a size or weight change
 python tools/xbox/test_settings.py      # settings.ini parse and format
 python tools/xbox/test_n64rx.py         # the tool: ROMs, packs, messages, cache, output folder, doctor, CLI
 python tools/xbox/test_compat.py        # docs/compat.md's tiers against n64rx's table
@@ -202,8 +203,9 @@ BLACK UP DOWN LEFT RIGHT`, triggers `L R`, sticks `SL SR SU SD CL CR CU CD`,
 
 | script | expect |
 |---|---|
-| `t300 BACK for 1500` | `[SETTINGS] BACK held at boot: 480i 4:3 (saved)` |
-| `t300 BACK START for 1500` | `[SETTINGS] reset at boot (BACK + START): defaults` |
+| `t300 L R for 1500` | `[SETTINGS] L + R held at boot: 480i 4:3 (saved)` |
+| `t300 L R START for 1500` | `[SETTINGS] reset at boot (L + R + START): defaults` |
+| `t300 BACK for 1500` | `[MENU] before the game (BACK held at boot)`, then the menu's rows; B: `[MENU] closed before the game` (`build-host/scen/preboot`: Texture filter changed, saved, the game starts; `build-host/preboot-shot.sh` with `-DXHW_SPLASH_DUMP` dumps the menu over the screen) |
 | `t800 L R BACK BLACK for 300` | `[PAD] port 1: L + R + BACK + BLACK`; next boot: `previous exit: quit to the dashboard: ...` |
 | `t6000 L R BACK BLACK for 300` | the same from the "No game built in" card |
 | `t800 L R BACK WHITE for 300` | `[PAD] port 1: L + R + BACK + WHITE`, a restart; next boot: `previous exit: restart: ...` |
@@ -233,7 +235,11 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXHW_NO_SPLASH` | off | no loading screen: straight to the mode switch (the controllers still get 1.5 s) |
 | `-DXHW_SPLASH_MS=<n>` | 2000 | the loading screen's minimum hold |
 | `-DXHW_SPLASH_STILL=1` | 0 | background frozen, wordmark settled, no highlight: comparable shots |
-| `-DXHW_SPLASH_DUMP` | off | `[FBDUMP]` of the loading screen as it ends, and of a card |
+| `-DXHW_SPLASH_DUMP` | off | `[FBDUMP]` of the loading screen as it ends, of a card, and of the menu before the game |
+| `-DXHW_SPLASH_CLASSIC=1` | 0 | the first loading screen (unscii, aurora) instead of the deep-space title card |
+| `-DXHW_SPLASH_MENU=0` | 1 | BACK held at boot does nothing (no menu before the game) |
+| `N64RX_J_LATER=0` | 1 | the analyser decides a far `j` at once (a tail call) instead of after the walk |
+| `N64RX_MESG_NODIV=0` | 1 | the message-queue rules want IDO's divide (no compare-wrapped osSendMesg/osRecvMesg) |
 | `-DXRC_COMBOS=0` | 1 | no exit combos (diagnosis builds only) |
 | `-DXRC_COMBO_WATCHDOG=0` | 1 | no last-resort combo look from the watchdog |
 | `-DXRC_GPR32=1` | per pack | 32-bit registers (n64rx sets it from the scan or the pack) |

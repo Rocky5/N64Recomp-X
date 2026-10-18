@@ -377,6 +377,26 @@ static void log_header(const xrom_info* info) {
              order_name(info->order));
 }
 
+/* the title card's chips (PLAN.md 5.5): the header's code, region and
+ * revision; the size and where the ROM is */
+static void rom_chips(const xrom_info* info) {
+    static const struct { char c; const char* name; } k_region[] = {
+        { 'E', "USA" }, { 'J', "Japan" }, { 'P', "Europe" }, { 'U', "Australia" }, { 'D', "Germany" },
+        { 'F', "France" }, { 'I', "Italy" }, { 'S', "Spain" }, { 'X', "Europe" }, { 'Y', "Europe" },
+        { 'N', "Canada" }, { 'A', "Asia" }, { 'C', "China" }, { 'K', "Korea" }, { 'B', "Brazil" },
+    };
+    const char* rn = NULL;
+    char id[40], where[40];
+    size_t i;
+    for (i = 0; i < sizeof k_region / sizeof k_region[0]; i++)
+        if (k_region[i].c == (char)info->region) rn = k_region[i].name;
+    if (rn) snprintf(id, sizeof id, "%s Â· %s Â· 1.%u", info->code, rn, (unsigned)info->version);
+    else snprintf(id, sizeof id, "%s Â· 1.%u", info->code, (unsigned)info->version);
+    snprintf(where, sizeof where, "%u MB Â· %s", (unsigned)((info->size + (1u << 20) - 1) >> 20),
+             s_inside ? "built into this XBE" : "beside this XBE");
+    xhw_splash_rom(id, where, 0);
+}
+
 /* the SHA-1 in s_info against the pack's: a card, or the verified line */
 static void hash_verdict(void) {
     xrom_info* info = &s_info;
@@ -389,6 +409,7 @@ static void hash_verdict(void) {
         fail_card(info, "Bad or modified ROM dump");
     }
     xhw_logf("[ROM] verified: %s %s, SHA-1 ok", s_target.title, info->label);
+    xhw_splash_rom(NULL, NULL, 1);
 }
 
 /* A ROM for the page cache: read once through a small buffer, normalised a
@@ -400,7 +421,7 @@ static void stream_check(HANDLE h, uint32_t size, xsha1_ctx* sha) {
     uint32_t done = 0;
     char stage[64];
     if (!buf) xhw_fatal("Out of memory", "Can't allocate the ROM's read buffer.");
-    snprintf(stage, sizeof stage, "Checking the ROM (%u MB, SHA-1)", (unsigned)((size + (1u << 20) - 1) >> 20));
+    snprintf(stage, sizeof stage, "Verifying the ROM (%u MB, SHA-1)", (unsigned)((size + (1u << 20) - 1) >> 20));
     xhw_splash_stage(stage);
     xhw_splash_progress(0.0f);
     xsha1_init(sha);
@@ -421,6 +442,7 @@ static void stream_check(HANDLE h, uint32_t size, xsha1_ctx* sha) {
             xrom_normalise(buf, got, info->order);
             xrom_parse_header(buf, info);
             log_header(info);
+            rom_chips(info);
             if (xrom_check_header(info, &s_target) != XROM_OK) {
                 free(buf);
                 CloseHandle(h);
@@ -522,7 +544,8 @@ const uint8_t* xhw_rom_load_verified(const xrom_target* target, xrom_info* out) 
     buf = (uint8_t*)malloc(size);
     if (!buf) xhw_fatal("Out of memory", "Can't allocate the ROM's buffer.");
     xhw_commit(buf, size);
-    snprintf(stage, sizeof stage, "Reading ROM (%u MB)", (unsigned)((size + (1u << 20) - 1) >> 20));
+    snprintf(stage, sizeof stage, s_inside ? "Reading the ROM from this XBE (%u MB)" : "Reading the ROM (%u MB)",
+             (unsigned)((size + (1u << 20) - 1) >> 20));
     xhw_splash_stage(stage);
     xhw_splash_progress(0.0f);
     t0 = xhw_time_us();
@@ -543,10 +566,11 @@ const uint8_t* xhw_rom_load_verified(const xrom_target* target, xrom_info* out) 
     xrom_normalise(buf, size, info->order);
     xrom_parse_header(buf, info);
     log_header(info);
+    rom_chips(info);
     if (xrom_check_header(info, &s_target) != XROM_OK)
         fail_card(info, info->verdict == XROM_WRONG_REGION ? "Another release of the game" : "Not the right game");
 
-    xhw_splash_stage("Checking the ROM (SHA-1)");
+    xhw_splash_stage("Verifying the ROM (SHA-1)");
     xsha1_init(&sha);
     for (done = 0; done < size; done += CHUNK) {
         xsha1_update(&sha, buf + done, size - done < CHUNK ? size - done : CHUNK);

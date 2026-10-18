@@ -179,6 +179,12 @@ __attribute__((weak)) void xrc_boot(void) {
     xhw_error_card("No game built in", lines, 30);
 }
 
+/* The runtime's first words on the loading screen (boot.c): the game's
+ * title on the very first frame, before the controllers come up (1.6 s on
+ * red), so it never pops in late. A weak default does nothing. */
+void xrc_splash_early(void);
+__attribute__((weak)) void xrc_splash_early(void) {}
+
 static void main_body(void* arg) {
     (void)arg;
     xhw_ram_lock64();   /* before anything allocates (PLAN.md D2) */
@@ -202,6 +208,7 @@ static void main_body(void* arg) {
     xhw_mem_log("boot");
     xhw_autopad_load();
     xhw_splash_show();
+    xrc_splash_early();
     {   /* the controllers behind the loading screen: SDL and USB take a while
          * to come up (1.4 s in xemu); the screen animates meanwhile and its
          * BACK window counts from here (xhw_splash_pads_up) */

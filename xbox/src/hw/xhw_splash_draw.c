@@ -30,6 +30,8 @@
  * is drawn whole into a cached buffer and copied out in rows by the caller
  * (the framebuffer is write-combined: never read back). */
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -276,7 +278,12 @@ const char* xhw_splash_hold_text(int hold, int holding) {
     int h = holding > hold ? holding : hold;
     if (h >= XHW_HOLD_SAFE_RESET) return "Safe video and default settings";
     if (h == XHW_HOLD_SAFE) return "Safe video: this boot runs 480i 4:3 and saves it";
-    return "Hold BACK for 480i (safe video)";
+    return "Hold L + R for 480i (safe video)";
+}
+
+const char* xhw_splash_settings_text(int settings) {
+    return settings >= 2 ? "Settings open before the game starts" : settings ? "Keep holding for settings"
+                                                                             : "Hold BACK for settings";
 }
 
 static void wordmark(uint32_t* fb, int pitch, const xhw_splash_state* s) {
@@ -345,7 +352,7 @@ static void bar(uint32_t* fb, int pitch, const xhw_splash_state* s) {
     }
 }
 
-void xhw_splash_render(uint32_t* fb, int pitch, const xhw_splash_state* s) {
+static void classic_render(uint32_t* fb, int pitch, const xhw_splash_state* s) {
     int layers = s->layers ? s->layers : XHW_SPLASH_ALL;
     sin_init();
     if (layers & XHW_SPLASH_BG) {
@@ -383,6 +390,760 @@ void xhw_splash_render(uint32_t* fb, int pitch, const xhw_splash_state* s) {
         text_c(fb, pitch, xhw_splash_hold_text(s->hold, s->holding), VIDEO_Y + 20, 1, col);
     }
     if (s->video_note[0]) text_c(fb, pitch, s->video_note, VIDEO_Y + 40, 1, rgb(220, 200, 120));
+}
+
+/* ---- the deep-space title card (PLAN.md 5.5; the maintainer's pick of
+ * 2026-10-18, "A2" of the mockups) -------------------------------------
+ *
+ *   sky         a radial navy, three nebula clouds (violet, a cool magenta,
+ *               teal) breathing and drifting slowly, computed at 160x120
+ *               and upscaled like the aurora; ~120 stars drifting left at
+ *               three depths and twinkling, each two lines tall (a 1-line
+ *               dot twitters at 480i); a small constellation top right; a
+ *               shooting star every few seconds
+ *   planet      a large planet's limb across the bottom with a blue rim of
+ *               atmosphere (static: drawn once into a cached layer)
+ *   top row     "TECHPROGABE PRESENTS" (the family's wordmark, now a label),
+ *               the N64Recomp-X mark and name right: the platform, never
+ *               the game's art
+ *   title       "NOW STARTING", the game's title in Sora Bold with a soft
+ *               glow, chips: the ROM's code, region and revision; its size
+ *               and where it is (inside this XBE or beside it); "SHA-1
+ *               verified" once it is
+ *   progress    the stage label, "step n of 4", a slim bar with a glowing
+ *               head
+ *   footer      the video mode; "Hold L R for 480i" (safe video); "Hold
+ *               BACK for settings" (the BACK menu before the game starts);
+ *               what a hold has latched (maintainer, 2026-10-18: the
+ *               triggers are safe video, BACK the menu, both held)
+ *
+ * Card mode: the title is the card's, the lines below it, the footer line.
+ * The type is Sora (SIL OFL 1.1), baked by tools/xbox/make_fonts.py into
+ * 4-bit coverage (xhw_fonts.inc). -DXHW_SPLASH_CLASSIC=1 draws the earlier
+ * unscii card instead. */
+typedef struct {
+    uint8_t w, h;
+    int8_t x, y;      /* the box against the pen on the baseline */
+    uint16_t adv;     /* quarter pixels */
+    uint32_t off;
+} xf_glyph;
+typedef struct {
+    int size, ascent, descent;
+    const xf_glyph* g;
+    const uint8_t* bits;
+} xf_font;
+#include "xhw_fonts.inc"
+
+#ifndef XHW_SPLASH_CLASSIC
+#define XHW_SPLASH_CLASSIC 0
+#endif
+
+static const xf_font* const k_faces[] = { &xf_label, &xf_body, &xf_stage, &xf_title2, &xf_title };
+
+/* the next codepoint of a UTF-8 string (Latin-1 is all the faces hold; a
+ * byte that is not UTF-8 is taken as Latin-1) */
+static int utf8_next(const char** sp) {
+    const unsigned char* s = (const unsigned char*)*sp;
+    int c = *s;
+    if (c >= 0xC0 && c < 0xE0 && (s[1] & 0xC0) == 0x80) {
+        c = ((c & 0x1F) << 6) | (s[1] & 0x3F);
+        *sp += 2;
+    } else if (c >= 0xE0 && c < 0xF0 && (s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80) {
+        c = ((c & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
+        *sp += 3;
+    } else {
+        *sp += 1;
+    }
+    return c;
+}
+
+static const xf_glyph* xf_get(const xf_font* f, int c) {
+    if (c == 0x2019 || c == 0x2018) c = '\'';
+    if (c == 0x2013 || c == 0x2014) c = '-';
+    if (c < 32 || c > 255) c = '?';
+    return &f->g[c - 32];
+}
+
+/* width in pixels, `track` extra pixels after every glyph but the last */
+static int xf_width(const xf_font* f, const char* s, int track) {
+    int q = 0, n = 0;
+    while (*s) {
+        q += xf_get(f, utf8_next(&s))->adv;
+        n++;
+    }
+    return (q + 2) / 4 + (n > 1 ? (n - 1) * track : 0);
+}
+
+int xhw_splash_face_width(int face, const char* utf8, int track) {
+    return xf_width(k_faces[face < 0 || face > XHW_FACE_TITLE ? 0 : face], utf8, track);
+}
+
+/* blend col over *p at coverage a (0..255) */
+static void blend(uint32_t* p, uint32_t col, int a) {
+    uint32_t c = *p;
+    if (a <= 0) return;
+    if (a >= 255) {
+        *p = col | 0xFF000000u;
+        return;
+    }
+    *p = 0xFF000000u | ((uint32_t)((R_(col) * a + R_(c) * (256 - a)) >> 8) << 16) |
+         ((uint32_t)((G_(col) * a + G_(c) * (256 - a)) >> 8) << 8) | (uint32_t)((B_(col) * a + B_(c) * (256 - a)) >> 8);
+}
+
+/* additive, clamped (glows, stars) */
+static void add(uint32_t* p, int r, int g, int b) {
+    uint32_t c = *p;
+    r += R_(c), g += G_(c), b += B_(c);
+    *p = rgb(r, g, b);
+}
+
+/* a string with its pen starting at x, its baseline at y; alpha 0..256; returns the end x */
+static int xf_draw(uint32_t* fb, int pitch, const xf_font* f, const char* s, int x, int y, uint32_t col, int track,
+                   int alpha) {
+    int q = x * 4;
+    while (*s) {
+        const xf_glyph* g = xf_get(f, utf8_next(&s));
+        int gx = (q + 2) / 4 + g->x, gy = y + g->y, i, j, rowb = (g->w + 1) / 2;
+        const uint8_t* b = f->bits + g->off;
+        for (j = 0; j < g->h; j++) {
+            int py = gy + j;
+            if (py < 0 || py >= s_clip_h) continue;
+            for (i = 0; i < g->w; i++) {
+                int px = gx + i, v = b[j * rowb + (i >> 1)];
+                v = (i & 1) ? v & 15 : v >> 4;
+                if (!v || px < 0 || px >= s_clip_w) continue;
+                blend(fb + (size_t)py * (size_t)pitch + px, col, v * 17 * alpha >> 8);
+            }
+        }
+        q += g->adv + track * 4;
+    }
+    return (q + 2) / 4;
+}
+
+/* coverage of a filled rounded rectangle, antialiased at the corners */
+static void rrect(uint32_t* fb, int pitch, int x, int y, int w, int h, int r, uint32_t col, int alpha) {
+    int i, j;
+    for (j = 0; j < h; j++) {
+        int py = y + j;
+        if (py < 0 || py >= s_clip_h) continue;
+        for (i = 0; i < w; i++) {
+            int px = x + i, a = alpha, dx = 0, dy = 0;
+            if (px < 0 || px >= s_clip_w) continue;
+            if (i < r) dx = r - i;
+            else if (i >= w - r) dx = i - (w - r) + 1;
+            if (j < r) dy = r - j;
+            else if (j >= h - r) dy = j - (h - r) + 1;
+            if (dx && dy) {   /* in a corner: the distance to its centre, in 1/16 px */
+                int d2 = (dx * 16 - 8) * (dx * 16 - 8) + (dy * 16 - 8) * (dy * 16 - 8), rr = r * 16;
+                if (d2 >= (rr + 8) * (rr + 8)) continue;
+                if (d2 > (rr - 8) * (rr - 8)) {
+                    int d = (int)__builtin_sqrtf((float)d2);
+                    a = a * (rr + 8 - d) / 16;
+                }
+            }
+            blend(fb + (size_t)py * (size_t)pitch + px, col, a);
+        }
+    }
+}
+
+/* an antialiased line `wid` pixels wide, round-ended */
+static void aa_line(uint32_t* fb, int pitch, float x0, float y0, float x1, float y1, float wid, uint32_t col, int alpha) {
+    int xa = (int)(x0 < x1 ? x0 : x1) - 3, xb = (int)(x0 > x1 ? x0 : x1) + 3;
+    int ya = (int)(y0 < y1 ? y0 : y1) - 3, yb = (int)(y0 > y1 ? y0 : y1) + 3, x, y;
+    float dx = x1 - x0, dy = y1 - y0, l2 = dx * dx + dy * dy, hw = wid * 0.5f;
+    for (y = ya; y <= yb; y++) {
+        if (y < 0 || y >= s_clip_h) continue;
+        for (x = xa; x <= xb; x++) {
+            float px = x + 0.5f - x0, py = y + 0.5f - y0, t = l2 > 0 ? (px * dx + py * dy) / l2 : 0, ex, ey, d;
+            if (x < 0 || x >= s_clip_w) continue;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            ex = px - t * dx, ey = py - t * dy;
+            d = __builtin_sqrtf(ex * ex + ey * ey) - hw;
+            if (d >= 0.5f) continue;
+            blend(fb + (size_t)y * (size_t)pitch + x, col, d <= -0.5f ? alpha : (int)((0.5f - d) * (float)alpha));
+        }
+    }
+}
+
+static void disc(uint32_t* fb, int pitch, float cx, float cy, float r, uint32_t col, int alpha) {
+    aa_line(fb, pitch, cx, cy, cx, cy, 2 * r, col, alpha);
+}
+
+/* ---- the sky at 160x120 ---- */
+static const struct {
+    int cx, cy, rx, ry;   /* 640x480 pixels */
+    int cs, sn;           /* the ellipse's rotation, Q14 */
+    int r, g, b, a;       /* colour, strength /256 */
+    int drift, period;    /* px, ms */
+} k_cloud[3] = {
+    { 140, 300, 280, 150, 15582, -5063, 120, 80, 230, 112, 14, 23000 },   /* violet, turned -18 degrees */
+    { 370, 140, 190, 100, 15897, 3964, 200, 90, 220, 52, 10, 31000 },    /* cool magenta, +14 */
+    { 590, 60, 230, 140, 16384, 0, 40, 190, 170, 80, 12, 27000 },        /* teal */
+};
+
+static void space_sky(uint32_t t_ms) {
+    int x, y, i;
+    int cx[3], cy[3], amp[3];
+    for (i = 0; i < 3; i++) {
+        int ph = (int)((t_ms % (uint32_t)k_cloud[i].period) * (uint32_t)SIN_N / (uint32_t)k_cloud[i].period);
+        cx[i] = k_cloud[i].cx + ((sinq(ph) * k_cloud[i].drift) >> 14);
+        cy[i] = k_cloud[i].cy + ((sinq(ph + SIN_N / 4) * k_cloud[i].drift / 2) >> 14);
+        amp[i] = k_cloud[i].a * (240 + ((sinq(ph * 2 + i * 300) * 24) >> 14)) >> 8;   /* breathing, +-10 % */
+    }
+    for (y = 0; y < LH; y++) {
+        for (x = 0; x < LW; x++) {
+            int px = x * 4 + 2, py = y * 4 + 2, r, g, b;
+            /* the base: radial from (20 %, 0), 130 % x 100 %: #10284a -> #070f24 at 45 % -> #02040c */
+            int dx = (px - 128) * 1000 / 832, dy = py * 1000 / 480;
+            int d = (int)__builtin_sqrtf((float)(dx * dx + dy * dy));   /* 0..~1300 */
+            if (d < 450) r = 16 - 9 * d / 450, g = 40 - 25 * d / 450, b = 74 - 38 * d / 450;
+            else if (d < 1000) r = 7 - 5 * (d - 450) / 550, g = 15 - 11 * (d - 450) / 550, b = 36 - 24 * (d - 450) / 550;
+            else r = 2, g = 4, b = 12;
+            r <<= 8, g <<= 8, b <<= 8;
+            for (i = 0; i < 3; i++) {   /* each cloud: closest-side falloff, rotated */
+                int ex = px - cx[i], ey = py - cy[i];
+                int u = (ex * k_cloud[i].cs + ey * k_cloud[i].sn) >> 14, v = (ey * k_cloud[i].cs - ex * k_cloud[i].sn) >> 14;
+                int q = (u * 256 / k_cloud[i].rx) * (u * 256 / k_cloud[i].rx) + (v * 256 / k_cloud[i].ry) * (v * 256 / k_cloud[i].ry);
+                int k;
+                if (q >= 65536) continue;
+                k = 256 - (int)__builtin_sqrtf((float)q);   /* 1 - distance, 0..256 */
+                k = k * k >> 8;                             /* softer edge */
+                k = k * amp[i] >> 8;
+                r += k_cloud[i].r * k, g += k_cloud[i].g * k, b += k_cloud[i].b * k;
+            }
+            r >>= 8, g >>= 8, b >>= 8;
+            if (b < r) b = r;   /* the sky stays cool */
+            s_low[y][x][0] = (uint8_t)(r > 255 ? 255 : r);
+            s_low[y][x][1] = (uint8_t)(g > 255 ? 255 : g);
+            s_low[y][x][2] = (uint8_t)(b > 255 ? 255 : b);
+        }
+    }
+}
+
+static void space_background(uint32_t* fb, int pitch, uint32_t t_ms) {
+    static int16_t row0[W][3], row1[W][3];
+    int ly, x, k;
+    space_sky(t_ms);
+    widen(0, row1);
+    for (ly = 0; ly < LH; ly++) {
+        memcpy(row0, row1, sizeof row0);
+        widen(ly + 1, row1);
+        for (k = 0; k < 4; k++) {
+            uint32_t* d = fb + (size_t)(ly * 4 + k) * (size_t)pitch;
+            for (x = 0; x < W; x++)
+                d[x] = 0xFF000000u | ((uint32_t)((row0[x][0] * (4 - k) + row1[x][0] * k) >> 2) << 16) |
+                       ((uint32_t)((row0[x][1] * (4 - k) + row1[x][1] * k) >> 2) << 8) |
+                       (uint32_t)((row0[x][2] * (4 - k) + row1[x][2] * k) >> 2);
+        }
+    }
+}
+
+/* ---- stars: three depths drifting left, twinkling; two lines tall ---- */
+#define STARS 120
+static int16_t s_horizon[W];   /* the planet's top edge per column, less its glow (planet_make) */
+
+static void stars(uint32_t* fb, int pitch, uint32_t t_ms) {
+    uint32_t seed = 0x51A7F00Du;
+    int i;
+    for (i = 0; i < STARS; i++) {
+        int x0, y, depth, bright, tw, x, a, cool;
+        seed = seed * 1664525u + 1013904223u;
+        x0 = (int)((seed >> 8) % W);
+        seed = seed * 1664525u + 1013904223u;
+        y = (int)((seed >> 8) % 400);
+        seed = seed * 1664525u + 1013904223u;
+        depth = (int)((seed >> 8) % 8);                      /* 0..7: 0..4 far, 5..6 mid, 7 near */
+        seed = seed * 1664525u + 1013904223u;
+        bright = depth == 7 ? 230 : depth >= 5 ? 170 : 70 + (int)((seed >> 8) % 90);
+        cool = (int)((seed >> 20) & 31);                     /* a touch of blue in some */
+        /* drift: 1, 2 or 4 px a second by depth */
+        x = x0 - (int)(t_ms * (uint32_t)(depth == 7 ? 4 : depth >= 5 ? 2 : 1) / 1000u);
+        x = ((x % W) + W) % W;
+        if (y + 2 >= s_horizon[x]) continue;   /* behind the planet */
+        tw = sinq((int)(t_ms * (uint32_t)(40 + i % 50) / 1000u) * 8 + i * 157);
+        a = bright * (220 + ((tw * 36) >> 14)) >> 8;         /* +-15 % */
+        {
+            int r = a - cool, g = a - cool / 2, b = a;
+            uint32_t* p = fb + (size_t)y * (size_t)pitch + x;
+            add(p, r, g, b);
+            add(p + pitch, r * 3 / 4, g * 3 / 4, b * 3 / 4);
+            if (depth == 7) {   /* the near ones: a soft cross */
+                if (x > 0) add(p - 1, r / 3, g / 3, b / 3), add(p + pitch - 1, r / 4, g / 4, b / 4);
+                if (x < W - 1) add(p + 1, r / 3, g / 3, b / 3), add(p + pitch + 1, r / 4, g / 4, b / 4);
+                if (y > 0) add(p - pitch, r / 4, g / 4, b / 4);
+                if (y + 2 < H) add(p + 2 * pitch, r / 5, g / 5, b / 5);
+            }
+        }
+    }
+}
+
+/* the constellation top right, and a shooting star now and then */
+static void constellation(uint32_t* fb, int pitch) {
+    static const float k_pt[6][3] = { { 448, 156, 2.2f }, { 492, 128, 2.6f }, { 536, 140, 2.0f },
+                                      { 568, 96, 3.0f },  { 602, 84, 2.0f },  { 580, 168, 2.2f } };
+    static const int k_link[5][2] = { { 0, 1 }, { 1, 2 }, { 2, 3 }, { 3, 4 }, { 2, 5 } };
+    int i;
+    for (i = 0; i < 5; i++)
+        aa_line(fb, pitch, k_pt[k_link[i][0]][0], k_pt[k_link[i][0]][1], k_pt[k_link[i][1]][0], k_pt[k_link[i][1]][1],
+                1.5f, rgb(127, 216, 200), 76);
+    for (i = 0; i < 6; i++) {
+        disc(fb, pitch, k_pt[i][0], k_pt[i][1], k_pt[i][2] + 2.5f, rgb(120, 170, 230), 40);
+        disc(fb, pitch, k_pt[i][0], k_pt[i][1], k_pt[i][2], i & 1 ? rgb(255, 255, 255) : rgb(207, 233, 255), 255);
+    }
+}
+
+/* a shooting star now and then: every 9 s, 700 ms, down to the left */
+static void shooting_star(uint32_t* fb, int pitch, uint32_t t_ms, int still) {
+    if (!still) {   /* every 9 s, 700 ms: from the upper right, down to the left */
+        uint32_t ph = t_ms % 9000u, n = t_ms / 9000u;
+        if (t_ms > 2500u && ph < 700u) {
+            float x0 = 430.0f + (float)(n * 53u % 120u), y0 = 30.0f + (float)(n * 31u % 40u);
+            float k = (float)ph / 700.0f, hx = x0 - 220.0f * k, hy = y0 + 98.0f * k;
+            int fade = ph < 100u ? (int)ph * 255 / 100 : ph > 550u ? (int)(700u - ph) * 255 / 150 : 255, s;
+            for (s = 0; s < 10; s++) {   /* the tail: ten pieces fading back */
+                float a = s / 10.0f, b = (s + 1) / 10.0f;
+                aa_line(fb, pitch, hx + 110.0f * a, hy - 49.0f * a, hx + 110.0f * b, hy - 49.0f * b, 2.0f - a,
+                        rgb(220, 235, 255), fade * (10 - s) / 10);
+            }
+            disc(fb, pitch, hx, hy, 1.6f, rgb(255, 255, 255), fade);
+        }
+    }
+}
+
+/* ---- the planet: cached, blended over the sky ---- */
+#define PL_TOP 336
+#define PL_CX 320
+#define PL_CY (372 + 740)
+#define PL_R 740
+static uint32_t s_planet[H - PL_TOP][W];   /* colour with its coverage in alpha */
+static int s_planet_ready;
+
+static uint32_t lerp3(int r0, int g0, int b0, int r1, int g1, int b1, int k) {   /* k 0..256 */
+    return rgb(r0 + (r1 - r0) * k / 256, g0 + (g1 - g0) * k / 256, b0 + (b1 - b0) * k / 256);
+}
+
+static void planet_make(void) {
+    int x, y;
+    for (y = PL_TOP; y < H; y++)
+        for (x = 0; x < W; x++) {
+            float dx = x + 0.5f - PL_CX, dy = y + 0.5f - PL_CY, d = __builtin_sqrtf(dx * dx + dy * dy) - PL_R;
+            uint32_t c = 0;
+            if (d < 0.5f) {   /* the body: lit from the top, #1a3d63 -> #0b1c36 -> #040a17 */
+                float gx = x + 0.5f - PL_CX, gy = y + 0.5f - 431.0f, gd = __builtin_sqrtf(gx * gx + gy * gy);
+                int cov = d <= -0.5f ? 255 : (int)((0.5f - d) * 255.0f);
+                if (gd < 90.0f) c = lerp3(26, 61, 99, 11, 28, 54, (int)(gd * 256.0f / 90.0f));
+                else if (gd < 270.0f) c = lerp3(11, 28, 54, 4, 10, 23, (int)((gd - 90.0f) * 256.0f / 180.0f));
+                else c = rgb(4, 10, 23);
+                if (d > -3.0f) {   /* the rim, bright just inside the edge */
+                    int k = (int)((3.0f + d) * 70.0f);
+                    c = rgb(R_(c) + 100 * k / 255, G_(c) + 190 * k / 255, B_(c) + 205 * k / 255);
+                }
+                c = (c & 0xFFFFFFu) | ((uint32_t)cov << 24);
+            } else if (d < 22.0f) {   /* the atmosphere's glow outside */
+                float k = 1.0f - d / 22.0f;
+                c = ((uint32_t)(k * k * 115.0f) << 24) | 0x5AC8FFu;
+            }
+            s_planet[y - PL_TOP][x] = c;
+        }
+    for (x = 0; x < W; x++) {
+        float dx = x + 0.5f - PL_CX;
+        s_horizon[x] = (int16_t)(PL_CY - __builtin_sqrtf((float)PL_R * PL_R - dx * dx) - 22.0f);
+    }
+    s_planet_ready = 1;
+}
+
+static void planet(uint32_t* fb, int pitch) {
+    int x, y;
+    if (!s_planet_ready) planet_make();
+    for (y = PL_TOP; y < H; y++) {
+        uint32_t* d = fb + (size_t)y * (size_t)pitch;
+        const uint32_t* s = s_planet[y - PL_TOP];
+        for (x = 0; x < W; x++)
+            if (s[x] >> 24) blend(&d[x], s[x], (int)(s[x] >> 24));
+    }
+}
+
+/* ---- the title's glow: its coverage blurred once per title ---- */
+#define GLOW_W 576
+#define GLOW_H 80
+#define GLOW_R 8
+static uint8_t s_glows[2][GLOW_H][GLOW_W];   /* two: a title on two lines */
+static char s_glow_for[2][64];
+static const xf_font* s_glow_face[2];
+static int s_glow_next;
+
+static void glow_make(uint8_t s_glow[GLOW_H][GLOW_W], const xf_font* f, const char* title) {
+    static uint32_t tmp[GLOW_H][GLOW_W];
+    static uint16_t acc[GLOW_H][GLOW_W];
+    int x, y, pass, sw = s_clip_w, sh = s_clip_h;
+    memset(tmp, 0, sizeof tmp);
+    s_clip_w = GLOW_W, s_clip_h = GLOW_H;
+    xf_draw(&tmp[0][0], GLOW_W, f, title, GLOW_R * 2, GLOW_H - 24, 0xFFFFFFu, 0, 256);
+    s_clip_w = sw, s_clip_h = sh;
+    for (y = 0; y < GLOW_H; y++)
+        for (x = 0; x < GLOW_W; x++) s_glow[y][x] = (uint8_t)(tmp[y][x] & 0xFF);
+    for (pass = 0; pass < 2; pass++) {   /* two box passes each way: about a gaussian */
+        for (y = 0; y < GLOW_H; y++) {
+            int sum = 0;
+            for (x = -GLOW_R; x < GLOW_W + GLOW_R; x++) {
+                int in = x + GLOW_R < GLOW_W ? s_glow[y][x + GLOW_R] : 0, out = x - GLOW_R - 1 >= 0 ? s_glow[y][x - GLOW_R - 1] : 0;
+                if (x + GLOW_R < 0) in = 0;
+                sum += in - out;
+                if (x >= 0 && x < GLOW_W) acc[y][x] = (uint16_t)(sum / (2 * GLOW_R + 1));
+            }
+        }
+        for (x = 0; x < GLOW_W; x++) {
+            int sum = 0;
+            for (y = -GLOW_R; y < GLOW_H + GLOW_R; y++) {
+                int in = y + GLOW_R < GLOW_H && y + GLOW_R >= 0 ? acc[y + GLOW_R][x] : 0;
+                int out = y - GLOW_R - 1 >= 0 ? acc[y - GLOW_R - 1][x] : 0;
+                sum += in - out;
+                if (y >= 0 && y < GLOW_H) s_glow[y][x] = (uint8_t)(sum / (2 * GLOW_R + 1));
+            }
+        }
+    }
+}
+
+/* the glow under a title whose pen starts at x with its baseline at y */
+static void glow(uint32_t* fb, int pitch, const xf_font* f, const char* title, int x, int y, int alpha) {
+    int gx0 = x - GLOW_R * 2, gy0 = y - (GLOW_H - 24), i, j, k0;
+    uint8_t (*s_glow)[GLOW_W];
+    for (k0 = 0; k0 < 2 && (s_glow_face[k0] != f || strcmp(s_glow_for[k0], title)); k0++) {}
+    if (k0 == 2) {
+        k0 = s_glow_next, s_glow_next ^= 1;
+        glow_make(s_glows[k0], f, title);
+        snprintf(s_glow_for[k0], sizeof s_glow_for[k0], "%s", title);
+        s_glow_face[k0] = f;
+    }
+    s_glow = s_glows[k0];
+    for (j = 0; j < GLOW_H; j++) {
+        int py = gy0 + j;
+        if (py < 0 || py >= s_clip_h) continue;
+        for (i = 0; i < GLOW_W; i++) {
+            int px = gx0 + i, k = s_glow[j][i];
+            if (!k || px < 0 || px >= s_clip_w) continue;
+            k = (k * 90 >> 8) * alpha >> 8;   /* rgba(127, 180, 255, 0.35) */
+            add(fb + (size_t)py * (size_t)pitch + px, 127 * k >> 8, 180 * k >> 8, 255 * k >> 8);
+        }
+    }
+}
+
+/* ---- the foreground ---- */
+#define SP_X0 48             /* the text's left and right edges */
+#define SP_X1 592
+#define SP_TOP_Y 48          /* baselines */
+#define SP_EYEBROW_Y 146
+#define SP_TITLE_Y 198
+#define SP_CHIP_Y 222        /* the chips' top */
+#define SP_CHIP_H 24
+#define SP_STAGE_Y 318
+#define SP_BAR_Y 330
+#define SP_BAR_H 6
+#define SP_NOTE_Y 388
+#define SP_FOOT_Y 428
+#define SP_LINES_Y 236
+#define SP_LINE_H 19
+
+/* 0..256: how far a part that appeared at t0 has faded in */
+static int appear(const xhw_splash_state* s, uint32_t t0, uint32_t dur) {
+    if (s->still || s->t_ms >= t0 + dur) return 256;
+    if (s->t_ms <= t0) return 0;
+    return (int)((s->t_ms - t0) * 256u / dur);
+}
+
+int xhw_splash_title_face(const char* utf8) {
+    return xf_width(&xf_title, utf8, 0) <= SP_X1 - SP_X0 ? XHW_FACE_TITLE : XHW_FACE_TITLE2;
+}
+
+/* a title too wide for the smaller face goes on two lines: broken after a
+ * colon when the first part fits, else at the last space that fits */
+int xhw_splash_title_lines(const char* t, char* l1, char* l2, int cap) {
+    int n = (int)strlen(t), i, cut = -1;
+    if (xhw_splash_title_face(t) == XHW_FACE_TITLE || xf_width(&xf_title2, t, 0) <= SP_X1 - SP_X0) {
+        snprintf(l1, (size_t)cap, "%s", t);
+        l2[0] = 0;
+        return 1;
+    }
+    for (i = n - 1; i > 0; i--) {
+        if (t[i] != ' ') continue;
+        snprintf(l1, (size_t)cap, "%.*s", i, t);
+        if (xf_width(&xf_title2, l1, 0) > SP_X1 - SP_X0) continue;
+        if (cut < 0) cut = i;
+        if (t[i - 1] == ':') {
+            cut = i;
+            break;
+        }
+    }
+    if (cut < 0) cut = n;
+    snprintf(l1, (size_t)cap, "%.*s", cut, t);
+    snprintf(l2, (size_t)cap, "%s", t[cut] ? t + cut + 1 : "");
+    return 2;
+}
+
+/* the X: the platform's mark beside its name */
+static void mark(uint32_t* fb, int pitch, int x, int cy) {
+    aa_line(fb, pitch, (float)x + 2, (float)cy - 5, (float)x + 12, (float)cy + 5, 2.4f, rgb(127, 216, 200), 255);
+    aa_line(fb, pitch, (float)x + 12, (float)cy - 5, (float)x + 2, (float)cy + 5, 2.4f, rgb(127, 216, 200), 255);
+}
+
+static void top_row(uint32_t* fb, int pitch, const xhw_splash_state* s) {
+    const char* name = s->version[0] ? s->version : "N64Recomp-X";
+    int nw = xf_width(&xf_label, name, 0);
+    xf_draw(fb, pitch, &xf_label, "TECHPROGABE PRESENTS", SP_X0, SP_TOP_Y, rgb(159, 179, 207), 3, 256);
+    xf_draw(fb, pitch, &xf_label, name, SP_X1 - nw, SP_TOP_Y, rgb(159, 179, 207), 0, 256);
+    mark(fb, pitch, SP_X1 - nw - 22, SP_TOP_Y - 4);
+}
+
+/* a chip: text on a rounded tint; returns its right edge */
+static int chip(uint32_t* fb, int pitch, int x, int dy, const char* t, int ok, int alpha) {
+    int w = xf_width(&xf_label, t, 0) + 20 + (ok ? 16 : 0), cy = SP_CHIP_Y + dy;
+    rrect(fb, pitch, x, cy, w, SP_CHIP_H, 6, ok ? rgb(127, 216, 200) : rgb(150, 175, 220), (ok ? 40 : 26) * alpha >> 8);
+    if (ok) {   /* the tick */
+        aa_line(fb, pitch, (float)x + 11, (float)cy + 12.5f, (float)x + 14, (float)cy + 15.5f, 2.0f,
+                rgb(159, 240, 224), 255 * alpha >> 8);
+        aa_line(fb, pitch, (float)x + 14, (float)cy + 15.5f, (float)x + 20, (float)cy + 8.5f, 2.0f,
+                rgb(159, 240, 224), 255 * alpha >> 8);
+    }
+    xf_draw(fb, pitch, &xf_label, t, x + 10 + (ok ? 16 : 0), cy + 16, ok ? rgb(159, 240, 224) : rgb(201, 214, 234),
+            0, alpha);
+    return x + w;
+}
+
+static void progress(uint32_t* fb, int pitch, const xhw_splash_state* s) {
+    float f = s->progress < 0 ? 0 : s->progress > 1 ? 1 : s->progress;
+    int step = s->step < 1 ? 1 : s->step > XHW_SPLASH_STEPS ? XHW_SPLASH_STEPS : s->step;
+    float all = s->shown > 0 ? s->shown : s->step ? ((float)(step - 1) + f) / (float)XHW_SPLASH_STEPS : f;
+    int bw = SP_X1 - SP_X0, fw = (int)(all * (float)bw), x, y;
+    char right[48];
+    if (s->stage[0]) xf_draw(fb, pitch, &xf_stage, s->stage, SP_X0, SP_STAGE_Y, rgb(238, 243, 251), 0, appear(s, s->t_stage, 180));
+    if (s->step) {
+        if (s->stage_ms[0]) snprintf(right, sizeof right, "%s  \xC2\xB7  step %d of %d", s->stage_ms, step, XHW_SPLASH_STEPS);
+        else snprintf(right, sizeof right, "step %d of %d", step, XHW_SPLASH_STEPS);
+    } else {
+        snprintf(right, sizeof right, "%s", s->stage_ms);
+    }
+    if (right[0])
+        xf_draw(fb, pitch, &xf_label, right, SP_X1 - xf_width(&xf_label, right, 0), SP_STAGE_Y, rgb(159, 179, 207), 0, 256);
+    rrect(fb, pitch, SP_X0, SP_BAR_Y, bw, SP_BAR_H, 3, rgb(255, 255, 255), 26);
+    if (fw > 0) {
+        /* the fill, #3ec9a7 -> #7fd8c8, with a soft glow round it */
+        for (y = -4; y < SP_BAR_H + 4; y++) {
+            uint32_t* row = fb + (size_t)(SP_BAR_Y + y) * (size_t)pitch + SP_X0;
+            int dy = y < 0 ? -y : y >= SP_BAR_H ? y - SP_BAR_H + 1 : 0;
+            for (x = 0; x < fw && x < bw; x++) {
+                int k = x * 256 / (bw > 0 ? bw : 1);
+                int r = 62 + (127 - 62) * k / 256, g = 201 + (216 - 201) * k / 256, b = 167 + (200 - 167) * k / 256;
+                if (dy) {
+                    int a = (5 - dy) * 14;
+                    if (a > 0) add(&row[x], r * a >> 8, g * a >> 8, b * a >> 8);
+                } else {
+                    int a = 255;
+                    if (x == 0 || x == fw - 1) a = 170;
+                    if ((y == 0 || y == SP_BAR_H - 1) && (x < 2 || x >= fw - 2)) a = 90;
+                    blend(&row[x], rgb(r, g, b), a);
+                }
+            }
+        }
+        /* the head: a white point with a glow, pulsing a little */
+        {
+            int pulse = s->still ? 0 : sinq((int)(s->t_ms / 2u)) * 10 >> 14;
+            float hx = (float)(SP_X0 + fw), hy = (float)SP_BAR_Y + SP_BAR_H * 0.5f;
+            disc(fb, pitch, hx, hy, 9.0f, rgb(160, 240, 225), 40 + pulse);
+            disc(fb, pitch, hx, hy, 6.5f, rgb(160, 240, 225), 80 + pulse * 2);
+            disc(fb, pitch, hx, hy, 5.0f, rgb(255, 255, 255), 255);
+        }
+    }
+}
+
+/* a keycap: light, the label dark; returns its right edge */
+static int key(uint32_t* fb, int pitch, int x, const char* t, int lit) {
+    int w = xf_width(&xf_label, t, 0) + 14;
+    rrect(fb, pitch, x, SP_FOOT_Y - 14, w, 19, 5, lit ? rgb(255, 230, 150) : rgb(238, 243, 251), 255);
+    xf_draw(fb, pitch, &xf_label, t, x + 7, SP_FOOT_Y, rgb(11, 23, 48), 0, 256);
+    return x + w;
+}
+
+/* "Hold " key " for 480i": its width, or drawn when fb */
+static int hint(uint32_t* fb, int pitch, int x, const char* const* keys, int nkeys, const char* tail, uint32_t col, int lit) {
+    int i, x0 = x;
+    uint32_t* f = fb;
+    if (!f) {   /* measuring */
+        x += xf_width(&xf_body, "Hold ", 0);
+        for (i = 0; i < nkeys; i++) x += xf_width(&xf_label, keys[i], 0) + 14 + (i + 1 < nkeys ? 4 : 0);
+        return x - x0 + xf_width(&xf_body, tail, 0) + 6;
+    }
+    x = xf_draw(f, pitch, &xf_body, "Hold ", x, SP_FOOT_Y, col, 0, 256);
+    for (i = 0; i < nkeys; i++) x = key(f, pitch, x, keys[i], lit) + (i + 1 < nkeys ? 4 : 0);
+    return xf_draw(f, pitch, &xf_body, tail, x + 6, SP_FOOT_Y, col, 0, 256) - x0;
+}
+
+/* "Video: 720p 16:9 (why)." -> "720p 16:9" */
+static void video_mode(const char* line, char* out, size_t cap) {
+    const char* p = line;
+    size_t n = 0;
+    if (!strncmp(p, "Video: ", 7)) p += 7;
+    while (p[n] && p[n] != '(' && p[n] != '.' && n + 1 < cap) n++;
+    while (n && p[n - 1] == ' ') n--;
+    memcpy(out, p, n);
+    out[n] = 0;
+}
+
+static void footer(uint32_t* fb, int pitch, const xhw_splash_state* s) {
+    static const char* const k_back[1] = { "BACK" }, *const k_lr[2] = { "L", "R" };
+    int h = s->holding > s->hold ? s->holding : s->hold;
+    uint32_t dim = rgb(201, 214, 234);
+    if (h != XHW_HOLD_NONE) {   /* what the triggers do, alone on the line, lit */
+        const char* t = xhw_splash_hold_text(s->hold, s->holding);
+        int w = (xf_width(&xf_label, "L", 0) + 14) * 2 + 4 + 10 + xf_width(&xf_body, t, 0), x = (W - w) / 2;
+        x = key(fb, pitch, x, "L", 1) + 4;
+        x = key(fb, pitch, x, "R", 1) + 10;
+        xf_draw(fb, pitch, &xf_body, t, x, SP_FOOT_Y, s->hold ? rgb(255, 236, 150) : rgb(230, 220, 170), 0, 256);
+        return;
+    }
+    if (s->settings) {   /* BACK: the BACK menu comes before the game */
+        const char* t = xhw_splash_settings_text(s->settings);
+        int w = xf_width(&xf_label, "BACK", 0) + 14 + 10 + xf_width(&xf_body, t, 0), x = (W - w) / 2;
+        x = key(fb, pitch, x, "BACK", 1) + 10;
+        xf_draw(fb, pitch, &xf_body, t, x, SP_FOOT_Y, s->settings == 2 ? rgb(255, 236, 150) : rgb(230, 220, 170), 0, 256);
+        return;
+    }
+    {
+        char mode[32];
+        int x = SP_X0, rw;
+        video_mode(s->video, mode, sizeof mode);
+        if (mode[0]) {
+            x = xf_draw(fb, pitch, &xf_body, "Video: ", x, SP_FOOT_Y, dim, 0, 256);
+            xf_draw(fb, pitch, &xf_stage, mode, x, SP_FOOT_Y, rgb(238, 243, 251), 0, 256);
+        }
+        rw = hint(NULL, 0, 0, k_back, 1, "for settings", dim, 0);
+        hint(fb, pitch, SP_X1 - rw, k_back, 1, "for settings", dim, 0);
+        x = SP_X1 - rw - 22 - hint(NULL, 0, 0, k_lr, 2, "for 480i", dim, 0);
+        hint(fb, pitch, x, k_lr, 2, "for 480i", dim, 0);
+    }
+}
+
+/* the BACK menu's card over the screen, centred (before the game): the
+ * frame under it dimmed to 45 % as under a game; while it fades in the
+ * frame dims and the card rises 10 px */
+void xhw_splash_panel_over(uint32_t* fb, int pitch, const xhw_splash_state* s, int fade) {
+    int x0 = (W - XHW_PANEL_W) / 2, y0 = (H - XHW_PANEL_H) / 2 + (256 - fade) * 10 / 256, x, y;
+    int dim = 256 - (141 * fade >> 8);
+    if (!s->panel) return;
+    for (y = 0; y < H; y++) {
+        uint32_t* row = fb + (size_t)y * (size_t)pitch;
+        for (x = 0; x < W; x++) {
+            uint32_t c = row[x];
+            row[x] = 0xFF000000u | ((((c & 0xFF00FFu) * (uint32_t)dim) >> 8) & 0xFF00FFu) |
+                     ((((c & 0x00FF00u) * (uint32_t)dim) >> 8) & 0x00FF00u);
+        }
+    }
+    for (y = 0; y < XHW_PANEL_H; y++) {
+        const uint32_t* src = s->panel + (size_t)y * (size_t)s->panel_pitch;
+        uint32_t* d = fb + (size_t)(y0 + y) * (size_t)pitch + x0;
+        if (y0 + y >= H) break;
+        for (x = 0; x < XHW_PANEL_W; x++) {
+            int a = (int)(src[x] >> 24) * fade >> 8;
+            if (a) blend(&d[x], src[x], a);
+        }
+    }
+}
+
+
+/* The sky that does not move (the nebula, the constellation, the planet)
+ * is drawn once into a cache: the P3 draws it in about a tenth of a second,
+ * far too slow a frame (on red the loading screen starved the boot thread:
+ * the controllers took 10 s and the SHA-1 never finished). A frame copies
+ * the cache, then the stars, a shooting star and the text: a few ms. */
+static uint32_t* s_sky;
+
+void xhw_splash_free_cache(void) {
+    free(s_sky);
+    s_sky = NULL;
+}
+
+static void space_render(uint32_t* fb, int pitch, const xhw_splash_state* s) {
+    int layers = s->layers ? s->layers : XHW_SPLASH_ALL, y;
+    sin_init();
+    if (layers & XHW_SPLASH_BG) {
+        if (!s_sky && (s_sky = (uint32_t*)malloc((size_t)W * H * 4)) != NULL) {
+            space_background(s_sky, W, 0);
+            constellation(s_sky, W);
+            planet(s_sky, W);
+        }
+        if (s_sky) {
+            for (y = 0; y < H; y++) memcpy(fb + (size_t)y * (size_t)pitch, s_sky + (size_t)y * W, W * 4);
+        } else {   /* no room: drawn every frame */
+            space_background(fb, pitch, 0);
+            constellation(fb, pitch);
+            planet(fb, pitch);
+        }
+        stars(fb, pitch, s->still ? 0 : s->t_ms);
+        shooting_star(fb, pitch, s->t_ms, s->still);
+    } else {   /* the plain base (the host test's diff) */
+        for (y = 0; y < H; y++) fill(fb, pitch, 0, y, W, 1, rgb(4, 8, 20));
+    }
+    if (!(layers & XHW_SPLASH_FG)) return;
+    top_row(fb, pitch, s);
+    if (s->card) {
+        int i, face = xf_width(&xf_title2, s->card_title, 0) <= SP_X1 - SP_X0 ? 3 : 2;
+        int lw = 0;
+        xf_draw(fb, pitch, &xf_label, "CAN'T START", SP_X0, SP_EYEBROW_Y, rgb(255, 184, 107), 2, 256);
+        xf_draw(fb, pitch, k_faces[face], s->card_title, SP_X0, SP_TITLE_Y - 8, rgb(238, 243, 251), 0, 256);
+        for (i = 0; i < XHW_CARD_LINES; i++) {
+            int w = xf_width(&xf_body, s->card_lines[i], 0);
+            if (w > lw) lw = w;
+        }
+        for (i = 0; i < XHW_CARD_LINES; i++)
+            if (s->card_lines[i][0])
+                xf_draw(fb, pitch, lw <= SP_X1 - SP_X0 ? &xf_body : &xf_label, s->card_lines[i], SP_X0,
+                        SP_LINES_Y + i * SP_LINE_H, rgb(200, 210, 228), 0, 256);
+        if (s->card_footer)
+            xf_draw(fb, pitch, &xf_body, s->card_footer, (W - xf_width(&xf_body, s->card_footer, 0)) / 2, SP_FOOT_Y,
+                    rgb(159, 179, 207), 0, 256);
+        return;
+    }
+    if (s->card_title[0]) {
+        const xf_font* f = k_faces[xhw_splash_title_face(s->card_title)];
+        char l1[64], l2[64];
+        int lines = xhw_splash_title_lines(s->card_title, l1, l2, sizeof l1);
+        int ta = appear(s, s->t_title, 350), ra = appear(s, s->t_rom, 300), oa = appear(s, s->t_ok, 300);
+        int rise = (256 - ta) * (256 - ta) * 10 >> 16;   /* the title settles 10 px, eased */
+        int ty = SP_TITLE_Y - (f == &xf_title ? 0 : 8) - (lines == 2 ? 26 : 0) + rise, x = SP_X0, cy = lines == 2 ? 30 : 0;
+        xf_draw(fb, pitch, &xf_label, "NOW STARTING", SP_X0, SP_EYEBROW_Y, rgb(127, 216, 200), 2, ta);
+        glow(fb, pitch, f, l1, SP_X0, ty, ta);
+        xf_draw(fb, pitch, f, l1, SP_X0, ty, rgb(238, 243, 251), 0, ta);
+        if (lines == 2) {
+            glow(fb, pitch, f, l2, SP_X0, ty + 38, ta);
+            xf_draw(fb, pitch, f, l2, SP_X0, ty + 38, rgb(238, 243, 251), 0, ta);
+        }
+        if (s->rom_id[0]) x = chip(fb, pitch, x, cy, s->rom_id, 0, ra) + 8;
+        if (s->rom_where[0]) x = chip(fb, pitch, x, cy, s->rom_where, 0, ra) + 8;
+        if (s->rom_ok) chip(fb, pitch, x, cy, "SHA-1 verified", 1, oa);
+        else if (!s->rom_id[0] && s->card_sub[0])
+            xf_draw(fb, pitch, &xf_body, s->card_sub, SP_X0, SP_CHIP_Y + cy + 16, rgb(159, 179, 207), 0, 256);
+    }
+    progress(fb, pitch, s);
+    if (s->video_note[0])
+        xf_draw(fb, pitch, &xf_body, s->video_note, (W - xf_width(&xf_body, s->video_note, 0)) / 2, SP_NOTE_Y,
+                rgb(220, 200, 120), 0, 256);
+    footer(fb, pitch, s);
+    if (!s->still && s->t_ms < 400u) {   /* up from black, out of the dashboard */
+        int k = (int)(s->t_ms * 256u / 400u), x, y;
+        k = k * k >> 8;
+        for (y = 0; y < H; y++) {
+            uint32_t* row = fb + (size_t)y * (size_t)pitch;
+            for (x = 0; x < W; x++) {
+                uint32_t c = row[x];
+                row[x] = 0xFF000000u | ((((c & 0xFF00FFu) * (uint32_t)k) >> 8) & 0xFF00FFu) |
+                         ((((c & 0x00FF00u) * (uint32_t)k) >> 8) & 0x00FF00u);
+            }
+        }
+    }
+}
+
+void xhw_splash_render(uint32_t* fb, int pitch, const xhw_splash_state* s) {
+    if (XHW_SPLASH_CLASSIC) classic_render(fb, pitch, s);
+    else space_render(fb, pitch, s);
 }
 
 /* ---- the BACK menu's card (xhw_panel_render, PLAN.md 5.2) ----------------

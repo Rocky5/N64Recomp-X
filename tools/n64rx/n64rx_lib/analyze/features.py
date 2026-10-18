@@ -20,6 +20,7 @@ class Feat:
     start: int
     size: int
     calls: list = field(default_factory=list)   # targets in order
+    tails: set = field(default_factory=set)     # j out of the function (a tail call: GCC-built libultra, Mario Tennis)
     cop0: set = field(default_factory=set)      # ('mf'|'mt', reg)
     fcr: set = field(default_factory=set)
     cache: set = field(default_factory=set)     # cache op codes
@@ -76,6 +77,7 @@ def _mark(d, k, rw):
 
 def features(img, f):
     ft = Feat(f.start, f.end - f.start)
+    ft.tails = set(getattr(f, 'tails', ()))
     const = {0: 0}                 # reg -> value
     gload = {}                     # reg -> global the register's value was loaded from
     fwritten = set()

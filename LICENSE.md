@@ -44,7 +44,8 @@ SOFTWARE.
 | **Melee-X** (TechProGabe/Melee-X): the splash this loading screen is built on, the video mode selection, the NV2A code, the build tooling those files were carried from (each file's header says so) | `xbox/src/hw/` (`xhw_splash*.c`, `xhw_video.c`, `nv2a*.c`), `tools/xbox/` | Copyright (c) Gabe Conway; MIT, as relicensed by the author. Melee-X's Xbox code is GPL-3.0-or-later only because it builds on melee-pc, and none of melee-pc is used here |
 | **OpenCrossing-Xbox** (GabeConway/OpenCrossing-Xbox): the audio driver, crash reporter, code repair, RAM lock and clock code | `xbox/src/hw/` (`xhw_audio.c`, `xhw_crash.c`, `xhw_code_repair.c`, `xhw_ramlock.c`, `xhw_clock.c`) | MIT |
 | **Birdman64** (NoahVl/Birdman64, Copyright (c) 2026 Birdman64 contributors): the audio ABI that `asp_hle.c` ports | `xbox/src/hw/asp_hle.c`, the vectors in `tests/xbox/test_asp_hle.c` | MIT |
-| **unscii-16** (via nxdk's `hal/font_unscii_16.h`): the loading screen's and the overlay's font | included from nxdk at build time | public domain |
+| **unscii-16** (via nxdk's `hal/font_unscii_16.h`): the BACK menu's and the overlay's font | included from nxdk at build time | public domain |
+| **Sora** (`xbox/assets/fonts/Sora[wght].ttf`, Copyright 2019 The Sora Project Authors): the loading screen's type, rasterised by `tools/xbox/make_fonts.py` into `xbox/src/hw/xhw_fonts.inc` | the font file unmodified, and bitmaps made from it | SIL Open Font License 1.1 (`xbox/assets/fonts/OFL.txt`) |
 | **`xhw_sha1.c`**: SHA-1, written for Wings64-X | `xbox/src/hw/xhw_sha1.c` | public domain |
 | **nxdk** (XboxDev/nxdk): the SDK, pbkit, SDL, pdclib | not vendored; built by `tools/xbox/setup.sh` or in the SDK image | its own licenses |
 | **LLVM 21** | not vendored | Apache-2.0 WITH LLVM-exception |

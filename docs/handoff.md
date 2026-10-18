@@ -10,6 +10,14 @@ Each game's tier (Gold fully working, Silver playable, Experimental the
 rest; only a console run promotes) is in `docs/compat.md`; a console
 result here moves its row there in the same change.
 
+**Newest (2026-10-18, late):** the loading screen is the deep-space title
+card the maintainer approved (red `vsm12`, `vsm13`: Super Mario 64 boots
+through it, 6 ms a frame); the boot holds swapped (L + R safe video, BACK
+the BACK menu before the game); the analyser keeps far `j`s inside their
+function (six compile failures of s9) and names a libultra built without
+IDO's divide (Mario Tennis past its crash, to a stall). The entry at the
+end has the details. Mario Tennis is the maintainer's next priority.
+
 The newest state first; the entries below are the record, oldest first.
 "xemu" is the emulator (slot runs, test builds); "red" is the maintainer's
 console (480i: its dashboard allows no 480p or 720p). Red ran the
@@ -2050,3 +2058,49 @@ public, so the toolchain and the app can be downloaded; the toolchain's
 GPL parts (MSYS2) and their source offer; unsigned builds (Gatekeeper's
 right-click Open, SmartScreen); the portable exe unpacks to `%TEMP%` at
 every start (the zip does not).
+
+## 2026-10-18 (late): the deep-space loading screen, the holds swapped, Mario Golf's jumps, Mario Tennis's queues (console + xemu)
+
+Maintainer requests, in order: a new loading screen (four mockups; A with
+more space; A2 approved, then its console render approved); "hold
+triggers for settings: the same menu as BACK, before the game"; then
+"flip flop: L + R safe video, BACK the menu, both held"; the menu faster
+and nothing popping in; Mario Tennis working well (next round).
+
+| build | where | result |
+|---|---|---|
+| `vsm11` (2354cad07d90) | red | the first deep-space build: the loading screen starved the boot (controllers up in 10059 ms, the SHA-1 never ended, the watchdog's hang card) |
+| `vsm12` (f6c90a1b4c9b) | red | the sky cached, the boot never starved: `[BOOT] loading screen: 6 ms a frame (30 frames; the first 64 ms)`, controllers up in 2915 ms, the SHA-1 896 ms, the game ran ("thats better and the game worked"); the title faded in late |
+| `vsm13` (60c209582c16) | red, deployed and size-checked | the title on the first frame (`xrc_splash_early`); not yet run |
+
+`[MEM] boot` free 53100 KB (vsm11; image 9524 KB: the font tables add
+~170 KB), `[CLOCK] cpu 733 MHz` on red.
+
+**The screen** (`xhw_splash_draw.c`, `docs/decisions.md` "The deep-space
+title card"): host render `docs/look/loading-space-host.png`; `test_splash`
+49 checks (safe area for every hold and the settings states, titles on
+two lines, the stage line with its step count, UTF-8 Latin-1, a cool dark
+sky). xemu (`build-host/preboot-shot.sh`, slot 11, scenario
+`build-host/scen/preboot`): BACK held -> `[BOOT] loading screen: BACK held
+(the settings before the game)`, `[MENU] before the game`, Texture filter
+changed, B -> `[MENU] closed before the game (settings.ini saved)`, the game
+started; the dump shows the menu over the dimmed screen with "Start the
+game". Not verified: L + R / L + R + START on red (xemu scenario lines are
+in `docs/testing.md`, not run), the menu before the game on red, 720p after
+a pre-boot change, the error cards in the new dress on red.
+
+**The analyser** (`docs/decisions.md`): far `j`s decided after the walk
+(Mario Golf's 0x8003327C stays whole on the host analysis; the six s9
+compile failures are not rebuilt yet); osSendMesg/osRecvMesg without a
+divide (Mario Tennis). `test_analyze` against the decomp pairs: see the
+commit's notes (run with `N64RX_ROMS` at the NAS folder).
+
+**Mario Tennis (`NM8E`, xemu, slot 10, `build-host/learnloop2.sh ... mt 10`):**
+a Camelot boot at 0x80300000 that inflates the game into RDRAM; its
+libultra is captured (`code_80031000`, `code_8003A000`, ...). Round 1 learnt
+82 functions and 11 blocks; rounds 2-6 crashed at once (the queue rule
+above); with the fix rounds 2-6 run to `[OS] stall: no graphics task at all
+after 300 retraces`: thread 1 (pri 0) runs, last interpreted pc 80031254,
+round 3 on learn nothing new (`code 1 func 0`). Next: what 80031254 spins
+on (likely a value an interpreted or unnamed libultra routine should set:
+the VI or SP), 258 functions in 5 segments, 70 libultra names.
