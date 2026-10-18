@@ -6,6 +6,7 @@
  * MHz counter (so whatever the CPU's speed, a second of real time is
  * 46,875,000 counts), the 32-bit counter wraps as the N64's did, osSetTime
  * moves only an offset, and nothing depends on anything but the clock. */
+#include <setjmp.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +17,7 @@
 ULTRA(osGetCount);
 ULTRA(osGetTime);
 ULTRA(osSetTime);
+ULTRA(osSetTimer);
 
 static int s_fail, s_checks;
 #define CHECK(cond, ...) do { \
@@ -27,20 +29,34 @@ static int s_fail, s_checks;
 /* ---- the platform, stubbed ---- */
 static uint64_t s_us;
 uint64_t xhw_time_us(void) { return s_us; }
-uint8_t* xrc_rdram;
+static uint8_t s_ram[1u << 16] __attribute__((aligned(8)));
+uint8_t* xrc_rdram = s_ram;
 uint32_t xrc_tlb_to_phys(uint32_t vaddr) { (void)vaddr; return ~0u; }   /* no TLB on the host */
-uint8_t* xrc_rdram_host;
-uint32_t xrc_rdram_size;
+uint8_t* xrc_rdram_host = s_ram;
+uint32_t xrc_rdram_size = sizeof s_ram;
 void xu_lock(void) {}
 void xu_unlock(void) {}
-int xu_send(uint32_t mq, uint32_t msg, int block, int jam) { (void)mq; (void)msg; (void)block; (void)jam; return 0; }
+static unsigned s_sent;
+int xu_send(uint32_t mq, uint32_t msg, int block, int jam) { (void)mq; (void)msg; (void)block; (void)jam; s_sent++; return 0; }
+/* the timer thread: one pass of its loop at a time (its wait returns here) */
+static void (*s_thread_fn)(void*);
+static jmp_buf s_pass;
+static uint32_t s_wait_ms;
 xhw_thread* xu_spawn(void (*fn)(void*), void* arg, int level, uint32_t stack) {
-    (void)fn; (void)arg; (void)level; (void)stack;
+    (void)arg; (void)level; (void)stack;
+    s_thread_fn = fn;
     return (xhw_thread*)1;
 }
 xhw_event* xhw_event_create(void) { return (xhw_event*)1; }
 void xhw_event_signal(xhw_event* e) { (void)e; }
-int xhw_event_wait(xhw_event* e, uint32_t ms) { (void)e; (void)ms; return 0; }
+int xhw_event_wait(xhw_event* e, uint32_t ms) {
+    (void)e;
+    s_wait_ms = ms;
+    longjmp(s_pass, 1);
+}
+static void timer_pass(void) {
+    if (!setjmp(s_pass)) s_thread_fn(NULL);
+}
 void xrc_fatal_vram(const char* what, uint32_t vram, uint32_t extra) {
     printf("fatal %s %08x %08x\n", what, vram, extra);
     exit(2);
@@ -78,6 +94,29 @@ int main(void) {
     CHECK(time64() == 1000000000ull, "osSetTime: %llu", (unsigned long long)time64());
     s_us += 2000000;
     CHECK(time64() == 1000000000ull + 93750000ull, "two seconds later: %llu", (unsigned long long)time64());
+    /* a periodic timer held up for many intervals (a long hitch) fires once,
+     * is re-armed from now, and the thread's next wait is short, not an
+     * underflowed eternity (XRC_TIMER_CATCHUP) */
+    memset(&c, 0, sizeof c);
+    c.r4 = (gpr)(int32_t)0x80000100u;       /* t */
+    c.r6 = 0; c.r7 = 46875;                 /* countdown 1 ms */
+    c.r29 = (gpr)(int32_t)0x80000200u;      /* the stack arguments: interval 1 ms, mq, msg */
+    *(uint32_t*)(s_ram + 0x210) = 0; *(uint32_t*)(s_ram + 0x214) = 46875;
+    *(uint32_t*)(s_ram + 0x218) = 0x80000300u; *(uint32_t*)(s_ram + 0x21C) = 666;
+    osSetTimer_recomp(NULL, &c);
+    CHECK(s_thread_fn != NULL, "osSetTimer started no timer thread");
+    if (s_thread_fn) {
+        timer_pass();
+        CHECK(s_wait_ms <= 2, "a 1 ms timer waits %u ms", (unsigned)s_wait_ms);
+        s_us += 10000000;   /* 10 s held up */
+        s_sent = 0;
+        timer_pass();
+        CHECK(s_sent == 1, "after 10 s: %u messages (want one)", s_sent);
+        CHECK(s_wait_ms <= 2, "after 10 s the next wait is %u ms", (unsigned)s_wait_ms);
+        s_us += 1000;
+        timer_pass();
+        CHECK(s_sent == 2, "the next interval: %u messages", s_sent);
+    }
     printf("test_time: %d checks, %d failed\n", s_checks, s_fail);
     return s_fail != 0;
 }

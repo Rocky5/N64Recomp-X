@@ -47,15 +47,17 @@ static XgfxOutput s_o = { 640, 480, 32, 16777215.0f, 1 };
 
 void xgfx_output(XgfxOutput* out) { *out = s_o; }
 void xgfx_frame_begin(void) {}
+static uint32_t s_wrap_s, s_wrap_t;   /* the last draw's unit 0 wrap modes */
 void xgfx_draw(const XgfxState* st, const XgfxVtx* v, uint32_t ntris) {
-    (void)st;
+    s_wrap_s = st->wrap_s[0], s_wrap_t = st->wrap_t[0];
     for (uint32_t i = 0; i < ntris * 3 && s_nv < MAXV; i++) s_v[s_nv++] = v[i];
 }
 void xgfx_clear(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t argb, int color, int depth, float z01) {
     (void)x0; (void)y0; (void)x1; (void)y1; (void)argb; (void)color; (void)depth; (void)z01;
 }
 void xgfx_present(void) {}
-uint32_t xgfx_tex_create(uint32_t w, uint32_t h, const uint32_t* argb) { (void)w; (void)h; (void)argb; return 1; }
+static unsigned s_tex_creates;
+uint32_t xgfx_tex_create(uint32_t w, uint32_t h, const uint32_t* argb) { (void)w; (void)h; (void)argb; s_tex_creates++; return 1; }
 void xgfx_tex_destroy(uint32_t tex) { (void)tex; }
 uint32_t xgfx_capture_last(float* u, float* v) { (void)u; (void)v; return 0; }
 uint32_t xgfx_tex_linear_last(float* w, float* h) { (void)w; (void)h; return 0; }
@@ -473,6 +475,76 @@ static void test_readback(void) {
     s_stage_on = 0;
 }
 
+/* a LOADTILE texture whose middle row changed between frames is made again
+ * (XGFX_TILE_ROWHASH): Pokémon Snap types its dialogue into one, and a strip
+ * whose first and last rows stayed blank kept its old middle */
+#define TEXI_AT 0x30000u
+static void texrect_frame(const GfxUcode* u) {
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xFD000000u | (4u << 21) | (1u << 19) | (8u - 1u), TEXI_AT);   /* SETTIMG I8 width 8 */
+    cmd(0xF5000000u | (4u << 21) | (1u << 19) | (1u << 9), 7u << 24);  /* SETTILE 7: I8, line 1 */
+    cmd(0xF4000000u, (7u << 24) | (28u << 12) | 28u);                  /* LOADTILE 7: 0,0..7,7 */
+    cmd(0xF5000000u | (4u << 21) | (1u << 19) | (1u << 9), 0);         /* SETTILE 0 */
+    cmd(0xF2000000u, (28u << 12) | 28u);                               /* SETTILESIZE 0: 8x8 */
+    cmd(0xE4000000u | (64u << 12) | 64u, (0u << 12) | 0u);             /* TEXRECT 0,0..16,16 */
+    cmd(0xE1000000u, 0);
+    cmd(0xF1000000u, (1u << 26) | (1u << 10));
+    cmd(0xDF000000u, 0);
+    run(u);
+}
+static void test_tile_rowhash(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    unsigned i, before;
+    for (i = 0; i < 64; i++) put8(TEXI_AT + i, 0);
+    texrect_frame(&u);
+    before = s_tex_creates;
+    CHECK(before > 0, "rowhash: the texrect made no texture");
+    put8(TEXI_AT + 3u * 8u + 4u, 0xFF);   /* row 3 only: the first and last rows as they were */
+    texrect_frame(&u);
+    CHECK(s_tex_creates == before + 1, "rowhash: %u textures made after the middle row changed (want 1)",
+          s_tex_creates - before);
+    texrect_frame(&u);
+    CHECK(s_tex_creates == before + 1, "rowhash: an unchanged texture was made again");
+    /* the tile has no clamp bit and mask 0: the RDP clamps (Ocarina of Time's moon, XGFX_MASK0_CLAMP) */
+    CHECK(s_wrap_s == XGFX_WRAP_CLAMP && s_wrap_t == XGFX_WRAP_CLAMP, "mask 0: wrap %u/%u (want clamp)", s_wrap_s,
+          s_wrap_t);
+}
+
+/* a 4 KB block load whose change the 16 samples miss is found by the whole-
+ * texture recheck within 8 frames, and every frame after that (XGFX_TEX_RECHECK:
+ * Pokémon Snap's 3952-byte dialogue strip) */
+#define TEXB_AT 0x38000u
+static void block_frame(const GfxUcode* u) {
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xFD000000u | (0u << 21) | (2u << 19) | (64u - 1u), TEXB_AT);   /* SETTIMG RGBA16 width 64 */
+    cmd(0xF5000000u | (0u << 21) | (2u << 19), 7u << 24);                /* SETTILE 7 */
+    cmd(0xF3000000u, (7u << 24) | (2047u << 12) | 128u);                 /* LOADBLOCK 2048 texels, dxt 128 */
+    cmd(0xF5000000u | (0u << 21) | (2u << 19) | (16u << 9), 0);          /* SETTILE 0: line 16 */
+    cmd(0xF2000000u, (252u << 12) | 124u);                               /* SETTILESIZE 0: 64x32 */
+    cmd(0xE4000000u | (256u << 12) | 128u, 0);                           /* TEXRECT 0,0..64,32 */
+    cmd(0xE1000000u, 0);
+    cmd(0xF1000000u, (1u << 26) | (1u << 10));
+    cmd(0xDF000000u, 0);
+    run(u);
+}
+static void test_tex_recheck(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    unsigned i, before, n;
+    for (i = 0; i < 4096; i++) put8(TEXB_AT + i, 0);
+    block_frame(&u);
+    before = s_tex_creates;
+    for (n = 0; n < 4; n++) block_frame(&u);
+    CHECK(s_tex_creates == before, "recheck: an unchanged 4 KB texture was made again (%u)", s_tex_creates - before);
+    put8(TEXB_AT + 12u, 0x55);   /* between the samples (every 256 bytes) */
+    for (n = 0; n < 8 && s_tex_creates == before; n++) block_frame(&u);
+    CHECK(s_tex_creates == before + 1, "recheck: the change was not found in 8 frames");
+    put8(TEXB_AT + 20u, 0x66);   /* hot now: the next frame */
+    block_frame(&u);
+    CHECK(s_tex_creates == before + 2, "recheck: a hot texture's change waited");
+}
+
 int main(void) {
     test_ci();
     setup_data();
@@ -485,6 +557,8 @@ int main(void) {
     test_fast3d();   /* and Fast3D again after the others: nothing left over */
     test_deswizzle32();
     test_readback();
+    test_tile_rowhash();
+    test_tex_recheck();
     if (s_fail) printf("test_f3dex: %d failed\n", s_fail);
     return s_fail ? 1 : 0;
 }

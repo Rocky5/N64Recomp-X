@@ -100,6 +100,12 @@
 #ifndef XGFX_TEXRECT_SNAP
 #define XGFX_TEXRECT_SNAP 1    /* 1/2-cycle texrects cover every pixel row and column they touch */
 #endif
+#ifndef XGFX_MASK0_CLAMP
+#define XGFX_MASK0_CLAMP 1     /* an axis with mask 0 clamps, as the RDP's */
+#endif
+#ifndef XGFX_TILE_ROWHASH
+#define XGFX_TILE_ROWHASH 1    /* a LOADTILE's change check hashes every row, not the first and last */
+#endif
 #ifndef XGFX_TILE_WRAP
 #define XGFX_TILE_WRAP 1       /* tile sizes wrap in 12 bits (a scrolling tile with lrs < uls) */
 #endif
@@ -471,6 +477,10 @@ static int s_trace;   /* -DXGFX_TRACE_FRAME=<n>: frame n's draws as [DRAW] lines
 #ifndef XGFX_TRACE_FRAME
 #define XGFX_TRACE_FRAME 0
 #endif
+#ifndef XGFX_TRACE_PRIM   /* -DXGFX_TRACE_PRIM=0xRRGGBB: the frame after the first draw with that prim colour */
+#define XGFX_TRACE_PRIM 0
+#endif
+static int s_trace_next;
 
 /* a draw that lands in the pillarbox strips without being a hor+ world
  * draw (side_clear): the first 16 are logged, in every build, to name the
@@ -506,8 +516,20 @@ static void flush(void) {
             if (s_batch[i].z < zlo) zlo = s_batch[i].z;
             if (s_batch[i].z > zhi) zhi = s_batch[i].z;
         }
-        xhw_logf("[DRAW] z %d..%d (x1000)", (int)(zlo * 1000.0f / s_out.zmax), (int)(zhi * 1000.0f / s_out.zmax));
+        float slo = 2e9f, shi = -2e9f, tlo = 2e9f, thi = -2e9f;
+        for (i = 0; i < s_nb * 3; i++) {
+            if (s_batch[i].s0 < slo) slo = s_batch[i].s0;
+            if (s_batch[i].s0 > shi) shi = s_batch[i].s0;
+            if (s_batch[i].t0 < tlo) tlo = s_batch[i].t0;
+            if (s_batch[i].t0 > thi) thi = s_batch[i].t0;
+        }
+        xhw_logf("[DRAW] z %d..%d (x1000) st0 %d..%d, %d..%d (x100) wrap %u/%u", (int)(zlo * 1000.0f / s_out.zmax),
+                 (int)(zhi * 1000.0f / s_out.zmax), (int)(slo * 100.0f), (int)(shi * 100.0f), (int)(tlo * 100.0f),
+                 (int)(thi * 100.0f), (unsigned)s_st.wrap_s[0], (unsigned)s_st.wrap_t[0]);
     }
+    if (XGFX_TRACE_PRIM && !s_trace_next && s_st.prim[0] == ((XGFX_TRACE_PRIM >> 16) & 0xFF) &&
+        s_st.prim[1] == ((XGFX_TRACE_PRIM >> 8) & 0xFF) && s_st.prim[2] == (XGFX_TRACE_PRIM & 0xFF))
+        s_trace_next = 1;
     if (s_trace)
         xhw_logf("[DRAW] %u tris cc %06x:%08x cyc %u tex %u/%u blend %u aref %u depth %u/%u bias %u sten %u fog %u "
                  "prim %02x%02x%02x%02x env %02x%02x%02x%02x geom %06x oml %08x v0 %d,%d z %d a %u",
@@ -535,6 +557,8 @@ static void flush(void) {
 #define TEX_CACHE 1024
 typedef struct {
     uint32_t addr, key, sample, frame;
+    uint32_t full;   /* every word's hash of a sampled (big) block load; 0 otherwise */
+    uint32_t hot;    /* its address was seen to change: rechecked every frame */
     uint32_t handle;
     uint16_t w, h, pw, ph;
 } TexEntry;
@@ -544,10 +568,33 @@ static uint32_t s_frame_no = 1;
 /* every word of a texture up to this size, 16 samples of a larger one: a
  * game that writes its font's glyphs into the same slots changed bytes the
  * samples missed (Blast Corps' intro text: T for G). -DXGFX_TEX_FULLHASH_MAX=64:
- * as before */
+ * as before. A larger one is also hashed whole now and then (XGFX_TEX_RECHECK). */
 #ifndef XGFX_TEX_FULLHASH_MAX
 #define XGFX_TEX_FULLHASH_MAX 2048
 #endif
+/* A block load bigger than that is hashed whole every 8th frame it is used
+ * (staggered by cache slot), and every frame once its address has been seen
+ * to change: Pokémon Snap types its dialogue into a 152x13 RGBA16 strip
+ * (3952 bytes) and the 16 samples kept old glyphs; hashing every big texture
+ * every frame cost Snap's lab 2.5 ms a frame (xemu). -DXGFX_TEX_RECHECK=0: the
+ * samples alone, as before */
+#ifndef XGFX_TEX_RECHECK
+#define XGFX_TEX_RECHECK 1
+#endif
+static uint32_t full_hash(const uint8_t* p, uint32_t bytes) {
+    uint32_t h = 2166136261u, g = 0x811C9DC5u ^ bytes, i, w, v;
+    for (i = 0; i + 8 <= bytes; i += 8) {   /* two lanes, eight bytes a step (the multiplies overlap) */
+        memcpy(&w, p + i, 4);
+        memcpy(&v, p + i + 4, 4);
+        h = (h ^ w) * 16777619u;
+        g = (g ^ v) * 16777619u;
+    }
+    if (i + 4 <= bytes) {
+        memcpy(&w, p + i, 4);
+        h = (h ^ w) * 16777619u;
+    }
+    return (h ^ (g * 0x9E3779B1u) ^ bytes) | 1u;
+}
 static uint32_t sample_hash(const uint8_t* p, uint32_t bytes) {
     uint32_t h = 2166136261u, step = bytes > XGFX_TEX_FULLHASH_MAX ? bytes / 16 : 4, i, w;
     for (i = 0; i + 4 <= bytes; i += step) {
@@ -605,7 +652,8 @@ static TexEntry* texture_for_tile(int tidx) {
              h = XGFX_TILE_WRAP ? ((((unsigned)t->lrt - t->ult) & 0xFFFu) >> 2) + 1 : ((t->lrt - t->ult) >> 2) + 1;
     /* RGBA32 splits each texel across TMEM's two banks: SETTILE's line covers half a row */
     unsigned line = t->line * 8u * (t->siz == 3 ? 2u : 1u), bytes, pw, ph, slot, i;
-    uint32_t key, sample;
+    uint32_t key, sample, full = 0;
+    int big, hot = 0;
     uint64_t tex_t0;
     TexEntry* e;
     if (!ld->valid && XGFX_TMEM_WITHIN) {
@@ -658,12 +706,34 @@ static TexEntry* texture_for_tile(int tidx) {
     if (fbfx_stale_count())   /* a frame the game draws with: RDRAM gets it first */
         fb_touch(ld->addr, ld->tile ? (ld->rows - 1u) * ld->stride + ld->row_bytes : bytes);
     /* the change check hashes the image as it is (its byte order does not matter for that) */
+    if (ld->tile && XGFX_TILE_ROWHASH) {
+        /* every row (16 spread rows past XGFX_TEX_FULLHASH_MAX bytes): Pokémon
+         * Snap types its dialogue into a texture loaded with LOADTILE, and a
+         * strip whose first and last rows stay blank kept its old middle
+         * (ascenders lost: "touna" for "found") */
+        unsigned r, nr = ld->rows, rs = (uint32_t)nr * ld->row_bytes > XGFX_TEX_FULLHASH_MAX && nr > 16 ? nr / 16u : 1u;
+        sample = 0;
+        for (r = 0; r < nr; r += rs)
+            sample = (sample ^ sample_hash(host(ld->addr + r * ld->stride), ld->row_bytes)) * 16777619u;
+        sample ^= sample_hash(host(ld->addr + (nr - 1u) * ld->stride), ld->row_bytes);
+    } else
     sample = sample_hash(host(ld->addr), ld->tile ? ld->row_bytes : bytes) ^
              (ld->tile ? sample_hash(host(ld->addr + (ld->rows - 1u) * ld->stride), ld->row_bytes) : 0);
     slot = ((ld->addr >> 3) * 2654435761u ^ key * 40503u) % TEX_CACHE;
+    big = XGFX_TEX_RECHECK && !ld->tile && bytes > XGFX_TEX_FULLHASH_MAX;
     for (i = 0; i < 8; i++) {   /* 8-way probe */
         e = &s_texc[(slot + i) % TEX_CACHE];
-        if (e->handle && e->addr == ld->addr && e->key == key && e->sample == sample) goto hit;
+        if (!e->handle || e->addr != ld->addr || e->key != key) continue;
+        if (e->sample != sample) { hot = 1; continue; }   /* the same place, changed */
+        if (big && (e->hot || ((s_frame_no + slot + i) & 7u) == 0)) {
+            full = full_hash(host(ld->addr), bytes);
+            if (full != e->full) {   /* changed where the samples did not look */
+                hot = 1;
+                e = tex_evict_slot((slot + i) % TEX_CACHE);
+                goto build;
+            }
+        }
+        goto hit;
     }
     {   /* a free slot, else the least recently used of the eight */
         unsigned pick = slot;
@@ -674,6 +744,7 @@ static TexEntry* texture_for_tile(int tidx) {
         }
         e = tex_evict_slot(pick);
     }
+build:
     tex_t0 = xhw_time_us();
     if (ld->tile) {   /* LOADTILE: the rectangle's rows, laid out at the tile's line */
         uint32_t src = seg(ld->addr);
@@ -715,6 +786,8 @@ static TexEntry* texture_for_tile(int tidx) {
     e->addr = ld->addr;
     e->key = key;
     e->sample = sample;
+    e->full = big ? (full ? full : full_hash(host(ld->addr), bytes)) : 0;
+    e->hot = hot;
     e->w = (uint16_t)w;
     e->h = (uint16_t)h;
     e->pw = (uint16_t)pw;
@@ -759,7 +832,12 @@ static float shift_scale(int sh) {
     return (float)(1 << (16 - sh));
 }
 
-static uint32_t wrap_of(uint8_t cm) {
+/* the RDP clamps an axis whose mask is 0 whatever its clamp bit says (no
+ * wrap without a mask): Ocarina of Time's moon is a 64x64 tile on a quad
+ * whose coordinates run to 128, and repeating drew four moons.
+ * -DXGFX_MASK0_CLAMP=0: the clamp bit alone, as before */
+static uint32_t wrap_of(uint8_t cm, uint8_t mask) {
+    if (XGFX_MASK0_CLAMP && !mask) return XGFX_WRAP_CLAMP;
     return (cm & 2) ? XGFX_WRAP_CLAMP : (cm & 1) ? XGFX_WRAP_MIRROR : XGFX_WRAP_REPEAT;
 }
 
@@ -782,12 +860,12 @@ static void bind_unit(int u, int tidx) {
     TexEntry* e = texture_for_tile(tidx & 7);
     s_st.tex[u] = e ? e->handle : 0;
     if (s_trace)
-        xhw_logf("[DRAW] bind %d tile %d fmt %u siz %u line %u tmem %u sl %u tl %u sh %u th %u pal %u -> addr %08x %ux%u",
+        xhw_logf("[DRAW] bind %d tile %d fmt %u siz %u line %u tmem %u sl %u tl %u sh %u th %u pal %u cm %u/%u mask %u/%u -> addr %08x %ux%u",
                  u, tidx & 7, t->fmt, t->siz, t->line, t->tmem, t->uls >> 2, t->ult >> 2, t->lrs >> 2, t->lrt >> 2,
-                 t->palette, e ? (unsigned)e->addr : 0u, e ? e->pw : 0u, e ? e->ph : 0u);
+                 t->palette, t->cms, t->cmt, t->masks, t->maskt, e ? (unsigned)e->addr : 0u, e ? e->pw : 0u, e ? e->ph : 0u);
     if (!e) return;
-    s_st.wrap_s[u] = wrap_of(t->cms);
-    s_st.wrap_t[u] = wrap_of(t->cmt);
+    s_st.wrap_s[u] = wrap_of(t->cms, t->masks);
+    s_st.wrap_t[u] = wrap_of(t->cmt, t->maskt);
     s_st.filter[u] = ((R.omh >> F3D_G_MDSFT_TEXTFILT) & 3) != 0;
     /* u = (s * shift - uls) / padded width */
     s_u_scale[u] = shift_scale(t->shifts) / (float)e->pw;
@@ -2315,6 +2393,7 @@ void f3d_run(uint32_t dl, int present) {
     s_frame_no++;
     s_fullsync = 0;
     s_trace = XGFX_TRACE_FRAME && s_frames == XGFX_TRACE_FRAME;
+    if (XGFX_TRACE_PRIM && s_trace_next == 1) s_trace_next = 2, s_trace = 1;
     if (XGFX_TRACE_MS) {
         static int s_traced;
         static uint64_t s_first;   /* ms from the first frame */

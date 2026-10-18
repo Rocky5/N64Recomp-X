@@ -37,6 +37,17 @@ ULTRA(osSetCount) {
     s_offset += (int64_t)(((now & ~0xFFFFFFFFull) | ARG(0)) - now);
 }
 
+/* A periodic timer that fell more than one interval behind (the thread held
+ * up: a 10 s screenshot in xemu, any long hitch) went on with its deadline
+ * in the past: the wait to it underflowed and the timer thread slept for
+ * good, so every timer stopped (Ocarina of Time's graphics thread then
+ * waited for ever: no task done, no RCP-hung timeout). It is now re-armed
+ * from the present, as libultra re-arms it from the interrupt, and a past
+ * deadline waits 0 ms. -DXRC_TIMER_CATCHUP=0: as before */
+#ifndef XRC_TIMER_CATCHUP
+#define XRC_TIMER_CATCHUP 1
+#endif
+
 static struct { uint32_t t; uint64_t due, interval; uint32_t mq, msg; } s_timers[MAX_TIMERS];
 static volatile int s_up;
 static xhw_event* s_kick;
@@ -53,14 +64,20 @@ static void timer_thread(void* arg) {
             if (!s_timers[i].t) continue;
             if (s_timers[i].due <= now) {
                 uint32_t mq = s_timers[i].mq, msg = s_timers[i].msg;
-                if (s_timers[i].interval) s_timers[i].due += s_timers[i].interval;
-                else s_timers[i].t = 0;
+                if (s_timers[i].interval) {
+                    s_timers[i].due += s_timers[i].interval;
+                    if (XRC_TIMER_CATCHUP && s_timers[i].due <= now) s_timers[i].due = now + s_timers[i].interval;
+                } else {
+                    s_timers[i].t = 0;
+                }
                 if (mq) xu_send(mq, msg, 0, 0);
             }
             if (s_timers[i].t && s_timers[i].due < next) next = s_timers[i].due;
         }
         xu_unlock();
-        ms = next == ~0ull ? XHW_INFINITE : (uint32_t)((next - now) * 1000ull / 46875000ull) + 1;
+        if (next == ~0ull) ms = XHW_INFINITE;
+        else if (XRC_TIMER_CATCHUP && next <= now) ms = 0;
+        else ms = (uint32_t)((next - now) * 1000ull / 46875000ull) + 1;
         xhw_event_wait(s_kick, ms);
     }
 }
