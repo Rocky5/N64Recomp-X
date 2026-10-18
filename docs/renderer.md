@@ -122,7 +122,16 @@ Added 2026-10-18:
   (`XGFX_TILE_ROWHASH`); a block load over 2 KB, checked by 16 samples
   each use, is also hashed whole every 8th frame and every frame once its
   address has changed (`XGFX_TEX_RECHECK`): Pokémon Snap types its
-  dialogue into one 3952-byte strip.
+  dialogue into one 3952-byte strip;
+- LOADTLUT's SL and TL place the palette in the image and SH - SL counts
+  it (`XGFX_TLUT_OFFSET`): GoldenEye keeps each palette right after its
+  texels (`gDPLoadTLUT07`), and its CI textures had taken their own texels
+  as colours (the Dam's green blocks, speckled props, the purple sky);
+- raw RDP triangles: Fast3D sends a G_RDPHALF_1 + G_RDPHALF_CONT pair to
+  the RDP as one 64-bit word, and GoldenEye draws its cloud layer as RDP
+  triangle commands built on the CPU (`sky.c`); their coefficients are
+  drawn as the edge walker's two trapezoids (`XGFX_RDP_TRI`, host test
+  `rdp_tri`).
 
 Widescreen (generic hor+, the 4:3 box), the screen-fade and BACK-menu held
 frame, the title fit and the scissor rules are below the GBI: the same for

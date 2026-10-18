@@ -100,6 +100,12 @@
 #ifndef XGFX_TEXRECT_SNAP
 #define XGFX_TEXRECT_SNAP 1    /* 1/2-cycle texrects cover every pixel row and column they touch */
 #endif
+#ifndef XGFX_TLUT_OFFSET
+#define XGFX_TLUT_OFFSET 1     /* LOADTLUT's SL/TL offset the palette in the image (GoldenEye's palettes after their texels) */
+#endif
+#ifndef XGFX_RDP_TRI
+#define XGFX_RDP_TRI 1         /* raw RDP triangles sent as G_RDPHALF_1/G_RDPHALF_CONT pairs (GoldenEye's sky) */
+#endif
 #ifndef XGFX_MASK0_CLAMP
 #define XGFX_MASK0_CLAMP 1     /* an axis with mask 0 clamps, as the RDP's */
 #endif
@@ -1413,6 +1419,165 @@ static void do_texrect(uint32_t w0, uint32_t w1) {
     DIRTY();
 }
 
+/* ---------------------------------------------- raw RDP triangles
+ *
+ * Fast3D passes each G_RDPHALF_1 + G_RDPHALF_CONT pair to the RDP as one
+ * 64-bit command word. GoldenEye draws its sky's cloud layer that way: RDP
+ * triangle commands (0xC8-0xCF) with their edge, shade, texture and z
+ * coefficients worked out on the CPU (sky.c skyRenderTri; its last pair
+ * ends in G_RDPHALF_2). They were
+ * ignored, so the sky showed whatever was under it (the purple Dam). The
+ * edge walker's description is turned back into its two trapezoids: the
+ * major edge H from YH to YL against the high minor edge (XM) to YM and the
+ * low one (XL) from YM (GoldenEye's are rectangles: XM apart from XH, YM =
+ * YL). An attribute at (x, y) is its value at the major edge on the first
+ * scanline plus DaDe a scanline down that edge plus DaDx across.
+ * -DXGFX_RDP_TRI=0: ignored, as before */
+static uint64_t s_rdp_w[22];
+static unsigned s_rdp_n, s_rdp_need;
+
+static float rdp_sext14(uint64_t v) {
+    int32_t x = (int32_t)(v & 0x3FFFu);
+    if (x & 0x2000) x -= 0x4000;
+    return (float)x * 0.25f;
+}
+/* component k (0..3) of a coefficient block: integer halves in ints, fractions in fracs */
+static float rdp_fix(uint64_t ints, uint64_t fracs, int k) {
+    int16_t i = (int16_t)(ints >> (48 - 16 * k));
+    uint16_t f = (uint16_t)(fracs >> (48 - 16 * k));
+    return (float)i + (float)f / 65536.0f;
+}
+
+/* one corner: position and its attributes from the coefficients */
+static void rdp_vtx(XgfxVtx* o, float x, float y, float ys, float xh, float dxh, const uint64_t* sh, const uint64_t* tx,
+                    const uint64_t* zz, int persp) {
+    float dy = y - ys, dx = x - (xh + dxh * dy);
+    unsigned c;
+    memset(o, 0, sizeof *o);
+    o->x = x * s_sx + s_ox + s_xoff;
+    o->y = y * s_sy + s_oy;
+    o->w = 1.0f;
+    if (sh)
+        for (c = 0; c < 4; c++) {
+            float v = rdp_fix(sh[0], sh[2], (int)c) + rdp_fix(sh[4], sh[6], (int)c) * dy + rdp_fix(sh[1], sh[3], (int)c) * dx;
+            o->rgba[c] = (uint8_t)(v < 0.0f ? 0.0f : v > 255.0f ? 255.0f : v);
+        }
+    if (tx) {
+        float ts = rdp_fix(tx[0], tx[2], 0) + rdp_fix(tx[4], tx[6], 0) * dy + rdp_fix(tx[1], tx[3], 0) * dx;
+        float tt = rdp_fix(tx[0], tx[2], 1) + rdp_fix(tx[4], tx[6], 1) * dy + rdp_fix(tx[1], tx[3], 1) * dx;
+        float tw = rdp_fix(tx[0], tx[2], 2) + rdp_fix(tx[4], tx[6], 2) * dy + rdp_fix(tx[1], tx[3], 2) * dx;
+        if (persp && tw > 0.0f) {   /* S/W and T/W (W 1.0 = 0x8000); the hardware divides per pixel */
+            ts = ts / tw * 32768.0f;
+            tt = tt / tw * 32768.0f;
+            o->w = 32768.0f / tw;
+        }
+        ts /= 32.0f;   /* s10.5 -> texels */
+        tt /= 32.0f;
+        o->s0 = ts * s_u_scale[0] - s_u_off[0];
+        o->t0 = tt * s_v_scale[0] - s_v_off[0];
+        o->s1 = ts * s_u_scale[1] - s_u_off[1];
+        o->t1 = tt * s_v_scale[1] - s_v_off[1];
+    }
+    if (zz) {
+        float z = (float)(int32_t)(zz[0] >> 32) / 65536.0f + (float)(int32_t)(zz[1] >> 32) / 65536.0f * dy +
+                  (float)(int32_t)zz[0] / 65536.0f * dx;
+        z /= 32768.0f;
+        o->z = (z < 0.0f ? 0.0f : z > 1.0f ? 1.0f : z) * s_out.zmax;
+    }
+}
+
+static void rdp_tri(void) {
+    const uint64_t* w = s_rdp_w;
+    unsigned cmd = (unsigned)(w[0] >> 56) & 0x3Fu, tile = (unsigned)(w[0] >> 48) & 7u, k;
+    int shade = (cmd & 4) != 0, tex = (cmd & 2) != 0, zb = (cmd & 1) != 0;
+    int cycle = (R.omh >> F3D_G_MDSFT_CYCLETYPE) & 3, persp = (R.omh & F3D_G_TP_PERSP) != 0;
+    const uint64_t* sh = w + 4;
+    const uint64_t* tx = w + 4 + (shade ? 8 : 0);
+    const uint64_t* zz = tx + (tex ? 8 : 0);
+    float yl = rdp_sext14(w[0] >> 32), ym = rdp_sext14(w[0] >> 16), yh = rdp_sext14(w[0]);
+    float xl = (float)(int32_t)(w[1] >> 32) / 65536.0f, dxl = (float)(int32_t)w[1] / 65536.0f;
+    float xh = (float)(int32_t)(w[2] >> 32) / 65536.0f, dxh = (float)(int32_t)w[2] / 65536.0f;
+    float xm = (float)(int32_t)(w[3] >> 32) / 65536.0f, dxm = (float)(int32_t)w[3] / 65536.0f;
+    float ys = floorf(yh), px[8], py[8];
+    unsigned nq = 0;
+    if (!(yl > yh)) return;
+    if (ym < yh) ym = yh;
+    if (ym > yl) ym = yl;
+    /* the upper part: the major edge and the high minor edge (XM), YH to YM */
+    if (ym > yh) {
+        px[0] = xh + dxh * (yh - ys); py[0] = yh;
+        px[1] = xm + dxm * (yh - ys); py[1] = yh;
+        px[2] = xm + dxm * (ym - ys); py[2] = ym;
+        px[3] = xh + dxh * (ym - ys); py[3] = ym;
+        nq = 1;
+    }
+    /* the lower part: the major edge and the low minor edge (XL from YM), YM to YL */
+    if (yl > ym) {
+        px[nq * 4 + 0] = xh + dxh * (ym - ys); py[nq * 4 + 0] = ym;
+        px[nq * 4 + 1] = xl;                   py[nq * 4 + 1] = ym;
+        px[nq * 4 + 2] = xl + dxl * (yl - ym); py[nq * 4 + 2] = yl;
+        px[nq * 4 + 3] = xh + dxh * (yl - ys); py[nq * 4 + 3] = yl;
+        nq++;
+    }
+    flush();
+    memset(&s_st, 0, sizeof s_st);
+    pixel_state(!zb);
+    s_st.fog = 0;
+    s_st.depth_bias = 0;
+    s_st.cc0 = R.cc0 & 0x00FFFFFFu;
+    s_st.cc1 = R.cc1;
+    s_st.two_cycle = cycle == 1;
+    s_textured = 0;
+    s_tex1 = 0;
+    if (tex) {
+        bind_unit(0, (int)tile);
+        s_textured = s_st.tex[0] != 0;
+        if (s_st.two_cycle && cc_uses_texel1()) {
+            bind_unit(1, (int)tile + 1);
+            s_tex1 = s_st.tex[1] != 0;
+        }
+    }
+    s_overlay = 0;
+    if (s_trace)
+        xhw_logf("[DRAW] rdp tri %02x tile %u: yh %d ym %d yl %d, xh %d xm %d xl %d", cmd | 0xC0u, tile, (int)yh, (int)ym,
+                 (int)yl, (int)xh, (int)xm, (int)xl);
+    for (k = 0; k < nq; k++) {
+        XgfxVtx q[4];
+        unsigned i;
+        for (i = 0; i < 4; i++)
+            rdp_vtx(&q[i], px[k * 4 + i], py[k * 4 + i], ys, xh, dxh, shade ? sh : NULL, tex ? tx : NULL, zb ? zz : NULL,
+                    persp);
+        if (s_nb + 2 > BATCH_TRIS) flush();
+        {
+            XgfxVtx* d = &s_batch[s_nb * 3];
+            d[0] = q[0]; d[1] = q[1]; d[2] = q[2];
+            d[3] = q[0]; d[4] = q[2]; d[5] = q[3];
+            s_nb += 2;
+        }
+    }
+    flush();
+    DIRTY();
+}
+
+static void rdp_word(uint64_t w) {
+    if (XHW_TEST_BUILD) {   /* test builds: the first raw words, to name what a game sends */
+        static unsigned s_said;
+        if (s_said++ < 24)
+            xhw_logf("[GFX] raw RDP word %u: %08x %08x (word %u of %u)", s_said, (unsigned)(w >> 32), (unsigned)w,
+                     s_rdp_n, s_rdp_need);
+    }
+    if (!s_rdp_n) {
+        unsigned cmd = (unsigned)(w >> 56) & 0x3Fu;
+        if (cmd < 0x08u || cmd > 0x0Fu) return;   /* another raw RDP command: not taken */
+        s_rdp_need = 4u + (cmd & 4u ? 8u : 0u) + (cmd & 2u ? 8u : 0u) + (cmd & 1u ? 2u : 0u);
+    }
+    s_rdp_w[s_rdp_n++] = w;
+    if (s_rdp_n == s_rdp_need) {
+        s_rdp_n = 0;
+        rdp_tri();
+    }
+}
+
 /* ------------------------------------------------------------ scissor */
 
 /* A scissor or viewport clearly smaller than the SUBSCREEN view (the photo
@@ -1788,8 +1953,13 @@ static void run_dl(const uint32_t* pc) {
             case F3D_G_SETGEOMETRYMODE: R.geom |= w1; break;
             case F3D_G_CLEARGEOMETRYMODE: R.geom &= ~w1; break;
             case F3D_G_RDPHALF_1: R.half1 = w1; break;
-            case F3D_G_RDPHALF_2: R.half2 = w1; break;
-            case F3D_G_RDPHALF_CONT: break;
+            case F3D_G_RDPHALF_2:   /* also the last word of a raw RDP triangle (GoldenEye's sky) */
+                R.half2 = w1;
+                if (XGFX_RDP_TRI && s_rdp_n) rdp_word((uint64_t)R.half1 << 32 | w1);
+                break;
+            case F3D_G_RDPHALF_CONT:
+                if (XGFX_RDP_TRI) rdp_word((uint64_t)R.half1 << 32 | w1);
+                break;
             case F3D_G_TEXRECT:
             case F3D_G_TEXRECTFLIP:
                 /* PW64's F3D emits E4, B3 (s,t), B2 (dsdx,dtdy); current gbi.h says E4, B4, B3:
@@ -1873,6 +2043,16 @@ static void run_dl(const uint32_t* pc) {
                 f3d_loadtlut_decode(w1, &tile, &count);
                 at = R.tile[tile & 7].tmem;
                 if (at < 256) break;
+                /* SL and TL place the palette in the image, and SH - SL counts it:
+                 * GoldenEye keeps each palette right after its texels and loads it
+                 * with SL = the texel count (gDPLoadTLUT07); reading from the image's
+                 * start gave its CI textures their own texels as colours (the purple
+                 * sky layer, the green blocks). -DXGFX_TLUT_OFFSET=0: as before */
+                if (XGFX_TLUT_OFFSET) {
+                    unsigned sl = (w0 >> 14) & 0x3FFu, tl = (w0 >> 2) & 0x3FFu;
+                    src += (((uint32_t)tl * R.timg_w + sl) << R.timg_siz) >> 1;
+                    count = (uint16_t)(count >= sl ? count - sl : 0);
+                }
                 for (at -= 256, i = 0; i <= count && at + i < 256; i++) R.tlut[at + i] = rd16(src + 2 * i);
                 DIRTY();
                 break;
@@ -2429,6 +2609,7 @@ void f3d_run(uint32_t dl, int present) {
     clip_rect_update();
     s_frame_no++;
     s_fullsync = 0;
+    s_rdp_n = 0;
     s_trace = XGFX_TRACE_FRAME && s_frames == XGFX_TRACE_FRAME;
     if (XGFX_TRACE_PRIM && s_trace_next == 1) s_trace_next = 2, s_trace = 1;
     if (XGFX_TRACE_MS) {

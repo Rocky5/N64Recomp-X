@@ -57,7 +57,8 @@ void xgfx_clear(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t argb, i
 }
 void xgfx_present(void) {}
 static unsigned s_tex_creates;
-uint32_t xgfx_tex_create(uint32_t w, uint32_t h, const uint32_t* argb) { (void)w; (void)h; (void)argb; s_tex_creates++; return 1; }
+static uint32_t s_tex_px0;   /* the last texture's first texel */
+uint32_t xgfx_tex_create(uint32_t w, uint32_t h, const uint32_t* argb) { (void)w; (void)h; s_tex_px0 = argb[0]; s_tex_creates++; return 1; }
 void xgfx_tex_destroy(uint32_t tex) { (void)tex; }
 uint32_t xgfx_capture_last(float* u, float* v) { (void)u; (void)v; return 0; }
 uint32_t xgfx_tex_linear_last(float* w, float* h) { (void)w; (void)h; return 0; }
@@ -545,6 +546,64 @@ static void test_tex_recheck(void) {
     CHECK(s_tex_creates == before + 2, "recheck: a hot texture's change waited");
 }
 
+/* a raw RDP triangle sent as RDPHALF_1/RDPHALF_CONT pairs (GoldenEye's sky,
+ * XGFX_RDP_TRI): YH 10, YM 20, YL 40; the major edge x = 10; the high
+ * minor edge from (10,10) to (30,20), the low one back to (10,40); shade
+ * red. Out: two trapezoids (four triangles, two of them flat), doubled */
+static void rdp_pair(uint64_t w) {
+    cmd(0xB4000000u, (uint32_t)(w >> 32));
+    cmd(0xB2000000u, (uint32_t)w);
+}
+static void test_rdp_tri(void) {
+    GfxUcode u = uc_of("RSP SW Version: 2.0D, 04-01-96");
+    unsigned t;
+    s_pc = DL_AT;
+    head_f3d();
+    rdp_pair(0xCCull << 56 | (uint64_t)(40 * 4) << 32 | (uint64_t)(20 * 4) << 16 | (uint64_t)(10 * 4));   /* TRI_SHADE */
+    rdp_pair((uint64_t)(30u << 16) << 32 | 0xFFFF0000u);         /* XL 30, DxLDy -1 */
+    rdp_pair((uint64_t)(10u << 16) << 32);                       /* XH 10, DxHDy 0 */
+    rdp_pair((uint64_t)(10u << 16) << 32 | (uint32_t)(2 << 16)); /* XM 10, DxMDy 2 */
+    rdp_pair((uint64_t)255u << 48);                              /* R 255 */
+    rdp_pair(0); rdp_pair(0); rdp_pair(0); rdp_pair(0); rdp_pair(0); rdp_pair(0); rdp_pair(0);
+    cmd(0xB8000000u, 0);
+    t = run(&u);
+    CHECK(t == 4, "rdp tri: %u triangles (want 4)", t);
+    if (t == 4) {
+        CHECK(near(s_v[0].x, 20.0f) && near(s_v[0].y, 20.0f) && near(s_v[2].x, 60.0f) && near(s_v[2].y, 40.0f) &&
+                  near(s_v[8].x, 20.0f) && near(s_v[8].y, 80.0f),
+              "rdp tri: %.1f,%.1f %.1f,%.1f %.1f,%.1f", s_v[0].x, s_v[0].y, s_v[2].x, s_v[2].y, s_v[8].x, s_v[8].y);
+        CHECK(s_v[2].rgba[0] == 255 && s_v[2].rgba[1] == 0, "rdp tri: shade %u,%u", s_v[2].rgba[0], s_v[2].rgba[1]);
+    }
+}
+
+/* LOADTLUT's SL/TL offset the palette in the image (XGFX_TLUT_OFFSET):
+ * GoldenEye keeps a CI texture's palette right after its texels and loads
+ * it with SL = the texel count (gDPLoadTLUT07, an image of width 1) */
+#define TEXC_AT 0x3A000u
+static void test_tlut_offset(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    unsigned i;
+    for (i = 0; i < 64; i++) put8(TEXC_AT + i, 1);   /* 8x8 CI8, every texel index 1 */
+    put16(TEXC_AT + 64, 0x07C1); put16(TEXC_AT + 66, 0xF801);   /* the palette after it: 1 = red */
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xE3000000u | (0x0Eu << 8) | 2u, 2u << 14);                    /* SETOTHERMODE_H: TEXTLUT RGBA16 */
+    cmd(0xFD000000u | (2u << 21) | (1u << 19) | 0u, TEXC_AT);           /* SETTIMG CI8 width 1 */
+    cmd(0xF5000000u | (2u << 21) | (1u << 19) | 256u, 7u << 24);        /* SETTILE 7 at TMEM 256 */
+    cmd(0xF0000000u | (64u << 14) | (0u << 2), (7u << 24) | ((64u + 1u) << 14));   /* LOADTLUT SL 64, SH 65 */
+    cmd(0xFD000000u | (2u << 21) | (1u << 19) | (8u - 1u), TEXC_AT);    /* SETTIMG CI8 width 8 */
+    cmd(0xF5000000u | (2u << 21) | (1u << 19) | (1u << 9), 7u << 24);   /* SETTILE 7: line 1 */
+    cmd(0xF4000000u, (7u << 24) | (28u << 12) | 28u);                  /* LOADTILE 8x8 */
+    cmd(0xF5000000u | (2u << 21) | (1u << 19) | (1u << 9), 0);         /* SETTILE 0: CI8 */
+    cmd(0xF2000000u, (28u << 12) | 28u);
+    cmd(0xE4000000u | (64u << 12) | 64u, 0);
+    cmd(0xE1000000u, 0);
+    cmd(0xF1000000u, (1u << 26) | (1u << 10));
+    cmd(0xDF000000u, 0);
+    run(&u);
+    CHECK(s_tex_px0 == 0xFFFF0000u, "tlut offset: texel 0 is %08x (want the palette's red)", s_tex_px0);
+}
+
 int main(void) {
     test_ci();
     setup_data();
@@ -559,6 +618,8 @@ int main(void) {
     test_readback();
     test_tile_rowhash();
     test_tex_recheck();
+    test_rdp_tri();
+    test_tlut_offset();
     if (s_fail) printf("test_f3dex: %d failed\n", s_fail);
     return s_fail ? 1 : 0;
 }
