@@ -114,6 +114,16 @@ RDP rules added 2026-10-17 (each with its switch in `docs/testing.md`):
 - a LOADBLOCK into a 32-bit tile under a 16-bit image counts 32-bit
   texels (`XGFX_LOAD32`; Mario Party's title logo).
 
+Added 2026-10-18:
+- an axis whose mask is 0 clamps whatever its clamp bit (the RDP has no
+  wrap without a mask): Ocarina of Time's moon, a 64x64 tile on a quad
+  whose coordinates run to 128, drew several moons (`XGFX_MASK0_CLAMP`);
+- the texture cache's change check: LOADTILE textures hash every row
+  (`XGFX_TILE_ROWHASH`); a block load over 2 KB, checked by 16 samples
+  each use, is also hashed whole every 8th frame and every frame once its
+  address has changed (`XGFX_TEX_RECHECK`): Pokémon Snap types its
+  dialogue into one 3952-byte strip.
+
 Widescreen (generic hor+, the 4:3 box), the screen-fade and BACK-menu held
 frame, the title fit and the scissor rules are below the GBI: the same for
 every family.

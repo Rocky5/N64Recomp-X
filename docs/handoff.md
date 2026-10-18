@@ -9,8 +9,9 @@ console).
 The newest state first; the entries below are the record, oldest first.
 "xemu" is the emulator (slot runs, test builds); "red" is the maintainer's
 console. Red ran the 2026-10-17 set that evening (480i: its dashboard
-allows no 480p or 720p); its fix round (`vmp6`, `vmm5`, `vzel9`, `vbk7`,
-commit `0e5dc19`) is staged, not yet run. Anything not marked red is xemu
+allows no 480p or 720p); the next set (`vzel10`, `vbk8`, `vmp7`, `vmm6`,
+`vsnap2`, commit `d4a122a`: the fix round plus the 2026-10-18 renderer and
+timer fixes) is staged, not yet run. Anything not marked red is xemu
 only.
 
 | game (US) | how built | xemu | console (red) |
@@ -18,10 +19,10 @@ only.
 | Pilotwings 64 | its pack, or the ROM alone (`--analyze`): the same | title to results, saves, sound, 720p + hor+, the BACK menu | `vnrx1`: plays, sound, EEPROM saves, the BACK menu, the combos; 53-59 fps |
 | Mario Kart 64 | the ROM alone | title, menus, races (F3DEX), sound (nead), Controller Pak, 720p 16:9 | `vmk2`/`vmk4`: races at 29.9 fps (display lists 2-3 ms), sound, the ROM inside the XBE, the BACK menu and its Paks page, EEPROM and pak files; the map screen's TV (a framebuffer read) wrong; drift boosts in question |
 | Super Smash Bros. | the ROM alone | intro, title, 1P character select, a 1P match (Link vs Link, Hyrule Castle) at 47-50 fps with scripted input; 720p 16:9 at 45-57 fps (11.7 MB free) | `vssb6`: perfect, 59.9 fps; portraits sharp |
-| Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text; one present a frame (its frames are several tasks; presented at the swap), audio; its processes run as coroutines; 720p at 29-30 fps; START past the title to Mushroom Village (`0e5dc19`) | `vmp5`: flicker gone, 29.9 fps; the logo garbled and the controls dead (both fixed in `vmp6`, staged); the first boot's audio stuck |
+| Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text; one present a frame (its frames are several tasks; presented at the swap), audio; its processes run as coroutines; 720p at 29-30 fps; START past the title to Mushroom Village (`0e5dc19`) | `vmp5`: flicker gone, 29.9 fps; the logo garbled and the controls dead (both fixed since, `vmp7` staged); the first boot's audio stuck |
 | Mario Party 2 / 3 | the ROM alone | intro, menus; 2: its audio thread, destroyed and made again by the game, plays on (58 tasks a second, 2026-10-17) | - |
 | Super Mario 64 | the ROM alone (+ three `--learn` rounds before) | head screen, Lakitu intro, castle grounds and Lakitu's text drawn right (scripted, 2026-10-17); 720p hor+ at 29-30 fps (the skybox stays in the 4:3 box) | `vsm6`: works perfectly, 29.9 fps |
-| Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, main menu, Professor Oak's lab and his dialogue (threads reused; a glyph run missing) | `vsnap1` (before the thread-stack fix): the crash xemu had then |
+| Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, title, the photographer card, Professor Oak's lab and his whole briefing, every glyph right (2026-10-18); the courses not reached by script | `vsnap1` (before the thread-stack fix): the crash xemu had then; `vsnap2` staged |
 | Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro with the lair drawn whole, Banjo's house (~28 fps); near/far now the game's (the IPL3 copy); 720p hor+ at ~28 fps, 10 MB free (geometry the game culls shows as void at the far edges) | `vbk6`: works well, widescreen right, 29.9 fps; textures wrong as jiggies come in and in the START menu |
 | Blast Corps | the ROM alone + 15 `--learn` rounds | Rare logo, title, profile screen, the attract demo (50-56 fps) | - |
 | Majora's Mask | the ROM alone | title, file select, name entry, audio (2026-10-17) | `vmm3`: crashed at its first uncached write (KSEG1 alias refused); `vmm5` staged |
@@ -57,9 +58,10 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
 `docs/analyzer.md`):
 
 1. From red (2026-10-17): Banjo-Kazooie's jiggy and START-menu
-   textures; Ocarina of Time's textures and two moons; Mario Party's
-   first-boot audio hang (the AC97 bring-up, `boot_prev.log`); whether
-   `vmp6`/`vmm5`/`vzel9`/`vbk7` fix what they are meant to; 720p on the
+   textures; Ocarina of Time's textures (its two moons fixed in xemu);
+   Mario Party's first-boot audio hang (the AC97 bring-up,
+   `boot_prev.log`); whether `vzel10`/`vbk8`/`vmp7`/`vmm6`/`vsnap2` fix
+   what they are meant to; 720p on the
    console (red's dashboard has it off); Mario Kart 64's drift boosts.
 2. GoldenEye: the pause watch's model (0x7F054000-0x7F05B000, older than
    the walker change), the purple sky, the walker's RDRAM tables
@@ -71,7 +73,9 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
    Rare's compressed boots before learning rounds (19), no frames in the
    first round (52).
 5. Per game: Paper Mario's map textures, Donkey Kong 64's audio, Bomberman
-   64's loader, Perfect Dark's 0x70000000 mapping, Snap's glyphs.
+   64's loader, Perfect Dark's 0x70000000 mapping, Snap's courses (never
+   reached), Mario Party's 720p title logo, Ocarina of Time stopping after
+   an xemu screenshot.
 6. Renderer: S2DEX's own commands, F3DDKR, framebuffer effects by default;
    hor+ for orthographic backgrounds (Super Mario 64's sky); MusyX and the
    other audio microcodes.
@@ -1468,3 +1472,79 @@ releases at `0e5dc19`, each booted 35 s in xemu with no crash.
 | `vmm5` | Majora's Mask | 2044b8ad67d3 | the crash at its first uncached write (or the log names the page in the way) |
 | `vzel9` | Ocarina of Time 1.2 | 9e2f9f402b59 | the KSEG1 alias (uncached RDRAM), 32-bit block loads: perhaps its textures |
 | `vbk7` | Banjo-Kazooie | 5999609195a9 | 32-bit block loads: perhaps the jiggy and START-menu textures |
+
+## 2026-10-18: Pokémon Snap's dialogue, Ocarina of Time's moon, timers after a hitch (overnight, xemu)
+
+**Pokémon Snap now (xemu slot 14, test build, scripted input; emulator
+only).** From the ROM alone at `d4a122a`: intro, title, the photographer
+card, Professor Oak's lab and his whole briefing (the ZERO-ONE, the PKMN
+Report, "Shall I repeat this information?") with every glyph right; ~58 fps
+in the menus, 30 in the lab; no crash or stall in 6-minute runs. `[MEM]`
+64 MB, 14.7 MB free in the lab; `[CLOCK]` 733 MHz (xemu). The scripted
+input has not yet reached a course (Beach): blind timing through the
+dialogue is slow.
+
+**Its glyphs.** Snap types its dialogue into a 152x13 RGBA16 strip (3952
+bytes, one LOADBLOCK) at a fixed address. The texture cache's change check
+sampled 16 words of anything over 2 KB, so most new glyphs kept the strip's
+old contents ("touna everywn" for "found everywhere"). A block load over
+2 KB is now also hashed whole every 8th frame it is used (staggered by
+cache slot) and every frame once its address has been seen to change
+(`XGFX_TEX_RECHECK`); LOADTILE textures hash every row, not the first and
+last (`XGFX_TILE_ROWHASH`). Hashing every big texture every frame was tried
+first and cost Snap's lab 2.5 ms of display-list time a frame in xemu; the
+recheck costs ~0.4 ms (8.4 against 8.0).
+
+**Ocarina of Time's two moons (red's report) reproduced and fixed in
+xemu.** `-DXGFX_TRACE_PRIM=0xf0ffb4` traced the frame with the moon's prim
+colour: one draw, 2 triangles, a 64x64 IA8 tile with clamp bits clear and
+mask 0, texture coordinates 0..2. The RDP clamps an axis with mask 0
+whatever its clamp bit (no wrap without a mask), so only one moon shows;
+the interpreter repeated it (four moons, two on screen). Fixed for every
+game (`XGFX_MASK0_CLAMP`). The moon itself was not caught on screen again
+(the title's day/night timing varies run to run); the trace shows the
+quad's coordinates and the wrap mode now clamp.
+
+**Timers after a long hitch.** A periodic `osSetTimer` more than one
+interval behind kept a deadline in the past; the timer thread's wait
+(`next - now`) underflowed to ~31 days and every timer stopped until a new
+`osSetTimer`. Re-armed from now, a past deadline waits 0 ms
+(`XRC_TIMER_CATCHUP`; `test_time.py` reproduces the 2,688,506,306 ms wait
+with it off). Any hitch longer than a timer's interval on the console (an
+HDD spin-up, a long load) could do this.
+
+**Open: Ocarina of Time stops after a screenshot (xemu).** An autopad
+`SHOT` (an `[FBDUMP]` over COM1, ~10 s inside `osViSwapBuffer` on the
+scheduler's thread) leaves OoT with one more graphics task and then none:
+the graphics thread waits for its task's done (`gfxCtx->queue`), IrqMgr
+still forwards retraces, the scheduler runs audio tasks. Not the timer bug
+(still there with the fix) and no event was dropped (`[OS] event ...
+dropped` never logged). Earlier 720p runs had it too (`presented` stuck
+after the first shot). One shot per OoT run until then; it may be related
+to the console's early-press stall.
+
+**Regressions checked (xemu 720p, slot 10, the hd720 scenario):** Smash's
+1P menu, Banjo's intro (Spiral Mountain), Super Mario 64's file select and
+Mario Kart 64's title (its checkered flag, compared with the clamp off) draw
+as before. Mario Party's title logo, still blocky at 720p, is worse with
+the three switches off (striped), so better, not right: its 188-wide RGBA32
+strips load with a dxt that does not divide the line (open). Mario Kart
+64's game-select panels show thin dark lines at strip seams in one run;
+not compared with the clamp off (the scripted START did not reach the menu
+again).
+
+Host: `test_f3dex.py` (row hash, the recheck, mask-0 clamp: each fails with
+its switch off), `test_time.py`, `test_fbfx.py`; `rom_leak_check.py` clean.
+
+**Staged for red (supersedes the fix round above; `build-host/deploy-set.sh`
+and the watcher deploy these, pulling the logs of `vzel7`, `vbk6`, `vmp5`,
+`vmm3`, `vsnap1` first).** ThinLTO releases at `d4a122a`, each booted 30-40 s
+in xemu (slot 12) with no crash.
+
+| build | game | xbe sha1 | what it should show |
+|---|---|---|---|
+| `vsnap2` | Pokémon Snap | c3ee0df70ec5 | past the main menu (vsnap1 crashed there), Oak's lab with its text right; play on to the Beach: the course is untested anywhere |
+| `vzel10` | Ocarina of Time 1.2 | 8b90eaa8c938 | one moon; the KSEG1 and 32-bit load fixes of `vzel9` |
+| `vbk8` | Banjo-Kazooie | cde875ad6a88 | the jiggy and START-menu textures (texture change checks, the mask-0 clamp) |
+| `vmp7` | Mario Party | 2ee1dcb46902 | the controls and the title logo (`vmp6`'s fixes) |
+| `vmm6` | Majora's Mask | 9f5ead6efb6e | the first uncached write no longer crashes it |
