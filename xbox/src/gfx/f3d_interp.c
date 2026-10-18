@@ -506,8 +506,39 @@ static void log_side_leak(void) {
              (unsigned)s_st.cc0, (unsigned)s_st.cc1, (unsigned)s_st.depth_func);
 }
 
+static float s_m0[2] = { -1.0f, -1.0f };   /* bind_unit: unit 0's mask-0 axes (its loaded extent, 0..1), or -1 */
+static uint32_t s_m0_tile, s_m0_addr;
 static void flush(void) {
     if (!s_nb) return;
+    if (XHW_TEST_BUILD && s_st.tex[0] && (s_m0[0] >= 0.0f || s_m0[1] >= 0.0f)) {
+        static unsigned s_said;
+        uint32_t i;
+        float lo[2] = { 2e9f, 2e9f }, hi[2] = { -2e9f, -2e9f };
+        for (i = 0; i < s_nb * 3; i++) {
+            if (s_batch[i].s0 < lo[0]) lo[0] = s_batch[i].s0;
+            if (s_batch[i].s0 > hi[0]) hi[0] = s_batch[i].s0;
+            if (s_batch[i].t0 < lo[1]) lo[1] = s_batch[i].t0;
+            if (s_batch[i].t0 > hi[1]) hi[1] = s_batch[i].t0;
+        }
+        for (i = 0; i < 2 && s_said < 40; i++) {
+            /* in texels: past the loaded extent by more than one (filtering's edge) */
+            float n = (float)(i ? (s_m0_tile & 0xFF) : (s_m0_tile >> 8 & 0xFF)), k = s_m0[i] > 0.0f ? n / s_m0[i] : 0.0f;
+            static uint32_t s_seen[40];
+            unsigned j;
+            if (s_m0[i] < 0.0f || n < 2.0f || (lo[i] * k > -1.5f && hi[i] * k < n + 1.5f)) continue;
+            for (j = 0; j < s_said && s_seen[j] != (s_m0_addr ^ i); j++) {}
+            if (j < s_said) continue;
+            s_seen[s_said] = s_m0_addr ^ i;
+            {
+                s_said++;
+                xhw_logf("[GFX] mask-0 clamp: axis %c of %08x (fmt %u siz %u %ux%u) runs %d..%d%% of its %d%%, %u tris at %d,%d",
+                         i ? 't' : 's', (unsigned)s_m0_addr, (unsigned)(s_m0_tile >> 24), (unsigned)(s_m0_tile >> 16 & 0xFF),
+                         (unsigned)(s_m0_tile >> 8 & 0xFF), (unsigned)(s_m0_tile & 0xFF), (int)(lo[i] * 100.0f),
+                         (int)(hi[i] * 100.0f), (int)(s_m0[i] * 100.0f), (unsigned)s_nb, (int)s_batch[0].x, (int)s_batch[0].y);
+                break;
+            }
+        }
+    }
     log_side_leak();
     if (s_trace) {
         uint32_t i;
@@ -866,6 +897,12 @@ static void bind_unit(int u, int tidx) {
     if (!e) return;
     s_st.wrap_s[u] = wrap_of(t->cms, t->masks);
     s_st.wrap_t[u] = wrap_of(t->cmt, t->maskt);
+    if (XHW_TEST_BUILD && u == 0) {   /* test builds: what the mask-0 clamp changes (flush logs it) */
+        s_m0[0] = !t->masks && !(t->cms & 2) ? (float)e->w / (float)e->pw : -1.0f;
+        s_m0[1] = !t->maskt && !(t->cmt & 2) ? (float)e->h / (float)e->ph : -1.0f;
+        s_m0_tile = (uint32_t)t->fmt << 24 | (uint32_t)t->siz << 16 | (uint32_t)e->w << 8 | e->h;
+        s_m0_addr = e->addr;
+    }
     s_st.filter[u] = ((R.omh >> F3D_G_MDSFT_TEXTFILT) & 3) != 0;
     /* u = (s * shift - uls) / padded width */
     s_u_scale[u] = shift_scale(t->shifts) / (float)e->pw;

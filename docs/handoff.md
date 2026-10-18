@@ -1532,6 +1532,14 @@ strips load with a dxt that does not divide the line (open). Mario Kart
 not compared with the clamp off (the scripted START did not reach the menu
 again).
 
+GoldenEye with the three switches on and off (slot 13, its 30 learn
+logs): the Dam the same either way (the green block left of the start and
+the speckled props are older); one run without the ammo counter was
+GoldenEye's armed/unarmed input timing (the watch screen draws the bullet
+icon and digits with the clamp on). Test builds now log, once per texture,
+a draw whose coordinates leave a mask-0 axis's loaded extent by more than a
+texel (`[GFX] mask-0 clamp:`): none in that run.
+
 Host: `test_f3dex.py` (row hash, the recheck, mask-0 clamp: each fails with
 its switch off), `test_time.py`, `test_fbfx.py`; `rom_leak_check.py` clean.
 
