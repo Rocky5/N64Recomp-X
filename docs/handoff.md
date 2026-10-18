@@ -9,7 +9,7 @@ console).
 The newest state first; the entries below are the record, oldest first.
 "xemu" is the emulator (slot runs, test builds); "red" is the maintainer's
 console. Red ran the 2026-10-17 set that evening (480i: its dashboard
-allows no 480p or 720p); the next set (`vzel11`, `vbk9`, `vmp8`, `vmm7`,
+allows no 480p or 720p); the next set (`vzel11`, `vbk10`, `vmp8`, `vmm7`,
 `vsnap3`, `vge3`, commit `93c7fb5`: the fix round plus the 2026-10-18
 renderer, timer, palette and fall-through fixes) is staged, not yet run. Anything not marked red is xemu
 only.
@@ -60,7 +60,7 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
 1. From red (2026-10-17): Banjo-Kazooie's jiggy and START-menu
    textures; Ocarina of Time's textures (its two moons fixed in xemu);
    Mario Party's first-boot audio hang (the AC97 bring-up,
-   `boot_prev.log`); whether `vzel11`/`vbk9`/`vmp8`/`vmm7`/`vsnap3`/`vge3`
+   `boot_prev.log`); whether `vzel11`/`vbk10`/`vmp8`/`vmm7`/`vsnap3`/`vge3`
    fix what they are meant to; 720p on the
    console (red's dashboard has it off); Mario Kart 64's drift boosts.
 2. GoldenEye: on the console (`vge3`); the watch model and the walker's
@@ -1553,7 +1553,7 @@ and `build-host/watch-red.sh` deploy these, pulling the logs of `vzel7`, `vbk6`,
 |---|---|---|---|
 | `vsnap3` | Pokémon Snap | 145b63956afe | past the main menu (vsnap1 crashed there), Oak's lab with its text right; play on to the Beach: the course is untested anywhere |
 | `vzel11` | Ocarina of Time 1.2 | 86d399ad6e41 | one moon; the KSEG1 and 32-bit load fixes |
-| `vbk9` | Banjo-Kazooie | 6781ba7eb95c | the jiggy and START-menu textures (texture change checks, the mask-0 clamp) |
+| `vbk10` | Banjo-Kazooie | 3c946016d8a1 | the jigsaw transition's pieces carrying the picture (built with `-DXGFX_FB_READBACK=3`, `2255849`: the frame converted when the game invalidates it); the START-menu textures; 11.7 MB free |
 | `vmp8` | Mario Party | c9801b211977 | the controls and the title logo |
 | `vmm7` | Majora's Mask | 6986da84bf11 | the first uncached write no longer crashes it |
 | `vge3` | GoldenEye (new: `/F/Applications/N64Recomp-X-GE`, 4E52481C; deploy-set makes the folders) | 5b43d75de2be | first console run (its 30 learn logs): logos, menus, the Dam with its textures, sky, cliffs, Bond's gun and the pause watch right in xemu (cosf, palettes, the walker's tables) |
@@ -1632,3 +1632,15 @@ after them. Not seen again (the run's timing varies); it may be a
 transition or the "texture issues" red reported. Its S2DEX2 `G_BG_COPY`
 (0x0A, the pre-rendered backgrounds) is still unhandled (`[GFX] unhandled op
 0A`).
+
+### Banjo-Kazooie's jigsaw transition (2026-10-18, xemu)
+
+Red's "textures wrong as the jiggies come in": the transition copies the
+frame into 80 32x32 textures of the jigsaw model with the CPU right after
+`osInvalDCache` over it (`model_copyFramebufferToTextures`,
+`gc/transition.c`), and our frames never reach RDRAM. Readback mode 3
+(`-DXGFX_FB_READBACK=3`) converts a staged frame when the game invalidates
+at least half of it: the pieces now show the picture (the guitar scene,
+the title logo, `-DXGFX_FB_INVAL_SHOT=20` shots). Mode 1 also did it, but
+its page watch went hot in the levels (60-120 conversions per 600 frames,
+15 fps). Default still 0; `vbk10` is built with 3 for red.
