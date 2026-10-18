@@ -1390,7 +1390,10 @@ model. Bisected by interpreting ranges (`N64RX_CAPTURED_INTERP`, now over
 not it). Every switch checked there has its `sltiu` bound's case count
 and a `nop` delay slot. The walker's RDRAM tables are off by default for
 now (`N64RX_WALK_RDRAM=1` turns them on): GoldenEye builds as round 26,
-the level drawn, its level code partly interpreted. `[MEM]` free 18608 KB;
+its level code partly interpreted. Round 30 (off) still shows the paused
+watch without its model, so that one is older than the walker change
+(interpreting 0x7F054000-0x7F05B000 brings the model back); the black
+world was seen only with it on. `[MEM]` free 18608 KB;
 `[CLOCK]` cpu 733 MHz (xemu).
 
 **Staged for the console, the current set (red still off; supersedes
