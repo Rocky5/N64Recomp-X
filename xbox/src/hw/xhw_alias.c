@@ -121,6 +121,15 @@ static int table_for(uint32_t va) {
     return 1;
 }
 
+/* hold a user-space range for later aliasing, before anything else can be
+ * placed there (the learnt KUSEG span of a game that maps its code through
+ * the TLB: rt/boot.c). 1 if every 4 MB region of it is held */
+int xhw_alias_hold(uint32_t va, uint32_t bytes) {
+    va &= ~0x3FFFFFu;
+    bytes = (bytes + 0x3FFFFFu) & ~0x3FFFFFu;
+    return range_ok(va, bytes) && reserve(va, bytes);
+}
+
 int xhw_alias_map(uint32_t va, uint32_t pa, uint32_t bytes) {
     uint32_t off, f;
     if (!range_ok(va, bytes) || (pa & 0xFFFu) || !reserve(va, bytes)) return 0;

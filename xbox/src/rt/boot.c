@@ -256,6 +256,16 @@ static void game(void) {
 void xrc_boot(void) {
     xhw_logf("[RECOMP] N64Recomp-X %s, game %s, title id " XRC_TITLE_ID_HEX, XRC_VERSION,
              xrc_game.id ? xrc_game.id : "(none)");
+#if defined(XRC_RDRAM_USER) && defined(XRC_KUSEG_HOLD) && defined(XRC_KUSEG_HOLD_END)
+    {   /* the learnt KUSEG span's host range (rdram + vaddr), held before the ROM's page cache and the
+         * rest are placed: Perfect Dark's 0x70000000 lands at 16 MB, where something had already been
+         * put by the time its TLB mapped it ("not aliased: the host range is in use") */
+        uint32_t lo = (uint32_t)(XRC_RDRAM_USER) - 0x80000000u + (uint32_t)(XRC_KUSEG_HOLD);
+        uint32_t n = (uint32_t)(XRC_KUSEG_HOLD_END) - (uint32_t)(XRC_KUSEG_HOLD);
+        xhw_logf("[MEM] KUSEG %08x-%08x at host %08x: %s", (unsigned)(XRC_KUSEG_HOLD), (unsigned)(XRC_KUSEG_HOLD_END - 1u),
+                 (unsigned)lo, xhw_alias_hold(lo, n) ? "held" : "in use already");
+    }
+#endif
     xrc_settings_load();
     video_line();
     if (!xrc_game.id) no_game();

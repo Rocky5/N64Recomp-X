@@ -85,6 +85,7 @@ void* xhw_rdram_alloc(uint32_t bytes);
  * already maps; 0 when the range is in use (nothing changed). _unmap undoes
  * only what _map did. */
 int xhw_alias_map(uint32_t va, uint32_t pa, uint32_t bytes);
+int xhw_alias_hold(uint32_t va, uint32_t bytes);   /* hold a user-space range for later aliasing (4 MB regions) */
 void xhw_alias_unmap(uint32_t va, uint32_t bytes);
 void xhw_alias_why(uint32_t va, uint32_t* pde, uint32_t* pte);   /* the PDE/PTE that hold va */
 /* Page watch (xhw_alias.c, framebuffer readback): arm (1) clears the

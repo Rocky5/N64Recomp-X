@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 
 from .analyze import funcs as F
 
+RDRAM8 = re.compile(r'^(?:.*\[LEARN\]\s+)?rdram\s+8\s*$')
 LINE = re.compile(r'^(?:.*\[LEARN\]\s+)?(func|dma|kuseg)\s+([0-9A-Fa-fx]+)\s+([0-9A-Fa-fx]+)(?:\s+(?:from\s+)?([0-9A-Fa-fx]+))?\s*$')
 
 
@@ -31,10 +32,11 @@ class Learnt:
     dmas: list = field(default_factory=list)    # (rom offset, ram, size), file order
     code: dict = field(default_factory=dict)    # block vram -> its bytes, from RDRAM (no ROM DMA put them there)
     kuseg: dict = field(default_factory=dict)   # 1 MB KUSEG regions the TLB mapped -> 1 if the host could not alias one
+    rdram_mb: int = 0   # 8: the TLB mapped physical memory past 4 MB (the Expansion Pak's; rt/tlb.c)
     high: set = field(default_factory=set)      # 1 MB KSEG2/3 regions the TLB mapped (the host never can: XRC_HIGH_TLB)
 
     def __bool__(self):
-        return bool(self.funcs or self.dmas or self.code or self.kuseg or self.high)
+        return bool(self.funcs or self.dmas or self.code or self.kuseg or self.high or self.rdram_mb)
 
 
 def _code_records(data, out):
@@ -79,6 +81,9 @@ def read(paths):
         text = p.read_text(encoding='utf-8', errors='replace')
         _code_from_log(text, out)
         for line in text.splitlines():
+            if RDRAM8.match(line.strip()):
+                out.rdram_mb = 8
+                continue
             m = LINE.match(line.strip())
             if not m:
                 continue
@@ -183,12 +188,13 @@ def _rom_backed(a, runs, rom_len, notes):
     if os.environ.get('N64RX_TLB_ROM', '1') == '0':
         return runs
     rom = a.img.rom
-    pages = {}
+    pages, captured = {}, set()
     for blk, data in runs.items():
         for off in range(0, len(data), 0x1000):
             v, b = blk + off, data[off:off + 0x1000]
             if v >= 0x80000000 or len(b) < 0x1000 or b.count(b[:4]) * 4 == len(b):
                 continue
+            captured.add(v)
             r = rom.find(b[:64], 0, rom_len)
             while r != -1 and rom[r:r + 0x1000] != b:
                 r = rom.find(b[:64], r + 1, rom_len)
@@ -202,13 +208,22 @@ def _rom_backed(a, runs, rom_len, notes):
         if base + d < 0:
             continue
         end = min(max(vs) + 0x1000 + 0x10000, base + 0x100000, rom_len - d)
-        if any(s.has(base) or s.has(end - 1) for s in a.img.segments):
+        # never over a captured page of the region that differs from the ROM at that offset: Perfect
+        # Dark's first two pages at 0x70000000 match the ROM's start, the rest of its code there does
+        # not (0x70003EE0 compiled from unrelated ROM bytes). N64RX_TLB_ROM_RUN=0: as before
+        lo = base
+        if os.environ.get('N64RX_TLB_ROM_RUN', '1') != '0':
+            other = [v for v in captured if base <= v < base + 0x100000 and pages.get(v) != d]
+            lo = max([v + 0x1000 for v in other if v < min(vs)], default=base)
+            end = min([end] + [v for v in other if v > min(vs)])
+        if end <= lo or any(s.has(lo) or s.has(end - 1) for s in a.img.segments):
             continue
-        seg = F.Segment(f'tlb_{base:08X}', base + d, base, end - base)
+        name = f'tlb_{base:08X}' if lo == base else f'tlb_{lo:08X}'
+        seg = F.Segment(name, lo + d, lo, end - lo)
         a.img.segments.append(seg)
         a.funcs[seg.name] = {}
-        taken.update(range(base, end, 0x1000))
-        notes.append(f'{seg.name}: ROM {base + d:#x} at {base:08X}, {end - base:#x} bytes (learnt: {len(vs)} pages the '
+        taken.update(range(lo, end, 0x1000))
+        notes.append(f'{seg.name}: ROM {lo + d:#x} at {lo:08X}, {end - lo:#x} bytes (learnt: {len(vs)} pages the '
                      f'game mapped through its TLB match the ROM there)')
     if not taken:
         return runs
@@ -376,4 +391,6 @@ def rdram_user(learnt):
     va = (0x01000000 - low + 0x80000000) & 0xFFFFFFFF
     if not 0x01000000 < va < 0x5F000000:   # KSEG1's alias must stay in user space too
         return []
-    return [f'-DXRC_RDRAM_USER=0x{va:08X}u']
+    # and the span's host range held at boot, before anything else is put there (rt/boot.c)
+    end = max(learnt.kuseg) + 0x100000
+    return [f'-DXRC_RDRAM_USER=0x{va:08X}u', f'-DXRC_KUSEG_HOLD=0x{low:08X}u', f'-DXRC_KUSEG_HOLD_END=0x{end:08X}u']

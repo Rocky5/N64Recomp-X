@@ -71,6 +71,10 @@ static void alias(Ent* e, unsigned idx) {
         int ok;
         if (!(e->lo[k] & LO_V)) continue;
         if (va >= 0x80000000u && va < 0xC0000000u) continue;   /* KSEG0/1 never go through the TLB */
+        if (pa + sz > xrc_rdram_size && pa < 0x800000u) {   /* the Expansion Pak's 4 MB: the next build gets 8 */
+            static int s_said8;
+            if (!s_said8++) xhw_logf("[LEARN] rdram 8");
+        }
         if (va >= 0xC0000000u) host = 0;                       /* KSEG2/3: the kernel's system space there */
 #if XRC_TLB
         ok = pa < xrc_rdram_size && sz <= xrc_rdram_size - pa && xhw_alias_map(host, xpa, sz);
