@@ -54,6 +54,10 @@ const char* xhw_splash_hold_text(int hold, int holding);
 #define XHW_SPLASH_BAR_W 400
 #define XHW_SPLASH_BAR_H 8
 
+/* the BACK menu's Controls page: the controller and its callouts, drawn on
+ * the card by xhw_panel_render (xhw_panel_pad.c) */
+void xhw_panel_pad_render(uint32_t* img, int pitch_px, const xhw_panel* p);
+
 extern const unsigned char xhw_font16[256 * 16];   /* unscii-16: 8x16, one byte a row, MSB left */
 
 #endif

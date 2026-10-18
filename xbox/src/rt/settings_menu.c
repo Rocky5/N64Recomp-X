@@ -26,8 +26,9 @@
  * DIVERGES: a pause the N64 did not have.
  *
  * Rows (M2's): Video output (*), Widescreen (Auto, On, Off), Texture filter, FPS counter,
- * Volume, Stick dead zone (per port, with the stick's live tilt), Controller
- * Pak (per port: A opens the Paks page, below), Restart,
+ * Volume, Stick dead zone (per port, with the stick's live tilt), Controls
+ * (per port: A opens the Controls page, below), Controller Pak (per port:
+ * A opens the Paks page, below), Restart,
  * Exit to dashboard, Return. settings.ini is written on Return (or B, or
  * BACK) when something changed. Kill switch -DXRC_MENU=0: BACK does
  * nothing, settings.ini still works. */
@@ -54,12 +55,12 @@ int xrc_gfx_ready(void);
 #endif
 
 enum {
-    ROW_VIDEO, ROW_WIDE, ROW_FILTER, ROW_FPS, ROW_VOLUME, ROW_PORT, ROW_STICK, ROW_PAK, ROW_RESTART, ROW_EXIT,
-    ROW_RETURN, N_ROWS
+    ROW_VIDEO, ROW_WIDE, ROW_FILTER, ROW_FPS, ROW_VOLUME, ROW_PORT, ROW_STICK, ROW_CONTROLS, ROW_PAK, ROW_RESTART,
+    ROW_EXIT, ROW_RETURN, N_ROWS
 };
 static const char* const k_label[N_ROWS] = {
     "Video output", "Widescreen", "Texture filter", "FPS counter", "Volume", "Controller", "  Stick dead zone",
-    "  Controller Pak", "Restart", "Exit to dashboard", "Return",
+    "  Controls", "  Controller Pak", "Restart", "Exit to dashboard", "Return",
 };
 #define HAS_PAKS (XRC_MENU_PAKS && XRC_SAVE_PAK)
 
@@ -103,7 +104,7 @@ enum { CONFIRM_NONE, CONFIRM_DELETE, CONFIRM_FORMAT, CONFIRM_COPY };
 #define OP_COPY 100   /* s_pak_op: OP_COPY + slot copies a note to Pak s_copy_to */
 #define NOTES_SHOWN 6
 #define MSG_MS 2500
-static int s_page;                  /* 0 the settings, 1 the Paks page */
+static int s_page;                  /* 0 the settings, 1 the Paks page, 2 the Controls page */
 static int s_psel, s_pport, s_scroll, s_confirm;
 /* for the menu's thread: apply the settings; delete (1 + slot), copy (OP_COPY + slot), format (-1) */
 static volatile int s_pak_apply, s_pak_op;
@@ -111,6 +112,29 @@ static xu_pak_note s_notes[16];
 static volatile int s_nnotes, s_free;
 static char s_msg[64];
 static uint64_t s_msg_us;
+
+/* ---- the Controls page ----
+ * Per port: the Xbox controller drawn on the card (xhw_panel_pad.c), each
+ * input's callout naming the N64 control it gives (settings.ini [portN],
+ * si.c maps through it). Up / Down walk the port line, then the left
+ * column's inputs, then the right's, top to bottom; Left / Right (or A)
+ * change what the selected one gives: a button any N64 button or nothing,
+ * the d-pad and the sticks the N64's stick, the C buttons, its d-pad or
+ * nothing. Y puts the port's defaults back. What is held on that port's
+ * pad lights up on the drawing as it happens, so a change can be tried at
+ * once. A change applies at once (the game reads through the table). */
+#define CTL_ITEMS (1 + XHW_IN_COUNT)   /* the port line, then the inputs */
+static const int8_t k_ctl_order[XHW_IN_COUNT] = {
+    XHW_IN_LT, XHW_IN_LSTICK, XHW_IN_LCLICK, XHW_IN_START, XHW_IN_DPAD,   /* the left column */
+    XHW_IN_RT, XHW_IN_Y, XHW_IN_X, XHW_IN_B, XHW_IN_A, XHW_IN_WHITE, XHW_IN_BLACK, XHW_IN_RSTICK, XHW_IN_RCLICK,
+};
+static int s_csel, s_cport;
+
+static int controls_changed(int port) {
+    int in, n = 0;
+    for (in = 0; in < XHW_IN_COUNT; in++) n += g_xrc_settings.controls[port][in] != xrc_controls_default(in);
+    return n;
+}
 
 static int pk_note_rows(void) { return s_nnotes ? s_nnotes : 1; }
 static int pk_format(void) { return PK_NOTES + pk_note_rows(); }
@@ -229,6 +253,12 @@ static void row_value(int r, char* v, size_t cap, int* star) {
     case ROW_PORT: snprintf(v, cap, "Port %d%s", s_port + 1, s_raw_ok[s_port] ? "" : " (none)"); break;
     case ROW_STICK: snprintf(v, cap, "%d%%", g->stick_deadzone[s_port]); break;
     case ROW_PAK: pak_in_text(s_port, v, cap, 1); break;
+    case ROW_CONTROLS: {
+        int n = controls_changed(s_port);
+        if (n) snprintf(v, cap, "%d changed", n);
+        else snprintf(v, cap, "Default");
+        break;
+    }
     }
 }
 
@@ -256,6 +286,7 @@ static void info_text(char* out, size_t cap) {
         }
         break;
     case ROW_PAK: snprintf(out, cap, "A: what is in port %d, and the notes on its pak", s_port + 1); break;
+    case ROW_CONTROLS: snprintf(out, cap, "A: what each button of port %d gives the game", s_port + 1); break;
     case ROW_RESTART: snprintf(out, cap, "Saves settings.ini and restarts the game"); break;
     case ROW_EXIT: snprintf(out, cap, "L + R + BACK + BLACK does it from anywhere"); break;
     default: snprintf(out, cap, "Saves settings.ini (B and BACK do too)"); break;
@@ -388,6 +419,35 @@ static void fill_paks(xhw_panel* p) {
     snprintf(p->footer, sizeof p->footer, "A select     Left / Right change     B back");
 }
 
+/* the Controls page's part of the card */
+static void fill_controls(xhw_panel* p) {
+    const unsigned char* c = g_xrc_settings.controls[s_cport];
+    int in, sel = s_csel > 0 ? k_ctl_order[s_csel - 1] : -1;
+    p->page = XHW_PANEL_CONTROLS_PAGE;
+    p->sel = -1;
+    p->pad_sel = sel;
+    p->pad_port_sel = s_csel == 0;
+    snprintf(p->sub_left, sizeof p->sub_left, "CONTROLS");
+    p->sub_right[0] = 0;
+    snprintf(p->pad_port, sizeof p->pad_port, "<  Port %d%s  >", s_cport + 1, s_raw_ok[s_cport] ? "" : " (none)");
+    for (in = 0; in < XHW_IN_COUNT; in++) {
+        snprintf(p->pad_map[in], sizeof p->pad_map[in], "%s", xrc_controls_name(c[in]));
+        p->pad_changed[in] = c[in] != xrc_controls_default(in);
+    }
+    p->pad_ok = s_raw_ok[s_cport];
+    if (p->pad_ok) {
+        const xhw_pad* r = &s_raw[s_cport];
+        p->pad_buttons = r->buttons, p->pad_lx = r->lx, p->pad_ly = r->ly, p->pad_rx = r->rx, p->pad_ry = r->ry;
+        p->pad_lt = r->lt, p->pad_rt = r->rt;
+    }
+    if (sel < 0) snprintf(p->info, sizeof p->info, "Left / Right: another controller");
+    else if (c[sel] == XRC_N64_NONE) snprintf(p->info, sizeof p->info, "%s gives nothing", xrc_controls_input_name(sel));
+    else snprintf(p->info, sizeof p->info, "%s gives the N64's %s", xrc_controls_input_name(sel), xrc_controls_name(c[sel]));
+    if (s_msg[0] && xhw_time_us() - s_msg_us < MSG_MS * 1000ull) snprintf(p->note, sizeof p->note, "%s", s_msg);
+    else if (sel >= 0) snprintf(p->note, sizeof p->note, "Left / Right: what it gives");
+    snprintf(p->footer, sizeof p->footer, "Y defaults     B back");
+}
+
 /* the card's frame: fade 0..256, slide in pixels */
 static void draw(int fade, int slide) {
     const xhw_video_mode* vm = xhw_video();
@@ -401,7 +461,9 @@ static void draw(int fade, int slide) {
     snprintf(s_panel.sub_right, sizeof s_panel.sub_right, "running %s %s",
              vm->height >= 720 ? "720p" : vm->progressive ? "480p" : "480i",
              vm->height >= 720 || (vm->widescreen && s_dash_wide) ? "16:9" : "4:3");
-    if (s_page) {
+    if (s_page == 2) {
+        fill_controls(&s_panel);
+    } else if (s_page) {
         fill_paks(&s_panel);
     } else {
         int n = 0;
@@ -412,7 +474,9 @@ static void draw(int fade, int slide) {
             snprintf(s_panel.label[n], sizeof s_panel.label[n], "%s", k_label[r]);
             row_value(r, s_panel.value[n], sizeof s_panel.value[n], &star);
             s_panel.star[n] = star;
-            s_panel.kind[n] = r >= ROW_RESTART ? XHW_PANEL_ACTION : r == ROW_PAK ? XHW_PANEL_ITEM : XHW_PANEL_SETTING;
+            s_panel.kind[n] = r >= ROW_RESTART                     ? XHW_PANEL_ACTION
+                              : r == ROW_PAK || r == ROW_CONTROLS ? XHW_PANEL_ITEM
+                                                                  : XHW_PANEL_SETTING;
             n++;
         }
         s_panel.rows = n;
@@ -648,6 +712,45 @@ static void paks_input(uint32_t press) {
     }
 }
 
+/* ---- the Controls page: the VI thread's presses ---- */
+static void ctl_change(int dir) {
+    unsigned char* c = g_xrc_settings.controls[s_cport];
+    int in, v, lo, hi;
+    if (s_csel == 0) {
+        s_cport = step(s_cport, dir, 1, 0, 3, 1);
+        xhw_logf("[MENU] Controls page, port %d", s_cport + 1);
+        return;
+    }
+    in = k_ctl_order[s_csel - 1];
+    /* the values that input can give, in a ring with nothing in it */
+    if (xrc_controls_is_dir(in)) lo = XRC_N64_STICK, hi = XRC_N64_DPAD;
+    else lo = XRC_N64_A, hi = XRC_N64_DR;
+    v = c[in] == XRC_N64_NONE ? (dir > 0 ? lo : hi) : c[in] + dir;
+    if (v > hi || v < lo) v = XRC_N64_NONE;
+    c[in] = (unsigned char)v;
+    xhw_logf("[MENU] port %d %s: %s", s_cport + 1, xrc_controls_input_name(in), xrc_controls_name(v));
+}
+
+static void controls_input(uint32_t press) {
+    if (press & XHW_BTN_B) {
+        s_page = 0, s_sel = ROW_CONTROLS;
+    } else if (press & XHW_BTN_UP) {
+        s_csel = (s_csel + CTL_ITEMS - 1) % CTL_ITEMS;
+    } else if (press & XHW_BTN_DOWN) {
+        s_csel = (s_csel + 1) % CTL_ITEMS;
+    } else if (press & (XHW_BTN_LEFT | XHW_BTN_RIGHT)) {
+        ctl_change(press & XHW_BTN_LEFT ? -1 : +1);
+    } else if (press & XHW_BTN_A) {
+        ctl_change(+1);
+    } else if (press & XHW_BTN_Y) {
+        int in;
+        char m[64];
+        for (in = 0; in < XHW_IN_COUNT; in++) g_xrc_settings.controls[s_cport][in] = xrc_controls_default(in);
+        snprintf(m, sizeof m, "Port %d: the default controls", s_cport + 1);
+        pak_msg(m);
+    }
+}
+
 /* the VI thread, once a retrace: the controllers while the menu is open */
 void xrc_menu_vi(unsigned retrace) {
     static int s_started;
@@ -683,6 +786,10 @@ void xrc_menu_vi(unsigned retrace) {
     }
     s_prev = cur;
     if (XHW_TEST_BUILD && press) xhw_logf("[MENU] press %04x at retrace %u", (unsigned)press, retrace);
+    if (s_page == 2 && !s_want) {   /* the Controls page (B goes back to the settings) */
+        controls_input(press);
+        return;
+    }
     if (s_page && !s_want) {   /* the Paks page (B goes back to the settings) */
         paks_input(press);
         return;
@@ -705,7 +812,11 @@ void xrc_menu_vi(unsigned retrace) {
         if (s_sel == ROW_RETURN) s_close = 1;
         else if (s_sel == ROW_RESTART) s_leave = 2;
         else if (s_sel == ROW_EXIT) s_leave = 1;
-        else if (s_sel == ROW_PAK) {
+        else if (s_sel == ROW_CONTROLS) {
+            s_cport = s_port, s_csel = 1, s_msg[0] = 0;
+            s_page = 2;
+            xhw_logf("[MENU] Controls page, port %d", s_cport + 1);
+        } else if (s_sel == ROW_PAK) {
             s_pport = s_port, s_psel = PK_PORT, s_scroll = 0, s_confirm = 0, s_msg[0] = 0;
             s_page = 1;
             xhw_logf("[MENU] Paks page, port %d", s_pport + 1);

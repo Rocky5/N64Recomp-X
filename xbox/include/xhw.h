@@ -137,6 +137,14 @@ void xhw_notice(const char* line1, const char* line2);
 #define XHW_PANEL_W 512          /* the image, in 480-line pixels */
 #define XHW_PANEL_H 416
 enum { XHW_PANEL_SETTING = 0, XHW_PANEL_ACTION = 1, XHW_PANEL_ITEM = 2 };   /* ITEM: A acts on it, no < > */
+/* The Controls page (settings_menu.c, xhw_panel_pad.c): an Xbox controller
+ * drawn on the card, every input with a callout naming the N64 control it
+ * gives. The inputs, in the order settings.ini and the page keep them: */
+enum {
+    XHW_IN_A, XHW_IN_B, XHW_IN_X, XHW_IN_Y, XHW_IN_BLACK, XHW_IN_WHITE, XHW_IN_LT, XHW_IN_RT, XHW_IN_START,
+    XHW_IN_LCLICK, XHW_IN_RCLICK, XHW_IN_DPAD, XHW_IN_LSTICK, XHW_IN_RSTICK, XHW_IN_COUNT
+};
+enum { XHW_PANEL_ROWS_PAGE = 0, XHW_PANEL_CONTROLS_PAGE = 1 };
 typedef struct xhw_panel {
     uint32_t t_ms;               /* since the menu opened: the animations */
     int32_t sel;                 /* the selected row */
@@ -151,6 +159,17 @@ typedef struct xhw_panel {
     char info[64];               /* about the selected row */
     char note[64];               /* warm: "* used after a restart", a message */
     char footer[64];
+    /* the Controls page (page XHW_PANEL_CONTROLS_PAGE; the rows are not drawn) */
+    int32_t page;
+    int32_t pad_sel;                     /* the selected input (XHW_IN_*), -1: none */
+    int32_t pad_changed[XHW_IN_COUNT];   /* not the default: drawn warm */
+    char pad_map[XHW_IN_COUNT][12];      /* what each input gives ("C-Right", "Stick") */
+    char pad_port[24];                   /* "< Port 1 >" over the controller */
+    int32_t pad_port_sel;                /* the port line is selected */
+    int32_t pad_ok;                      /* a controller is in that port: the live state below */
+    uint32_t pad_buttons;                /* XHW_BTN_*, now */
+    int16_t pad_lx, pad_ly, pad_rx, pad_ry;
+    uint8_t pad_lt, pad_rt;
 } xhw_panel;
 /* img: XHW_PANEL_W x XHW_PANEL_H ARGB8888 (straight alpha), pitch in pixels */
 void xhw_panel_render(uint32_t* img, int pitch_px, const xhw_panel* p);

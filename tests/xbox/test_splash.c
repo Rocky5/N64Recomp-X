@@ -289,6 +289,59 @@ int main(int argc, char** argv) {
                 }
             save("splash_paks", s_full);
         }
+        /* the Controls page: the controller, a callout per input (white
+         * gives L, changed), A held and the left stick leaning, X selected */
+        {
+            static const char* const pm[XHW_IN_COUNT] = { "A", "C-Right", "B", "C-Up", "C-Down", "L", "Z", "R",
+                                                          "Start", "None", "None", "D-Pad", "Stick", "C-Buttons" };
+            memset(&pn, 0, sizeof pn);
+            pn.t_ms = 1300;
+            pn.page = XHW_PANEL_CONTROLS_PAGE;
+            pn.sel = -1;
+            snprintf(pn.title, sizeof pn.title, "%s", "Pokemon Snap");
+            snprintf(pn.sub_left, sizeof pn.sub_left, "%s", "CONTROLS");
+            snprintf(pn.pad_port, sizeof pn.pad_port, "%s", "<  Port 1  >");
+            for (r = 0; r < XHW_IN_COUNT; r++) snprintf(pn.pad_map[r], sizeof pn.pad_map[r], "%s", pm[r]);
+            pn.pad_changed[XHW_IN_WHITE] = 1;
+            pn.pad_sel = XHW_IN_X;
+            pn.pad_ok = 1;
+            pn.pad_buttons = XHW_BTN_A | XHW_BTN_RIGHT;
+            pn.pad_lx = -20000, pn.pad_ly = 14000, pn.pad_rt = 255;
+            snprintf(pn.info, sizeof pn.info, "%s", "Xbox X gives the N64's B");
+            snprintf(pn.note, sizeof pn.note, "%s", "Left / Right: what it gives");
+            snprintf(pn.footer, sizeof pn.footer, "%s", "Y defaults   X test   B back");
+            for (ok = 1, r = 0; r < XHW_IN_COUNT; r++) ok &= xhw_splash_text_width(pm[r], 1) <= 72;
+            CHECK(ok, "a control's name is too wide for its callout");
+            xhw_panel_render(&img[0][0], XHW_PANEL_W, &pn);
+            pn.pad_sel = XHW_IN_LT;
+            xhw_panel_render(&img2[0][0], XHW_PANEL_W, &pn);
+            CHECK(memcmp(img, img2, sizeof img) != 0, "the Controls page's selection does not show");
+            /* the cached layer (XHW_PAD_LAYER) follows the pad: a press shows, and letting go puts the picture back */
+            pn.pad_sel = XHW_IN_X;
+            xhw_panel_render(&img[0][0], XHW_PANEL_W, &pn);
+            pn.pad_buttons |= XHW_BTN_Y;
+            xhw_panel_render(&img2[0][0], XHW_PANEL_W, &pn);
+            CHECK(memcmp(img, img2, sizeof img) != 0, "a held button does not light on the Controls page");
+            pn.pad_buttons &= ~(uint32_t)XHW_BTN_Y;
+            xhw_panel_render(&img2[0][0], XHW_PANEL_W, &pn);
+            CHECK(memcmp(img, img2, sizeof img) == 0, "the Controls page's layer kept a released button");
+            pn.pad_sel = XHW_IN_X;
+            xhw_panel_render(&img[0][0], XHW_PANEL_W, &pn);
+            for (y = 0; y < H; y++)
+                for (x = 0; x < W; x++) {
+                    int rr = (60 + y / 4) * 45 / 100, gg = (120 + y / 6) * 45 / 100, bb = (200 - y / 8) * 45 / 100;
+                    s_full[y * W + x] = 0xFF000000u | (uint32_t)(rr << 16 | gg << 8 | bb);
+                }
+            for (y = 0; y < XHW_PANEL_H; y++)
+                for (x = 0; x < XHW_PANEL_W; x++) {
+                    uint32_t c = img[y][x], a = c >> 24, *d = &s_full[(oy + y) * W + ox + x];
+                    uint32_t r0 = (*d >> 16) & 255, g0 = (*d >> 8) & 255, b0 = *d & 255;
+                    uint32_t r1 = (c >> 16) & 255, g1 = (c >> 8) & 255, b1 = c & 255;
+                    *d = 0xFF000000u | ((r1 * a + r0 * (255 - a)) / 255) << 16 |
+                         ((g1 * a + g0 * (255 - a)) / 255) << 8 | ((b1 * a + b0 * (255 - a)) / 255);
+                }
+            save("splash_controls", s_full);
+        }
     }
 
     printf("test_splash: %d checks, %d failed\n", s_checks, s_fail);

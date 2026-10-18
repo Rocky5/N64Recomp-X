@@ -22,7 +22,7 @@ static int s_fail, s_checks;
 static int same(const XrcSettings* a, const XrcSettings* b) { return !memcmp(a, b, sizeof *a); }
 
 static void round_trip(const XrcSettings* in, const char* what) {
-    char buf[1024];
+    static char buf[4096];
     XrcSettings out;
     size_t n = xrc_settings_format(in, buf, sizeof buf);
     CHECK(n > 0, "%s: format failed", what);
@@ -33,7 +33,7 @@ static void round_trip(const XrcSettings* in, const char* what) {
 
 int main(void) {
     XrcSettings s, t;
-    char text[1024];
+    static char text[4096];
     xrc_settings_defaults(&s);
     round_trip(&s, "defaults");
 
@@ -55,7 +55,29 @@ int main(void) {
     s.pak[3] = XRC_PAK_NONE;
     s.pak_file[0] = 2, s.pak_file[1] = 0, s.pak_file[2] = 3, s.pak_file[3] = 1;
     snprintf(s.video_confirmed, sizeof s.video_confirmed, "720p");
+    s.controls[0][XHW_IN_LCLICK] = XRC_N64_L;
+    s.controls[1][XHW_IN_A] = XRC_N64_B, s.controls[1][XHW_IN_X] = XRC_N64_A;
+    s.controls[2][XHW_IN_DPAD] = XRC_N64_STICK, s.controls[2][XHW_IN_LSTICK] = XRC_N64_DPAD;
+    s.controls[3][XHW_IN_RSTICK] = XRC_N64_NONE, s.controls[3][XHW_IN_LT] = XRC_N64_NONE;
     round_trip(&s, "every key changed");
+
+    /* the controls: the default layout; a value an input can't give, or an
+     * unknown one, reads as that input's default; another port untouched */
+    xrc_settings_defaults(&t);
+    CHECK(t.controls[0][XHW_IN_A] == XRC_N64_A && t.controls[0][XHW_IN_X] == XRC_N64_B &&
+              t.controls[0][XHW_IN_B] == XRC_N64_CR && t.controls[0][XHW_IN_LT] == XRC_N64_Z &&
+              t.controls[0][XHW_IN_LSTICK] == XRC_N64_STICK && t.controls[0][XHW_IN_RSTICK] == XRC_N64_CBUTTONS &&
+              t.controls[3][XHW_IN_LCLICK] == XRC_N64_NONE,
+          "the default layout");
+    snprintf(text, sizeof text, "[port2]\r\na = stick\r\ndpad = c_up\r\nwhite = l\r\nlt = sideways\r\n"
+                                "right_stick = dpad\r\nmystery = a\r\n");
+    xrc_settings_parse(&t, text);
+    CHECK(t.controls[1][XHW_IN_A] == XRC_N64_A, "a = stick read as %d", t.controls[1][XHW_IN_A]);
+    CHECK(t.controls[1][XHW_IN_DPAD] == XRC_N64_DPAD, "dpad = c_up read as %d", t.controls[1][XHW_IN_DPAD]);
+    CHECK(t.controls[1][XHW_IN_WHITE] == XRC_N64_L, "white = l read as %d", t.controls[1][XHW_IN_WHITE]);
+    CHECK(t.controls[1][XHW_IN_LT] == XRC_N64_Z, "lt = sideways read as %d", t.controls[1][XHW_IN_LT]);
+    CHECK(t.controls[1][XHW_IN_RSTICK] == XRC_N64_DPAD, "right_stick = dpad read as %d", t.controls[1][XHW_IN_RSTICK]);
+    CHECK(t.controls[0][XHW_IN_WHITE] == XRC_N64_CL, "[port2] reached port 1");
 
     /* the paks: names, a letter in lower case, and a set where one pak is in two ports */
     snprintf(text, sizeof text, "[port1]\r\npak = none\r\npak_file = b\r\n[port2]\r\npak = wobbly\r\npak_file = A\r\n");

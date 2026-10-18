@@ -14,7 +14,7 @@ if __name__ == '__main__':
         sys.exit('test_splash: no nxdk (set NXDK_DIR): the font is its hal/font_unscii_16.h')
     out = hostcc.ROOT / 'build-host'
     out.mkdir(exist_ok=True)
-    rc = hostcc.run(['tests/xbox/test_splash.c', 'xbox/src/hw/xhw_splash_draw.c'],
+    rc = hostcc.run(['tests/xbox/test_splash.c', 'xbox/src/hw/xhw_splash_draw.c', 'xbox/src/hw/xhw_panel_pad.c'],
                     includes=['xbox/include', 'xbox/src/hw', str(nxdk / 'lib')], args=[str(out)])
     try:
         from PIL import Image

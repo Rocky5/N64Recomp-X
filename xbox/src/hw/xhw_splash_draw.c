@@ -558,6 +558,17 @@ void xhw_panel_render(uint32_t* img, int pitch, const xhw_panel* p) {
     if (p->sub_right[0])
         shadowed(img, pitch, p->sub_right, P_X1 - xhw_splash_text_width(p->sub_right, 1), P_SUB_Y, 1, rgb(120, 132, 158));
 
+    if (p->page == XHW_PANEL_CONTROLS_PAGE) {   /* the controller instead of the rows (xhw_panel_pad.c) */
+        xhw_panel_pad_render(img, pitch, p);
+        if (p->info[0]) shadowed(img, pitch, p->info, (PW - xhw_splash_text_width(p->info, 1)) / 2, PH - PG - 82, 1,
+                                 rgb(150, 165, 190));
+        if (p->note[0]) shadowed(img, pitch, p->note, (PW - xhw_splash_text_width(p->note, 1)) / 2, PH - PG - 62, 1,
+                                 rgb(255, 214, 120));
+        if (p->footer[0])
+            shadowed(img, pitch, p->footer, (PW - xhw_splash_text_width(p->footer, 1)) / 2, PH - PG - 26, 1,
+                     rgb(110, 120, 140));
+        rows = 0;
+    }
     /* the highlight: a teal glow fading to the right, the green marker, a glint */
     if (p->sel >= 0 && p->sel < rows) {
         int target = row_y(p, p->sel) - 2, hx0 = PG + 12, hx1 = PW - PG - 12, gl;
@@ -597,7 +608,7 @@ void xhw_panel_render(uint32_t* img, int pitch, const xhw_panel* p) {
             if (p->star[r]) shadowed(img, pitch, "*", P_X1 - 8, ry, 1, rgb(255, 200, 110));
         }
     }
-    {
+    if (rows) {
         int iy = row_y(p, rows - 1) + row_h(p) + 10;
         if (p->info[0]) shadowed(img, pitch, p->info, P_X0, iy, 1, rgb(150, 165, 190));
         if (p->note[0]) shadowed(img, pitch, p->note, P_X0, iy + 20, 1, rgb(255, 214, 120));

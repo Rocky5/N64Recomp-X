@@ -4,7 +4,8 @@
  * makes (osContStartReadData) polls under the pad lock and feeds the raw
  * state to the exit combos first (xhw_combo_check: L + R + BACK + BLACK /
  * WHITE, before any mapping); a pad that shows a combo reads neutral. The
- * default layout, by position (PLAN.md 3.9):
+ * default layout, by position (PLAN.md 3.9; settings.c k_default, changed
+ * per port on the BACK menu's Controls page):
  *
  *   N64          Xbox
  *   stick        left stick: radial dead zone ([portN] stick_deadzone),
@@ -14,7 +15,7 @@
  *   Z / R        left / right trigger
  *   Start        Start
  *   D-pad        D-pad
- *   L            none (remappable from M6)
+ *   L            none (the Controls page gives it to any button)
  *
  * EEPROM: the pack's 4 Kbit or 16 Kbit image (save.c keeps it and its
  * file, E:\UDATA\<title id>\<id>.eep, and flushes it). The paks behind each
@@ -58,28 +59,72 @@ static void stick(int16_t sx, int16_t sy, int dz_pct, int8_t* ox, int8_t* oy) {
     *oy = (int8_t)(y >= 0 ? (int)(y + 0.5f) : -(int)(-y + 0.5f));
 }
 
+/* the port's controls (settings.ini, the BACK menu's Controls page): each
+ * Xbox input gives what its row says. A button gives one N64 button; the
+ * d-pad and the sticks give a direction set: the analog stick (the d-pad
+ * at full tilt, a stick through the dead zone; two on the stick: the
+ * longer wins), the C buttons or the N64's d-pad (a stick past half way).
+ * Kill switch -DXRC_CONTROLS=0: the default layout whatever the file says. */
+#ifndef XRC_CONTROLS
+#define XRC_CONTROLS 1
+#endif
+static const uint16_t k_nbit[XRC_N64_BUTTONS] = {
+    0, N_A, N_B, N_Z, N_L, N_R, N_START, N_CU, N_CD, N_CL, N_CR, N_DU, N_DD, N_DL, N_DR,
+};
+
+static int in_down(const xhw_pad* p, int in) {
+    static const uint32_t k_btn[XHW_IN_COUNT] = {
+        XHW_BTN_A, XHW_BTN_B, XHW_BTN_X, XHW_BTN_Y, XHW_BTN_BLACK, XHW_BTN_WHITE, 0, 0, XHW_BTN_START,
+        XHW_BTN_LSTICK, XHW_BTN_RSTICK,
+    };
+    if (in == XHW_IN_LT) return p->lt > TRIG_ON;
+    if (in == XHW_IN_RT) return p->rt > TRIG_ON;
+    return in < XHW_IN_DPAD && (p->buttons & k_btn[in]) != 0;
+}
+
+/* a direction set (up, down, left, right) onto the C buttons or the d-pad */
+static uint16_t dir_bits(int t, int u, int d, int l, int r) {
+    if (t == XRC_N64_CBUTTONS) return (uint16_t)((u ? N_CU : 0) | (d ? N_CD : 0) | (l ? N_CL : 0) | (r ? N_CR : 0));
+    if (t == XRC_N64_DPAD) return (uint16_t)((u ? N_DU : 0) | (d ? N_DD : 0) | (l ? N_DL : 0) | (r ? N_DR : 0));
+    return 0;
+}
+
 static void map(int port, const xhw_pad* p, Pad* out) {
+    const unsigned char* c = g_xrc_settings.controls[port];
+    unsigned char def[XHW_IN_COUNT];
     uint16_t b = 0;
+    int in, best = -1, dz = g_xrc_settings.stick_deadzone[port];
     memset(out, 0, sizeof *out);
     if (!p->connected) {
         out->err = CONT_NO_RESPONSE_ERROR;
         return;
     }
-    if (p->buttons & XHW_BTN_A) b |= N_A;
-    if (p->buttons & XHW_BTN_X) b |= N_B;
-    if ((p->buttons & XHW_BTN_Y) || p->ry > CSTICK_ON) b |= N_CU;
-    if ((p->buttons & XHW_BTN_B) || p->rx > CSTICK_ON) b |= N_CR;
-    if ((p->buttons & XHW_BTN_WHITE) || p->rx < -CSTICK_ON) b |= N_CL;
-    if ((p->buttons & XHW_BTN_BLACK) || p->ry < -CSTICK_ON) b |= N_CD;
-    if (p->lt > TRIG_ON) b |= N_Z;
-    if (p->rt > TRIG_ON) b |= N_R;
-    if (p->buttons & XHW_BTN_START) b |= N_START;
-    if (p->buttons & XHW_BTN_UP) b |= N_DU;
-    if (p->buttons & XHW_BTN_DOWN) b |= N_DD;
-    if (p->buttons & XHW_BTN_LEFT) b |= N_DL;
-    if (p->buttons & XHW_BTN_RIGHT) b |= N_DR;
+    if (!XRC_CONTROLS) {
+        for (in = 0; in < XHW_IN_COUNT; in++) def[in] = xrc_controls_default(in);
+        c = def;
+    }
+    for (in = 0; in < XHW_IN_DPAD; in++)
+        if (c[in] < XRC_N64_BUTTONS && in_down(p, in)) b |= k_nbit[c[in]];
+    for (in = XHW_IN_DPAD; in < XHW_IN_COUNT; in++) {
+        int t = c[in], u, d, l, r;
+        int8_t x = 0, y = 0;
+        if (in == XHW_IN_DPAD) {
+            u = (p->buttons & XHW_BTN_UP) != 0, d = (p->buttons & XHW_BTN_DOWN) != 0;
+            l = (p->buttons & XHW_BTN_LEFT) != 0, r = (p->buttons & XHW_BTN_RIGHT) != 0;
+            x = (int8_t)(r ? 80 : l ? -80 : 0), y = (int8_t)(u ? 80 : d ? -80 : 0);
+        } else {
+            int16_t sx = in == XHW_IN_LSTICK ? p->lx : p->rx, sy = in == XHW_IN_LSTICK ? p->ly : p->ry;
+            u = sy > CSTICK_ON, d = sy < -CSTICK_ON, l = sx < -CSTICK_ON, r = sx > CSTICK_ON;
+            if (t == XRC_N64_STICK) stick(sx, sy, dz, &x, &y);
+        }
+        if (t == XRC_N64_STICK) {
+            int m = x * x + y * y;
+            if (m > best) best = m, out->x = x, out->y = y;
+        } else {
+            b |= dir_bits(t, u, d, l, r);
+        }
+    }
     out->button = b;
-    stick(p->lx, p->ly, g_xrc_settings.stick_deadzone[port], &out->x, &out->y);
 }
 
 static void read_pads(void) {
@@ -156,6 +201,12 @@ ULTRA(osContGetReadData) {
     uint32_t out = ARG(0);
     int i;
     (void)rdram;
+    if (XHW_TEST_BUILD && (s_pads[0].x || s_pads[0].y)) {   /* where a tilted stick goes (Pokemon Snap's camera) */
+        static unsigned said;
+        if (said++ < 4)
+            xhw_logf("[SI] osContGetReadData: stick %d %d buttons %04x into %08x", s_pads[0].x, s_pads[0].y,
+                     s_pads[0].button, (unsigned)out);
+    }
     for (i = 0; i < 4; i++) {
         uint32_t a = out + 6 * (uint32_t)i;
         wr8(a, (uint8_t)(s_pads[i].button >> 8));
@@ -265,6 +316,10 @@ static void pif_channel(int ch, const uint8_t* cmd, int tx, uint8_t* resp, int r
         } else if (cmd[0] == 0x01 && rx >= 4) {
             resp[0] = (uint8_t)(s_pads[ch].button >> 8), resp[1] = (uint8_t)s_pads[ch].button;
             resp[2] = (uint8_t)s_pads[ch].x, resp[3] = (uint8_t)s_pads[ch].y;
+            if (XHW_TEST_BUILD && (resp[2] || resp[3])) {
+                static unsigned said;
+                if (said++ < 4) xhw_logf("[SI] PIF read: port %d stick %d %d", ch + 1, s_pads[ch].x, s_pads[ch].y);
+            }
         } else if ((cmd[0] == 0x02 || cmd[0] == 0x03) && XRC_SAVE_PAK) {
             static uint8_t seen[4];
             int r;

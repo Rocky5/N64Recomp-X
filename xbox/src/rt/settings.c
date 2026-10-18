@@ -16,6 +16,11 @@
  *   [port1]..[port4]  stick_deadzone = 0..60 (percent, fives)
  *             pak = auto|controller|rumble|none   pak_file = A..D (each pak
  *             in one port: a set that isn't goes back to A..D in order)
+ *             the controls (the BACK menu's Controls page), one key per
+ *             Xbox input: a b x y black white lt rt start ls_click rs_click
+ *             = none|a|b|z|l|r|start|c_up|c_down|c_left|c_right|d_up|d_down|
+ *             d_left|d_right; dpad left_stick right_stick = none|stick|
+ *             c_buttons|dpad. A value that input can't give: its default.
  *   [save]    slot = 1..4
  *   [system]  screenshots = 0|1
  *
@@ -44,6 +49,38 @@ static const char* const k_ws[] = { "off", "on", "auto", "stretch" };
 static const char* const k_filter[] = { "n64", "sharp" };
 static const char* const k_pak[] = { "auto", "controller", "rumble", "none" };
 
+/* the controls: ini keys and names per input, ini values and the page's
+ * names per N64 control, the default layout (PLAN.md 3.9) */
+static const char* const k_in_key[XRC_IN_COUNT] = {
+    "a", "b", "x", "y", "black", "white", "lt", "rt", "start", "ls_click", "rs_click", "dpad", "left_stick", "right_stick",
+};
+static const char* const k_in_name[XRC_IN_COUNT] = {
+    "A", "B", "X", "Y", "BLACK", "WHITE", "Left trigger", "Right trigger", "START", "Left stick click",
+    "Right stick click", "D-pad", "Left stick", "Right stick",
+};
+static const char* const k_n64_key[XRC_N64_COUNT] = {
+    "none", "a", "b", "z", "l", "r", "start", "c_up", "c_down", "c_left", "c_right", "d_up", "d_down", "d_left",
+    "d_right", "stick", "c_buttons", "dpad",
+};
+static const char* const k_n64_name[XRC_N64_COUNT] = {
+    "None", "A", "B", "Z", "L", "R", "Start", "C-Up", "C-Down", "C-Left", "C-Right", "D-Up", "D-Down", "D-Left",
+    "D-Right", "Stick", "C-Buttons", "D-Pad",
+};
+static const unsigned char k_default[XRC_IN_COUNT] = {
+    XRC_N64_A, XRC_N64_CR, XRC_N64_B, XRC_N64_CU, XRC_N64_CD, XRC_N64_CL, XRC_N64_Z, XRC_N64_R, XRC_N64_START,
+    XRC_N64_NONE, XRC_N64_NONE, XRC_N64_DPAD, XRC_N64_STICK, XRC_N64_CBUTTONS,
+};
+
+unsigned char xrc_controls_default(int in) { return in >= 0 && in < XRC_IN_COUNT ? k_default[in] : XRC_N64_NONE; }
+int xrc_controls_is_dir(int in) { return in >= XHW_IN_DPAD && in < XRC_IN_COUNT; }
+const char* xrc_controls_name(int n) { return n >= 0 && n < XRC_N64_COUNT ? k_n64_name[n] : "None"; }
+const char* xrc_controls_input_name(int in) { return in >= 0 && in < XRC_IN_COUNT ? k_in_name[in] : "?"; }
+/* what that input can give: a button one N64 button, a direction set a set */
+static int controls_ok(int in, int n) {
+    if (n == XRC_N64_NONE) return 1;
+    return xrc_controls_is_dir(in) ? n >= XRC_N64_STICK && n < XRC_N64_COUNT : n > 0 && n < XRC_N64_BUTTONS;
+}
+
 const char* xrc_settings_output_name(int o) { return o >= 0 && o < 5 ? k_out[o] : "auto"; }
 const char* xrc_settings_widescreen_name(int w) { return w >= 0 && w < 4 ? k_ws[w] : "auto"; }
 const char* xrc_settings_pak_name(int p) { return p >= 0 && p < 4 ? k_pak[p] : "auto"; }
@@ -60,7 +97,11 @@ void xrc_settings_defaults(XrcSettings* s) {
     s->rumble = 1;
     s->save_slot = 1;
     s->screenshots = 0;
-    for (i = 0; i < XRC_PORTS; i++) s->stick_deadzone[i] = 20, s->pak_file[i] = i;
+    for (i = 0; i < XRC_PORTS; i++) {
+        int k;
+        s->stick_deadzone[i] = 20, s->pak_file[i] = i;
+        for (k = 0; k < XRC_IN_COUNT; k++) s->controls[i][k] = k_default[k];
+    }
 }
 
 static char* trim(char* s) {
@@ -120,6 +161,14 @@ int xrc_settings_parse(XrcSettings* s, char* text) {
                 else if (!strcmp(k, "pak")) s->pak[port] = pick(v, k_pak, 4, XRC_PAK_AUTO);
                 else if (!strcmp(k, "pak_file") && ((v[0] >= 'A' && v[0] <= 'D') || (v[0] >= 'a' && v[0] <= 'd')) && !v[1])
                     s->pak_file[port] = (v[0] | 0x20) - 'a';
+                else {
+                    int in, n;
+                    for (in = 0; in < XRC_IN_COUNT && strcmp(k, k_in_key[in]); in++) {}
+                    if (in < XRC_IN_COUNT) {
+                        n = pick(v, k_n64_key, XRC_N64_COUNT, -1);
+                        s->controls[port][in] = n >= 0 && controls_ok(in, n) ? (unsigned char)n : k_default[in];
+                    }
+                }
             } else if (!strcmp(section, "save")) {
                 if (!strcmp(k, "slot")) s->save_slot = clampi(atoi(v), 1, 4);
             } else if (!strcmp(section, "system")) {
@@ -153,9 +202,13 @@ size_t xrc_settings_format(const XrcSettings* s, char* out, size_t cap) {
         k_filter[s->texture_filter ? 1 : 0], s->fps, s->video_confirmed);
     PUT("[audio]\r\nvolume = %d\r\n", s->volume);
     PUT("[input]\r\nrumble = %d\r\n", s->rumble);
-    for (i = 0; i < XRC_PORTS; i++)
+    for (i = 0; i < XRC_PORTS; i++) {
+        int in;
         PUT("[port%d]\r\nstick_deadzone = %d\r\npak = %s\r\npak_file = %c\r\n", i + 1, s->stick_deadzone[i],
             xrc_settings_pak_name(s->pak[i]), 'A' + (s->pak_file[i] & 3));
+        for (in = 0; in < XRC_IN_COUNT; in++)
+            PUT("%s = %s\r\n", k_in_key[in], k_n64_key[s->controls[i][in] < XRC_N64_COUNT ? s->controls[i][in] : 0]);
+    }
     PUT("[save]\r\nslot = %d\r\n", s->save_slot);
     PUT("[system]\r\nscreenshots = %d\r\n", s->screenshots);
     PUT(END_MARK "\r\n");
@@ -169,7 +222,8 @@ void xu_pak_apply_settings(int hot);   /* ultra/save.c */
 static void path(char* p, size_t n) { snprintf(p, n, "%ssettings.ini", xhw_save_dir()); }
 
 int xrc_settings_save(void) {
-    char buf[1024], p[96];
+    static char buf[4096];
+    char p[96];
     size_t n = xrc_settings_format(&g_xrc_settings, buf, sizeof buf);
     path(p, sizeof p);
     if (!n || !xhw_write_file_atomic(p, buf, (uint32_t)n)) {
@@ -192,7 +246,7 @@ static void log_settings(void) {
 }
 
 void xrc_settings_load(void) {
-    static char text[2048];
+    static char text[4096];
     char p[96];
     void* f;
     int write = 0;
