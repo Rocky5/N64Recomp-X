@@ -100,6 +100,9 @@
 #ifndef XGFX_TEXRECT_SNAP
 #define XGFX_TEXRECT_SNAP 1    /* 1/2-cycle texrects cover every pixel row and column they touch */
 #endif
+#ifndef XGFX_S2DEX_BG
+#define XGFX_S2DEX_BG 1        /* S2DEX's G_BG_COPY and G_BG_1CYC drawn (Ocarina of Time's pre-rendered backgrounds) */
+#endif
 #ifndef XGFX_TLUT_OFFSET
 #define XGFX_TLUT_OFFSET 1     /* LOADTLUT's SL/TL offset the palette in the image (GoldenEye's palettes after their texels) */
 #endif
@@ -1711,11 +1714,133 @@ static int s2dex_own(uint32_t op) {
     return 0;
 }
 
+/* ---------------------------------------------- S2DEX backgrounds
+ *
+ * G_BG_COPY and G_BG_1CYC (uObjBg / uObjScaleBg): a texture image, maybe
+ * bigger than TMEM, drawn into a frame on the screen, 1:1 or scaled, the
+ * image wrapping at its width and height. Drawn here in 64-texel chunks,
+ * each one a LOADTILE rectangle of the image through the texture cache (a
+ * stand-in tile 7 and load slot 0, restored after), each chunk's quad at
+ * the screen span its texels cover. uObjBg: imageX u10.5, imageW u10.2,
+ * frameX s10.2, frameW u10.2, imageY, imageH, frameY, frameH, imagePtr,
+ * imageLoad, imageFmt, imageSiz, imagePal, imageFlip; uObjScaleBg then
+ * scaleW and scaleH (u5.10). Not handled: imageFlip, the scaled BG's
+ * imageYorig. -DXGFX_S2DEX_BG=0: skipped, as before */
+#define BG_CHUNK 64u
+typedef struct { float scr0, scr1, tex0; unsigned chunk; } BgSpan;
+
+/* the spans of one axis: screen f0..f1 shows texels from t0 on at `scale`
+ * a pixel, wrapping at `size`, in chunks of `cn` texels */
+static unsigned bg_spans(BgSpan* out, unsigned max, float f0, float f1, float t0, float scale, unsigned size,
+                         unsigned cn) {
+    unsigned n = 0;
+    float x = f0;
+    if (!size || scale <= 0.0f) return 0;
+    while (x < f1 - 0.001f && n < max) {
+        float tex = fmodf(t0 + (x - f0) * scale, (float)size), end, xe;
+        unsigned c;
+        if (tex < 0.0f) tex += (float)size;
+        c = (unsigned)(tex / (float)cn);
+        end = (float)((c + 1u) * cn) < (float)size ? (float)((c + 1u) * cn) : (float)size;
+        xe = x + (end - tex) / scale;
+        if (xe > f1) xe = f1;
+        if (xe <= x) xe = x + 1.0f;
+        out[n].scr0 = x, out[n].scr1 = xe, out[n].tex0 = tex - (float)(c * cn), out[n].chunk = c;
+        n++;
+        x = xe;
+    }
+    return n;
+}
+
+static void s2dex_bg(uint32_t w1, int copy) {
+    uint32_t a = seg(w1), ptr;
+    unsigned img_w, img_h, fmt, siz, pal, ny, nx, iy, ix, cw_tex, ch_tex;
+    float fx, fy, fw, fh, ix0, iy0, sx = 1.0f, sy = 1.0f;
+    int cycle = (R.omh >> F3D_G_MDSFT_CYCLETYPE) & 3;
+    BgSpan ys[48], xs[48];
+    Tile keep_tile = R.tile[7];
+    TmemLoad keep_load = R.loads[0];
+    ix0 = rd16(a + 0) / 32.0f;
+    img_w = rd16(a + 2) >> 2;
+    fx = (int16_t)rd16(a + 4) / 4.0f;
+    fw = rd16(a + 6) / 4.0f;
+    iy0 = rd16(a + 8) / 32.0f;
+    img_h = rd16(a + 10) >> 2;
+    fy = (int16_t)rd16(a + 12) / 4.0f;
+    fh = rd16(a + 14) / 4.0f;
+    ptr = rd32(a + 16);
+    fmt = (rd16(a + 22) >> 8) & 7;
+    siz = rd16(a + 22) & 3;
+    pal = rd16(a + 24) & 15;
+    if (!copy) {
+        sx = rd16(a + 28) / 1024.0f;
+        sy = rd16(a + 30) / 1024.0f;
+    }
+    if (!img_w || !img_h || fw <= 0.0f || fh <= 0.0f || sx <= 0.0f || sy <= 0.0f) return;
+    cw_tex = BG_CHUNK;
+    ch_tex = (4096u / ((BG_CHUNK << siz) >> 1)) < BG_CHUNK ? 4096u / ((BG_CHUNK << siz) >> 1) : BG_CHUNK;
+    ny = bg_spans(ys, 48, fy, fy + fh, iy0, sy, img_h, ch_tex);
+    nx = bg_spans(xs, 48, fx, fx + fw, ix0, sx, img_w, cw_tex);
+    flush();
+    memset(&s_st, 0, sizeof s_st);
+    pixel_state(1);
+    s_st.fog = 0;
+    s_st.depth_bias = 0;
+    if (cycle >= 2) {
+        s_st.cc0 = cc_words_const(1 /* TEXEL0 */, 1, &s_st.cc1);
+        s_st.blend = cycle == 2 ? s_st.blend : XGFX_BLEND_OFF;
+    } else {
+        s_st.cc0 = R.cc0 & 0x00FFFFFFu;
+        s_st.cc1 = R.cc1;
+        s_st.two_cycle = cycle == 1;
+    }
+    s_tex1 = 0;
+    s_overlay = 0;
+    if (s_trace)
+        xhw_logf("[DRAW] bg %s %08x %ux%u fmt %u siz %u: frame %d,%d %dx%d from %d,%d scale %d/%d (x1000), %u x %u spans",
+                 copy ? "copy" : "1cyc", (unsigned)ptr, img_w, img_h, fmt, siz, (int)fx, (int)fy, (int)fw, (int)fh, (int)ix0,
+                 (int)iy0, (int)(sx * 1000.0f), (int)(sy * 1000.0f), nx, ny);
+    for (iy = 0; iy < ny; iy++)
+        for (ix = 0; ix < nx; ix++) {
+            unsigned tx = xs[ix].chunk * cw_tex, ty = ys[iy].chunk * ch_tex;
+            unsigned cw = img_w - tx < cw_tex ? img_w - tx : cw_tex, ch = img_h - ty < ch_tex ? img_h - ty : ch_tex;
+            unsigned row = (cw << siz) >> 1;
+            Tile* t = &R.tile[7];
+            TmemLoad* ld = &R.loads[0];
+            memset(t, 0, sizeof *t);
+            t->fmt = (uint8_t)fmt; t->siz = (uint8_t)siz; t->palette = (uint8_t)pal;
+            t->line = (uint16_t)((row + 7u) >> 3); t->tmem = 0;
+            t->cms = t->cmt = 2;
+            t->lrs = (uint16_t)((cw - 1u) << 2); t->lrt = (uint16_t)((ch - 1u) << 2);
+            memset(ld, 0, sizeof *ld);
+            ld->addr = ptr + ((((uint32_t)ty * img_w + tx) << siz) >> 1);
+            ld->row_bytes = (uint16_t)row;
+            ld->stride = (uint16_t)((img_w << siz) >> 1);
+            ld->rows = (uint16_t)ch;
+            ld->bytes = (uint32_t)ch * t->line * 8u;
+            ld->tile = 1;
+            ld->valid = 1;
+            flush();
+            bind_unit(0, 7);
+            s_textured = s_st.tex[0] != 0;
+            if (cycle >= 2 || (sx == 1.0f && sy == 1.0f)) s_st.filter[0] = 0;
+            screen_quad(xs[ix].scr0, ys[iy].scr0, xs[ix].scr1, ys[iy].scr1, xs[ix].tex0, ys[iy].tex0,
+                        xs[ix].tex0 + (xs[ix].scr1 - xs[ix].scr0) * sx, ys[iy].tex0 + (ys[iy].scr1 - ys[iy].scr0) * sy);
+        }
+    flush();
+    R.tile[7] = keep_tile;
+    R.loads[0] = keep_load;
+    DIRTY();
+}
+
 static int ex_cmd(uint32_t* pw0, uint32_t* pw1) {
     uint32_t w0 = *pw0, w1 = *pw1, op = w0 >> 24, n, v0;
     uint8_t a, b, c, where, q[4];
     uint16_t vi;
     if (s2dex_own(op)) {
+        int fam2 = s_fam == GFX_UC_S2DEX2;
+        if (XGFX_S2DEX_BG && op == (fam2 ? 0x0Au : 0x02u)) { s2dex_bg(w1, 1); return 1; }   /* G_BG_COPY */
+        if (XGFX_S2DEX_BG && op == (fam2 ? 0x09u : 0x01u)) { s2dex_bg(w1, 0); return 1; }   /* G_BG_1CYC */
         s_unknown[op]++;
         return 1;
     }

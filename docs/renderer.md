@@ -74,13 +74,18 @@ through the viewport at the vertex's w) or the screen Z. F3DLX/F3DLP and
 the .NoN/.Rej variants differ from their parent in clipping and precision
 only: the same commands. L3DEX (lines) draws nothing.
 
-S2DEX: its own commands (G_BG_1CYC, G_BG_COPY, G_OBJ_RECTANGLE, G_OBJ_SPRITE,
-G_OBJ_MOVEMEM, G_OBJ_LOADTXTR ..., G_SELECT_DL, G_OBJ_RENDERMODE) are
-skipped (counted in the 600-frame `[GFX] unhandled op` line) so they never
-reach Fast3D's switch, where their numbers mean MTX, VTX, MOVEMEM; its
-shared commands (DL, ENDDL, the segment table, the RDP, the othermodes) run
-as in its parent. Not drawn yet: backgrounds and objects of S2DEX games stay
-black.
+S2DEX: its backgrounds are drawn (`XGFX_S2DEX_BG`, 2026-10-18): G_BG_COPY
+and G_BG_1CYC (uObjBg / uObjScaleBg) stream the image, which may be bigger
+than TMEM, through the texture cache in 64-texel LOADTILE chunks, each a
+quad at the screen span its texels cover, 1:1 or scaled, wrapping at the
+image's size (not handled: imageFlip, the scaled BG's imageYorig; host test
+`s2dex_bg`; Ocarina of Time sends them in its intro, not yet seen drawn).
+Its other own commands (G_OBJ_RECTANGLE, G_OBJ_SPRITE, G_OBJ_MOVEMEM,
+G_OBJ_LOADTXTR ..., G_SELECT_DL, G_OBJ_RENDERMODE) are skipped (counted in
+the 600-frame `[GFX] unhandled op` line) so they never reach Fast3D's
+switch, where their numbers mean MTX, VTX, MOVEMEM; its shared commands
+(DL, ENDDL, the segment table, the RDP, the othermodes) run as in its
+parent. Objects of S2DEX games stay undrawn.
 
 Textures: G_LOADTLUT keeps TMEM's upper half (256 entries, one a 64-bit
 word) and CI4/CI8 tiles convert through it (`texconv_ci_to_argb8`, RGBA16
@@ -211,7 +216,7 @@ screen.
   frame, depth-tested, no depth write) in front of the sprite; maybe as on
   the hardware, maybe too opaque: to compare with a console.
 
-- S2DEX's own commands are not drawn (no game in the ladder needs them yet
+- S2DEX's objects are not drawn (its backgrounds are; no game in the ladder needs the objects yet
   from its ROM alone).
 - F3DEX2's forced matrix (`G_MV_MATRIX` + `G_MW_FORCEMTX`), `G_MV_POINT`,
   G_LINE3D, `G_DMA_IO`, `G_SPECIAL_*`: skipped (counted).

@@ -604,6 +604,40 @@ static void test_tlut_offset(void) {
     CHECK(s_tex_px0 == 0xFFFF0000u, "tlut offset: texel 0 is %08x (want the palette's red)", s_tex_px0);
 }
 
+/* S2DEX2's G_BG_COPY (XGFX_S2DEX_BG): a 16x8 RGBA16 image into the frame
+ * at 10,20, drawn as one chunk's quad (Ocarina of Time's pre-rendered
+ * backgrounds); a 96-wide image comes out in two chunks */
+#define BGI_AT 0x3C000u
+#define BGO_AT 0x3E000u
+static void bg_obj(unsigned w, unsigned h) {
+    put16(BGO_AT + 0, 0); put16(BGO_AT + 2, (uint16_t)(w << 2));            /* imageX, imageW */
+    put16(BGO_AT + 4, 10u << 2); put16(BGO_AT + 6, (uint16_t)(w << 2));     /* frameX, frameW */
+    put16(BGO_AT + 8, 0); put16(BGO_AT + 10, (uint16_t)(h << 2));           /* imageY, imageH */
+    put16(BGO_AT + 12, 20u << 2); put16(BGO_AT + 14, (uint16_t)(h << 2));   /* frameY, frameH */
+    put32(BGO_AT + 16, BGI_AT);                                              /* imagePtr */
+    put16(BGO_AT + 20, 0); put16(BGO_AT + 22, (0u << 8) | 2u);               /* imageLoad; RGBA, 16-bit */
+    put16(BGO_AT + 24, 0); put16(BGO_AT + 26, 0);
+}
+static void test_s2dex_bg(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode S2DEX  fifo 2.05  Yoshitaka Yasumoto 1998 Nintendo.");
+    unsigned t;
+    bg_obj(16, 8);
+    s_pc = DL_AT;
+    cmd(0x0A000000u, BGO_AT);   /* G_BG_COPY */
+    cmd(0xDF000000u, 0);
+    t = run(&u);
+    CHECK(t == 2, "bg copy: %u triangles (want one quad)", t);
+    if (t == 2)
+        CHECK(near(s_v[0].x, 20.0f) && near(s_v[0].y, 40.0f) && near(s_v[4].x, 52.0f) && near(s_v[4].y, 56.0f),
+              "bg copy: quad %.1f,%.1f - %.1f,%.1f", s_v[0].x, s_v[0].y, s_v[4].x, s_v[4].y);
+    bg_obj(96, 8);
+    s_pc = DL_AT;
+    cmd(0x0A000000u, BGO_AT);
+    cmd(0xDF000000u, 0);
+    t = run(&u);
+    CHECK(t == 4, "bg copy 96 wide: %u triangles (want two chunks)", t);
+}
+
 int main(void) {
     test_ci();
     setup_data();
@@ -620,6 +654,7 @@ int main(void) {
     test_tex_recheck();
     test_rdp_tri();
     test_tlut_offset();
+    test_s2dex_bg();
     if (s_fail) printf("test_f3dex: %d failed\n", s_fail);
     return s_fail ? 1 : 0;
 }
