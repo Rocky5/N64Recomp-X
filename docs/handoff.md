@@ -9,9 +9,9 @@ console).
 The newest state first; the entries below are the record, oldest first.
 "xemu" is the emulator (slot runs, test builds); "red" is the maintainer's
 console. Red ran the 2026-10-17 set that evening (480i: its dashboard
-allows no 480p or 720p); the next set (`vzel11`, `vbk10`, `vmp8`, `vmm7`,
-`vsnap3`, `vge3`, commit `93c7fb5`: the fix round plus the 2026-10-18
-renderer, timer, palette and fall-through fixes) is staged, not yet run. Anything not marked red is xemu
+allows no 480p or 720p); the next set (`vzel12`, `vbk11`, `vmp9`, `vmm8`,
+`vsnap4`, `vge4`, commit `3ff8766`: the fix round plus the 2026-10-18
+fixes) is staged, not yet run. Anything not marked red is xemu
 only.
 
 | game (US) | how built | xemu | console (red) |
@@ -34,7 +34,7 @@ only.
 | GoldenEye | the ROM alone + `--learn` rounds (30) | logos, gun barrel, file select, mission select, briefing, the Dam in-game with its HUD and the pause watch; menus 37-50 fps; 7 functions refused by the recompiler (134 before); since 2026-10-18 the Dam right (cosf, palettes, the RDP-triangle sky), Bond's gun and the pause watch, ~30 fps; 720p 16:9 the same at ~30 fps, 18.6 MB free | `vge3` staged (first console run) |
 | Jet Force Gemini | the ROM alone | Rare logo, a menu screen (its text boxes) by 70 s since `$ra` is set at its resolver's calls (2026-10-18) | - |
 | Conker, Castlevania | the ROM alone + `--learn` rounds | boot and stop (the entries below) | - |
-| the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s8: 128 still presenting at 30 s (s7: 121); Airboarders 64 fixed since (`docs/analyzer.md`) | - |
+| the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s9: 132 still presenting at 30 s (s8: 128); Jet Force Gemini past its boot since (`docs/analyzer.md`) | - |
 
 **What exists** (each piece with host tests and a kill switch; the entries
 below say how each was verified): the ROM inside the XBE and its page cache;
@@ -61,10 +61,10 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
 1. From red (2026-10-17): Banjo-Kazooie's jiggy and START-menu
    textures; Ocarina of Time's textures (its two moons fixed in xemu);
    Mario Party's first-boot audio hang (the AC97 bring-up,
-   `boot_prev.log`); whether `vzel11`/`vbk10`/`vmp8`/`vmm7`/`vsnap3`/`vge3`
+   `boot_prev.log`); whether `vzel12`/`vbk11`/`vmp9`/`vmm8`/`vsnap4`/`vge4`
    fix what they are meant to; 720p on the
    console (red's dashboard has it off); Mario Kart 64's drift boosts.
-2. GoldenEye: on the console (`vge3`); the watch model and the walker's
+2. GoldenEye: on the console (`vge4`); the watch model and the walker's
    RDRAM tables are fixed in xemu (cosf), the rest of the missions unseen.
 3. Ocarina of Time's overlays run interpreted (also at `vzel5`'s commit);
    its title stall (a dropped SP done) is fixed in xemu, not yet on red.
@@ -1546,17 +1546,19 @@ its switch off), `test_time.py`, `test_fbfx.py`; `rom_leak_check.py` clean.
 **Staged for red (supersedes every earlier staged build; `build-host/deploy-set.sh`
 and `build-host/watch-red.sh` deploy these, pulling the logs of `vzel7`, `vbk6`,
 `vmp5`, `vmm3`, `vsnap1` first, and verify each by size).** ThinLTO releases at
-`93c7fb5` (the renderer, timer, palette and fall-through fixes), each booted
-30-40 s in xemu (slot 12) with no crash.
+`3ff8766` (the 2026-10-18 renderer, timer, palette and fall-through fixes;
+held done events waiting for queue room; 64 thread records). The set
+before (`vzel11`, `vbk10`, `vmp8`, `vmm7`, `vsnap3`, `vge3`, at `93c7fb5`)
+never reached red and is replaced.
 
 | build | game | xbe sha1 | what it should show |
 |---|---|---|---|
-| `vsnap3` | Pokémon Snap | 145b63956afe | past the main menu (vsnap1 crashed there), Oak's lab with its text right; play on to the Beach: the course is untested anywhere |
-| `vzel11` | Ocarina of Time 1.2 | 86d399ad6e41 | one moon; the KSEG1 and 32-bit load fixes |
-| `vbk10` | Banjo-Kazooie | 3c946016d8a1 | the jigsaw transition's pieces carrying the picture (built with `-DXGFX_FB_READBACK=3`, `2255849`: the frame converted when the game invalidates it); the START-menu textures; 11.7 MB free |
-| `vmp8` | Mario Party | c9801b211977 | the controls and the title logo |
-| `vmm7` | Majora's Mask | 6986da84bf11 | the first uncached write no longer crashes it |
-| `vge3` | GoldenEye (new: `/F/Applications/N64Recomp-X-GE`, 4E52481C; deploy-set makes the folders) | 5b43d75de2be | first console run (its 30 learn logs): logos, menus, the Dam with its textures, sky, cliffs, Bond's gun and the pause watch right in xemu (cosf, palettes, the walker's tables) |
+| `vsnap4` | Pokémon Snap | 91b56619fcf3 | past the main menu (vsnap1 crashed there), Oak's lab with its text right, the Beach course whole (in xemu; `vsnap3` would have stopped at its start: 32 threads) |
+| `vzel12` | Ocarina of Time 1.2 | 14b314f210b2 | one moon; the KSEG1 and 32-bit load fixes; no title stall (a dropped SP done) |
+| `vbk11` | Banjo-Kazooie | 2d6f11e34f44 | the jigsaw transition's pieces carrying the picture (built with `-DXGFX_FB_READBACK=3`: the frame converted when the game invalidates it); the START-menu textures |
+| `vmp9` | Mario Party | 8908b636184a | the controls and the title logo |
+| `vmm8` | Majora's Mask | 30575cb4b885 | the first uncached write no longer crashes it |
+| `vge4` | GoldenEye (new: `/F/Applications/N64Recomp-X-GE`, 4E52481C; deploy-set makes the folders) | a45fee186588 | first console run (its 30 learn logs): logos, menus, the Dam with its textures, sky, cliffs, Bond's gun and the pause watch right in xemu |
 
 ### GoldenEye's palettes and its sky (2026-10-18, xemu)
 

@@ -333,6 +333,19 @@ code found verbatim in the ROM becomes one ROM-backed segment, and
 `patches/recomp/0001` with RDRAM table sections takes its switch tables
 (134 -> 7 functions the recompiler refuses).
 
+**s9 (2026-10-18, at `6a00bd1`).** 132 still presenting at 30 s (s8: 128).
+Gained: Paper Mario, Glover, Wetrix, Paperboy, Rat Attack, Powerpuff Girls,
+Asteroids Hyper 64, Blues Brothers 2000 and four that present a frame or
+three. Lost: Bomberman Hero and PGA European Tour (both run clean at
+`e62de64` in a rerun: the sweep's host was loaded), Snowboard Kids 2 (a
+boot hang at retrace 0, host load; at HEAD it presents, then reads a
+garbage pointer later than s8's 30 s), Rampage 2 (timing-dependent: 481
+frames by 10 s in one run, 9 in 40 s in another), Aidyn Chronicles,
+CyberTiger, Wipeout 64, NTWJ (not rerun). The KUSEG NULL reads are still
+the biggest class; three looked at: Chopper Attack's task switcher
+(stack-switching coroutines), Jet Force Gemini's call-site resolver (fixed
+since: `ra_hooks`), Body Harvest and Pokémon Puzzle League (no cause yet).
+
 ## Known gaps
 
 - Code loaded with computed addresses (overlay tables, compressed code) is
