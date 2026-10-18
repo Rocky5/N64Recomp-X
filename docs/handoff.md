@@ -31,7 +31,7 @@ only.
 | Donkey Kong 64 | the ROM alone + `--learn` rounds | its file screen ("GAME 1"), drawing on (the IPL3 copy at RDRAM 4); audio stops once graphics start (open) | - |
 | Diddy Kong Racing, Wave Race 64, WWF No Mercy, Dr. Mario 64 | the ROM alone | present frames for the whole 30 s sweep run (DKR's microcode not decoded: grey boxes) | - |
 | Paper Mario | the ROM alone + `--learn` rounds | past its obfuscated boot (KSEG2 DMA), 321 frames, then a map's textures (open) | - |
-| GoldenEye | the ROM alone + `--learn` rounds (30) | logos, gun barrel, file select, mission select, briefing, the Dam in-game with its HUD and the pause watch; menus 37-50 fps; 7 functions refused by the recompiler (134 before); the watch's model missing, the sky purple | - |
+| GoldenEye | the ROM alone + `--learn` rounds (30) | logos, gun barrel, file select, mission select, briefing, the Dam in-game with its HUD and the pause watch; menus 37-50 fps; 7 functions refused by the recompiler (134 before); the watch's model missing; its CI textures (palettes after their texels) and the RDP-triangle cloud layer right since 2026-10-18 | `vge1` staged (first console run) |
 | Conker, Jet Force Gemini, Castlevania | the ROM alone + `--learn` rounds | boot and stop (the entries below) | - |
 | the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s8: 128 still presenting at 30 s (s7: 121); Airboarders 64 fixed since (`docs/analyzer.md`) | - |
 
@@ -64,7 +64,7 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
    what they are meant to; 720p on the
    console (red's dashboard has it off); Mario Kart 64's drift boosts.
 2. GoldenEye: the pause watch's model (0x7F054000-0x7F05B000, older than
-   the walker change), the purple sky, the walker's RDRAM tables
+   the walker change), the walker's RDRAM tables
    (`N64RX_WALK_RDRAM`, off: its level drew black).
 3. Ocarina of Time stalls on an A/START press before its title settles
    (also at `vzel5`'s commit).
@@ -1555,3 +1555,21 @@ in xemu (slot 12) with no crash.
 | `vbk8` | Banjo-Kazooie | cde875ad6a88 | the jiggy and START-menu textures (texture change checks, the mask-0 clamp) |
 | `vmp7` | Mario Party | f0d439236a40 | the controls and the title logo (`vmp6`'s fixes); rebuilt alone at `15b1a94` (its first build overlapped a test build of the same game) |
 | `vmm6` | Majora's Mask | 9f5ead6efb6e | the first uncached write no longer crashes it |
+| `vge1` | GoldenEye (new: `/F/Applications/N64Recomp-X-GE`, 4E52481C; deploy-set makes the folders) | 73c0fa49bc84 | first console run: logos, menus, the Dam with its textures right (`6a1fddf`, its 30 learn logs); the watch model is still missing |
+
+### GoldenEye's palettes and its sky (2026-10-18, xemu)
+
+GoldenEye keeps each CI texture's palette right after its texels and loads
+it with LOADTLUT, SL = the texel count, in an image of width 1
+(`gDPLoadTLUT07`, `tex.c`); the interpreter read every palette from the
+image's start, so CI textures took their own texels as colours. With SL/TL
+honoured (`XGFX_TLUT_OFFSET`) the Dam's start is right in xemu: the green
+block is a rusty container, the barriers red and white, the hazard stripes
+yellow and black. Its cloud layer is drawn as raw RDP triangle commands
+built on the CPU (`sky.c skyRenderTri`, G_RDPHALF_1/G_RDPHALF_CONT pairs
+ending in G_RDPHALF_2): now decoded and drawn (`XGFX_RDP_TRI`; a mid-frame
+dump shows it). The purple was those mis-paletted textures; the top of the
+start view is now the dark far geometry the game draws there without fog.
+Perfect Dark shares GoldenEye's texture code. Host: `test_f3dex.py`
+(`tlut_offset`, `rdp_tri`). Not checked: the watch model (its own open
+item), the cloud layer's look against the N64's.
