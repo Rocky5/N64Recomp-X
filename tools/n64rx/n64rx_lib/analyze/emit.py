@@ -8,6 +8,7 @@ with the edges out of the functions the runtime replaces cut, so libultra's
 internals that only libultra calls are dead. The pipeline leaves out a
 dead function the recompiler refuses (an exception handler's eret, a COP0
 register it has no model for) and stops on a live one."""
+import os
 import pathlib
 import re
 
@@ -117,7 +118,7 @@ def reachable(a: Analysis, nm, replaced):
     return seen
 
 
-def _size(a, seg, f):
+def _end(a, seg, f):
     """a function never ends on a jump or branch without its delay slot (a walk
     the next function's start cut: Toy Story 2's call that falls into the next
     function); the recompiler needs the slot to place what follows the call"""
@@ -128,6 +129,39 @@ def _size(a, seg, f):
         ins = Ins(int.from_bytes(a.img.rom[o:o + 4], 'big'), end - 4)
         if ins.is_jal or ins.is_j or ins.is_jr or ins.is_jalr or ins.is_branch:
             end += 4
+    return end
+
+
+def _falls_through(a, seg, start, end):
+    """the path runs off the function's end: its last instruction, or the one
+    whose delay slot that is, is not a jr, a j or an unconditional branch"""
+    from .mips import Ins
+
+    def at(v):
+        o = seg.rom + (v - seg.vram)
+        return Ins(int.from_bytes(a.img.rom[o:o + 4], 'big'), v) if seg.vram <= v and o + 4 <= len(a.img.rom) else None
+
+    for v in (end - 8, end - 4):
+        ins = at(v) if v >= start else None
+        if ins and ((ins.is_jr and not ins.is_jalr) or ins.is_j or ins.is_unconditional_branch or ins.is_eret):
+            return False
+    return True
+
+
+def _size(a, seg, f, fs=None):
+    """the bytes the recompiler translates for f. A function whose path runs
+    off its end into the next one (GoldenEye's hand-written cosf: three
+    instructions, then sinf) takes the next one's body too, up to where a path
+    ends, so the recompiled cosf goes on into sinf as the CPU does; it ended
+    at sinf's start and returned with $f0 unset (the Dam's sky and far
+    geometry, the pause watch's model). N64RX_FALLTHROUGH=0: as before."""
+    end = _end(a, seg, f)
+    if fs and os.environ.get('N64RX_FALLTHROUGH', '1') != '0':
+        for _ in range(8):   # a chain of fall-throughs, bounded
+            nxt = fs.get(end)
+            if nxt is None or nxt.start != end or not _falls_through(a, seg, f.start, end):
+                break
+            end = _end(a, seg, nxt)
     return end - f.start
 
 
@@ -143,7 +177,7 @@ def write_syms(a: Analysis, nm, path):
         lines += ['[[section]]', f'name = ".{seg.name}"', f'rom = 0x{seg.rom:08X}', f'vram = 0x{seg.vram:08X}',
                   f'size = 0x{seg.size:X}', '', 'functions = [']
         for x in sorted(fs):
-            lines.append(f'    {{ name = "{nm[a.key(seg, x, ovl)]}", vram = 0x{x:08X}, size = 0x{_size(a, seg, fs[x]):X} }},')
+            lines.append(f'    {{ name = "{nm[a.key(seg, x, ovl)]}", vram = 0x{x:08X}, size = 0x{_size(a, seg, fs[x], fs):X} }},')
         lines += [']', '']
     pathlib.Path(path).write_text('\n'.join(lines), encoding='utf-8', newline='\n')
 

@@ -1555,7 +1555,7 @@ in xemu (slot 12) with no crash.
 | `vbk8` | Banjo-Kazooie | cde875ad6a88 | the jiggy and START-menu textures (texture change checks, the mask-0 clamp) |
 | `vmp7` | Mario Party | f0d439236a40 | the controls and the title logo (`vmp6`'s fixes); rebuilt alone at `15b1a94` (its first build overlapped a test build of the same game) |
 | `vmm6` | Majora's Mask | 9f5ead6efb6e | the first uncached write no longer crashes it |
-| `vge1` | GoldenEye (new: `/F/Applications/N64Recomp-X-GE`, 4E52481C; deploy-set makes the folders) | 73c0fa49bc84 | first console run: logos, menus, the Dam with its textures right (`6a1fddf`, its 30 learn logs); the watch model is still missing |
+| `vge1` | GoldenEye (new: `/F/Applications/N64Recomp-X-GE`, 4E52481C; deploy-set makes the folders) | 73c0fa49bc84 | superseded by `vge2` (below) before it ran |
 
 ### GoldenEye's palettes and its sky (2026-10-18, xemu)
 
@@ -1573,3 +1573,20 @@ start view is now the dark far geometry the game draws there without fog.
 Perfect Dark shares GoldenEye's texture code. Host: `test_f3dex.py`
 (`tlut_offset`, `rdp_tri`). Not checked: the watch model (its own open
 item), the cloud layer's look against the N64's.
+
+### GoldenEye's cosine (2026-10-18, xemu)
+
+Interpreting 0x7F054000-0x7F05B000 made the Dam right, so the recompiled
+code there was wrong. Bisected by interpreting halves with a pixel check
+(blue sky at the top-left of a level shot; `build-host/gebisect.sh`):
+0x7F057800-0x7F057F00, where `math_sincos.s` puts `cosf` at 0x7F057EA0:
+three instructions (add pi/2) that fall into `sinf` with no return. The
+analyser sized `cosf` up to `sinf`'s start, so the recompiled `cosf` returned
+with `$f0` unset: every cosine in the game was garbage. A function whose
+path runs off its end now takes the next function's body too
+(`emit._size`, `N64RX_FALLTHROUGH`; only `cosf` changed size in GoldenEye:
+0xC to 0x12C). In xemu the Dam is right from the ROM alone: the cliffs,
+the cloudy blue sky (the RDP-triangle layer), the tunnel, and Bond's hand
+and PP7, which were missing. `test_analyze.py` 6 pairs, 0 failures. The
+pause watch's model (the same range) is still to see (the scripted pause
+missed); the earlier "dark sky" was this, not the palettes alone.
