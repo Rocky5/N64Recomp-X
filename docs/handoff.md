@@ -11,8 +11,8 @@ rest; only a console run promotes) is in `docs/compat.md`; a console
 result here moves its row there in the same change.
 
 **Newest (2026-10-18, late):** the loading screen is the deep-space title
-card the maintainer approved (red `vsm12`, `vsm13`: Super Mario 64 boots
-through it, 6 ms a frame); the boot holds swapped (L + R safe video, BACK
+card the maintainer approved on red (`vsm13`: Super Mario 64 through it to
+the end of Bob-omb Battlefield, 9 ms a frame, the game at 29.9 fps); the boot holds swapped (L + R safe video, BACK
 the BACK menu before the game); the analyser keeps far `j`s inside their
 function (six compile failures of s9) and names a libultra built without
 IDO's divide (Mario Tennis past its crash, to a stall). The entry at the
@@ -2071,7 +2071,7 @@ and nothing popping in; Mario Tennis working well (next round).
 |---|---|---|
 | `vsm11` (2354cad07d90) | red | the first deep-space build: the loading screen starved the boot (controllers up in 10059 ms, the SHA-1 never ended, the watchdog's hang card) |
 | `vsm12` (f6c90a1b4c9b) | red | the sky cached, the boot never starved: `[BOOT] loading screen: 6 ms a frame (30 frames; the first 64 ms)`, controllers up in 2915 ms, the SHA-1 896 ms, the game ran ("thats better and the game worked"); the title faded in late |
-| `vsm13` (60c209582c16) | red, deployed and size-checked | the title on the first frame (`xrc_splash_early`); not yet run |
+| `vsm13` (60c209582c16) | red | **approved by the maintainer**: the title on the first frame, played to the end of Bob-omb Battlefield ("worked fine"); `[BOOT] loading screen: 9 ms a frame (30 frames; the first 64 ms)`, controllers up in 3055 ms, the screen 4876 ms; the game 29.9 fps (display lists 3.5-6.4 ms); `[MEM] boot` free 53096 KB, `[CLOCK] cpu 733 MHz` |
 
 `[MEM] boot` free 53100 KB (vsm11; image 9524 KB: the font tables add
 ~170 KB), `[CLOCK] cpu 733 MHz` on red.
