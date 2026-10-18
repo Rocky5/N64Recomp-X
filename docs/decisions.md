@@ -765,3 +765,17 @@ the screen's, and the height 3/4 of it unless the VI mode's rows (field 0's
 yScale over its lines) say otherwise (640x240). A 320-wide game maps as
 before. The colour image's width is what the RDP draws to; the VI mode
 only settles the height.
+
+## N64Recomp patched at build time (2026-10-17, `patches/recomp`, `tools/xbox/recomp_src.py`)
+
+The recompiler had been used unmodified at its pin. GoldenEye's code at
+0x70000000 and 0x7F000000 reads its switch tables in KSEG0, and N64Recomp
+reads a table at the function's own ROM offset (its own TODO), so 124 of
+its functions had to be interpreted. Chosen: patches in `patches/recomp/`
+(one `.md` each), applied to a copy of the submodule at build time by a
+strict applier of our own; the recompiler and the generated code's cache
+are keyed on the pin plus the patches. The submodule is never edited and
+moving the pin stays deliberate (a patch that no longer applies stops the
+build with that message). Rejected: a fork of N64Recomp (a second
+repository to keep in step), working around it in the analyser (it cannot
+change where the recompiler reads).

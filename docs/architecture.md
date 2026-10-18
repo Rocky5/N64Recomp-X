@@ -92,7 +92,10 @@ docs/look/           baseline shots: the loading screen (xemu, STILL); the BACK 
   and `__osProbeTLB` translate through it. Kill switch `-DXRC_TLB=0`.
 - KSEG1 (`mem.c`, `mmio.c`): the window is aliased a second time at
   `rdram + 0xA0000000` (host P + 0xA0000000), so uncached RDRAM is the same
-  bytes (`-DXRC_KSEG1=0`). Past RDRAM, the RCP's registers, the PIF and the
+  bytes (`-DXRC_KSEG1=0`). When the range is refused as a whole (on red,
+  8 MB windows at 0xA3631000: a page there is the kernel's), the free
+  pages are aliased one by one and the first refused one is logged with
+  its PDE/PTE (`xhw_alias_why`). Past RDRAM, the RCP's registers, the PIF and the
   cartridge are a register model: the analyser sends every live function
   with a constant hardware address that the runtime does not replace to the
   interpreter (`emit.hw_funcs`), whose KSEG1 loads and stores go to
@@ -151,6 +154,12 @@ docs/look/           baseline shots: the loading screen (xemu, STILL); the BACK 
   the HLE, Ocarina of Time's JPEG decoder task to `jpeg.c`; others logged
   and not run. Frames are presented at the game's swap once it swaps
   (`gfx.c`, `XRC_PRESENT_ON_SWAP`: a frame may span several tasks).
+- The VI (`ultra/vi.c`): `osViGetCurrentFramebuffer`/`NextFramebuffer`
+  answer K0BASE until the first swap, as libultra's `__osViInit` leaves
+  them (`XRC_VI_K0BASE`); `xu_vi_rows` gives the renderer the mode's rows.
+- A call through a pointer into a KUSEG page the TLB does not map runs the
+  game's refill code and fault path first, as the CPU's miss would
+  (`XRC_LOOKUP_TLB`, `learn.c`; GoldenEye's evicted 0x7F000000 pages).
 - Code the TLB maps: a miss (a fault at a KUSEG host address) runs the
   game's own refill vector or `__osException` in the interpreter, then
   libultra's fault path (the game's fault thread pages it in); KSEG2/3

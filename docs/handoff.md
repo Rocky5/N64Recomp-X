@@ -8,33 +8,38 @@ console).
 
 The newest state first; the entries below are the record, oldest first.
 "xemu" is the emulator (slot runs, test builds); "red" is the maintainer's
-console. Everything since `vmk4`/`vsnap1` is xemu only.
+console. Red ran the 2026-10-17 set that evening (480i: its dashboard
+allows no 480p or 720p); its fix round (`vmp6`, `vmm5`, `vzel9`, `vbk7`,
+commit `0e5dc19`) is staged, not yet run. Anything not marked red is xemu
+only.
 
 | game (US) | how built | xemu | console (red) |
 |---|---|---|---|
 | Pilotwings 64 | its pack, or the ROM alone (`--analyze`): the same | title to results, saves, sound, 720p + hor+, the BACK menu | `vnrx1`: plays, sound, EEPROM saves, the BACK menu, the combos; 53-59 fps |
-| Mario Kart 64 | the ROM alone | title, menus, races (F3DEX), sound (nead), Controller Pak, 720p 16:9 | `vmk2`/`vmk4`: races at 29.9 fps (display lists 2-3 ms), sound, the ROM inside the XBE, the BACK menu and its Paks page, EEPROM and pak files; the map screen's TV (a framebuffer read) wrong |
-| Super Smash Bros. | the ROM alone | intro, title, 1P character select, a 1P match (Link vs Link, Hyrule Castle) at 47-50 fps with scripted input; 720p 16:9 at 45-57 fps (11.7 MB free) | - |
-| Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text; one present a frame (its frames are several tasks; presented at the swap), audio; its processes run as coroutines; 720p at 29-30 fps | `vmp1`: 60 fps but flickering (two half frames a frame); `vmp2` (the fix) deployed |
+| Mario Kart 64 | the ROM alone | title, menus, races (F3DEX), sound (nead), Controller Pak, 720p 16:9 | `vmk2`/`vmk4`: races at 29.9 fps (display lists 2-3 ms), sound, the ROM inside the XBE, the BACK menu and its Paks page, EEPROM and pak files; the map screen's TV (a framebuffer read) wrong; drift boosts in question |
+| Super Smash Bros. | the ROM alone | intro, title, 1P character select, a 1P match (Link vs Link, Hyrule Castle) at 47-50 fps with scripted input; 720p 16:9 at 45-57 fps (11.7 MB free) | `vssb6`: perfect, 59.9 fps; portraits sharp |
+| Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text; one present a frame (its frames are several tasks; presented at the swap), audio; its processes run as coroutines; 720p at 29-30 fps; START past the title to Mushroom Village (`0e5dc19`) | `vmp5`: flicker gone, 29.9 fps; the logo garbled and the controls dead (both fixed in `vmp6`, staged); the first boot's audio stuck |
 | Mario Party 2 / 3 | the ROM alone | intro, menus; 2: its audio thread, destroyed and made again by the game, plays on (58 tasks a second, 2026-10-17) | - |
-| Super Mario 64 | the ROM alone (+ three `--learn` rounds before) | head screen, Lakitu intro, castle grounds and Lakitu's text drawn right (scripted, 2026-10-17); 720p hor+ at 29-30 fps (the skybox stays in the 4:3 box) | `vsm1` staged |
+| Super Mario 64 | the ROM alone (+ three `--learn` rounds before) | head screen, Lakitu intro, castle grounds and Lakitu's text drawn right (scripted, 2026-10-17); 720p hor+ at 29-30 fps (the skybox stays in the 4:3 box) | `vsm6`: works perfectly, 29.9 fps |
 | Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, main menu, Professor Oak's lab and his dialogue (threads reused; a glyph run missing) | `vsnap1` (before the thread-stack fix): the crash xemu had then |
-| Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro with the lair drawn whole, Banjo's house (~28 fps); near/far now the game's (the IPL3 copy); 720p hor+ at ~28 fps, 10 MB free (geometry the game culls shows as void at the far edges) | `vbk1`: works, near/far clipping; `vbk2` (the fix) deployed |
+| Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro with the lair drawn whole, Banjo's house (~28 fps); near/far now the game's (the IPL3 copy); 720p hor+ at ~28 fps, 10 MB free (geometry the game culls shows as void at the far edges) | `vbk6`: works well, widescreen right, 29.9 fps; textures wrong as jiggies come in and in the START menu |
 | Blast Corps | the ROM alone + 15 `--learn` rounds | Rare logo, title, profile screen, the attract demo (50-56 fps) | - |
-| Majora's Mask | the ROM alone | title, file select, name entry, audio (2026-10-17) | - |
-| Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (53 MB, page cache) | title, file select, name entry, a new file, the intro text, Kokiri Forest's HUD, the Deku Tree's intro drawn, music (nead) | - |
+| Majora's Mask | the ROM alone | title, file select, name entry, audio (2026-10-17) | `vmm3`: crashed at its first uncached write (KSEG1 alias refused); `vmm5` staged |
+| Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (53 MB, page cache) | title, file select, name entry, a new file, the intro text, Kokiri Forest's HUD, the Deku Tree's intro drawn, music (nead); an A/START press before the title logo settles stalls it | `vzel7`: runs at its own 20 fps; textures wrong, two moons on the title |
 | Ridge Racer 64 | the ROM alone + one `--learn` round | F3DEX2; 1732 frames in 30 s (~44 fps) | - |
 | Donkey Kong 64 | the ROM alone + `--learn` rounds | its file screen ("GAME 1"), drawing on (the IPL3 copy at RDRAM 4); audio stops once graphics start (open) | - |
 | Diddy Kong Racing, Wave Race 64, WWF No Mercy, Dr. Mario 64 | the ROM alone | present frames for the whole 30 s sweep run (DKR's microcode not decoded: grey boxes) | - |
 | Paper Mario | the ROM alone + `--learn` rounds | past its obfuscated boot (KSEG2 DMA), 321 frames, then a map's textures (open) | - |
-| GoldenEye | the ROM alone + `--learn` rounds | Nintendo and Rare logos, the gun barrel intro, the legal screen, file select (four folders) and the mode select at 440x330; 46-58 fps after 19 learning rounds (2026-10-17) | - |
+| GoldenEye | the ROM alone + `--learn` rounds (30) | logos, gun barrel, file select, mission select, briefing, the Dam in-game with its HUD and the pause watch; menus 37-50 fps; 7 functions refused by the recompiler (134 before); the watch's model missing, the sky purple | - |
 | Conker, Jet Force Gemini, Castlevania | the ROM alone + `--learn` rounds | boot and stop (the entries below) | - |
-| the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s7: 245 build, 139 present frames, 121 still presenting at 30 s (`docs/analyzer.md`) | - |
+| the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s8: 128 still presenting at 30 s (s7: 121); Airboarders 64 fixed since (`docs/analyzer.md`) | - |
 
 **What exists** (each piece with host tests and a kill switch; the entries
 below say how each was verified): the ROM inside the XBE and its page cache;
 Yaz0 games inflated at build time; the ROM analyser (entry shapes, segments,
-libultra by behaviour, the N64Recomp precheck) and the learning loop
+libultra by behaviour, the N64Recomp precheck; TLB-paged code the ROM
+holds as one ROM-backed segment, captured RDRAM read for jump tables) and
+N64Recomp's own patches (`patches/recomp`, applied at build time), and the learning loop
 (`--learn`: the safety net's functions, DMAs, code captured from RDRAM and
 checked against it by `guard.c`, TLB regions); the game's own TLB (aliases,
 misses through its exception code and fault thread, KSEG2/3 through
@@ -51,23 +56,27 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
 **Open, roughly by how much they block** (details in the entries below and
 `docs/analyzer.md`):
 
-1. From the first console runs of `vssb1`/`vmp1`/`vbk1`/`vmk5`: Smash's
-   blurry textures, Mario Kart 64's drift boosts; Mario Party's flicker and
-   Banjo-Kazooie's near/far clipping fixed in xemu, the console to confirm
-   (the last entry below).
-2. The s7 categories: NULL pointers through the TLB path (42 games), Rare's
-   compressed boots before learning rounds (18), no frames (42).
-3. Per game: Ocarina of Time's JPEG task and S2DEX2; Paper Mario's copy-protection
-   chain and its flash code (no `osFlash*` rule); GoldenEye's wild jump in
-   paged code; Jet Force Gemini's init reached only through decompressed
-   data; Donkey Kong 64's main thread; 
-   Castlevania's dispatch after a TLB miss.
-4. The 13 entries that are their own loaders (Acclaim's Turok 1-3,
-   Armorines, All-Star Baseball; Army Men; two Star Wars); gzip code.
-5. Renderer: S2DEX's own commands, F3DDKR, framebuffer effects by default
-   (MK64's TV, Snap's photos); MusyX and the other audio microcodes.
-6. M2's leftovers (720p on the console, the 30-minute soak, Pilotwings'
-   pack README); M3's measurement gate.
+1. From red (2026-10-17): Banjo-Kazooie's jiggy and START-menu
+   textures; Ocarina of Time's textures and two moons; Mario Party's
+   first-boot audio hang (the AC97 bring-up, `boot_prev.log`); whether
+   `vmp6`/`vmm5`/`vzel9`/`vbk7` fix what they are meant to; 720p on the
+   console (red's dashboard has it off); Mario Kart 64's drift boosts.
+2. GoldenEye: the pause watch's model (0x7F054000-0x7F05B000, older than
+   the walker change), the purple sky, the walker's RDRAM tables
+   (`N64RX_WALK_RDRAM`, off: its level drew black).
+3. Ocarina of Time stalls on an A/START press before its title settles
+   (also at `vzel5`'s commit).
+4. The s8 categories: NULL reads through KUSEG (23; Chopper Attack's is a
+   hand-written task switcher, which needs strands like Mario Party's),
+   Rare's compressed boots before learning rounds (19), no frames in the
+   first round (52).
+5. Per game: Paper Mario's map textures, Donkey Kong 64's audio, Bomberman
+   64's loader, Perfect Dark's 0x70000000 mapping, Snap's glyphs.
+6. Renderer: S2DEX's own commands, F3DDKR, framebuffer effects by default;
+   hor+ for orthographic backgrounds (Super Mario 64's sky); MusyX and the
+   other audio microcodes.
+7. M2's leftovers (the 30-minute soak, Pilotwings' pack README); M3's
+   measurement gate.
 
 ## M0: skeleton, toolchain, the tool's shape (2026-10-16, branch `dev`)
 
@@ -1417,6 +1426,8 @@ overlay); fixed before `vmp5`.
 | `vzel7` | Ocarina of Time 1.2 | cefa56962924 | 20 fps, 21.6 MB | 4E52B837, `/F/Applications/N64Recomp-X-ZEL` (new folders) |
 | `vmm3` | Majora's Mask | e83c420d2b36 | 17 fps, 18.1 MB | 4E52510E, `/F/Applications/N64Recomp-X-MM` (new folders) |
 
+Deployed to red 2026-10-17 20:27 (each XBE's size checked on the
+console); its results are the "Red, the set's first run" entry below.
 To test on red: 720p on Smash Bros. and Banjo-Kazooie (the `[MEM]` and
 `[BEAT]` free lines; the 24 MB rule is xemu-measured); Mario Party's
 flicker and Banjo's clipping (the earlier fixes, never confirmed); Smash's
@@ -1446,3 +1457,14 @@ and the KSEG1 alias of 8 MB windows, refused on the console as a whole
 aliased page by page, the first refused page logged. Open: Banjo's jiggy
 and START-menu textures, Ocarina of Time's textures and two moons, the
 first-boot audio hang.
+
+**Staged: the fix round (red off; `build-host/deploy-set.sh` deploys
+these four after pulling the logs of the builds they replace).** ThinLTO
+releases at `0e5dc19`, each booted 35 s in xemu with no crash.
+
+| build | game | xbe sha1 | what it should fix |
+|---|---|---|---|
+| `vmp6` | Mario Party | 8ad0ef65b4ae | the dead controls, the title logo |
+| `vmm5` | Majora's Mask | 2044b8ad67d3 | the crash at its first uncached write (or the log names the page in the way) |
+| `vzel9` | Ocarina of Time 1.2 | 9e2f9f402b59 | the KSEG1 alias (uncached RDRAM), 32-bit block loads: perhaps its textures |
+| `vbk7` | Banjo-Kazooie | 5999609195a9 | 32-bit block loads: perhaps the jiggy and START-menu textures |

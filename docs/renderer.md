@@ -95,6 +95,25 @@ each 16-byte group (`XGFX_DESWIZZLE32`, 2026-10-17: Smash Bros.'s
 character portraits and names were striped with the 16-bit rule; the
 maintainer's "blurry textures" on the console).
 
+Rare's Fast3D (GoldenEye, Perfect Dark: `RSP SW Version: 2.0G`) has
+`G_TRI4` at 0xB1, unused in Nintendo's Fast3D: four triangles of 4-bit
+indices, x and y nibbles in w1, z in w0, a triangle of three 0s skipped
+(`XGFX_TRI4`, host test `tri4`); without it GoldenEye drew one model
+triangle in ten.
+
+RDP rules added 2026-10-17 (each with its switch in `docs/testing.md`):
+- the screen's size is the width of the buffer the game swaps to (its
+  `osViSwapBuffer` addresses) and 3/4 of it, or the VI mode's rows when
+  they differ (640x240); 320x240 maps as before (`XGFX_HIRES`;
+  GoldenEye's 440x330 menus, `[GFX] screen WxH`);
+- a 1/2-cycle texrect covers every row and column a subscanline of it
+  touches, so `(y << 2)` to `((y + 1) << 2) - 1` fills row y whole when
+  upscaled (`XGFX_TEXRECT_SNAP`; GoldenEye's line-by-line backgrounds);
+- a fill into a 32-bit colour image takes its colour as RGBA8888
+  (`XGFX_FILL32`);
+- a LOADBLOCK into a 32-bit tile under a 16-bit image counts 32-bit
+  texels (`XGFX_LOAD32`; Mario Party's title logo).
+
 Widescreen (generic hor+, the 4:3 box), the screen-fade and BACK-menu held
 frame, the title fit and the scissor rules are below the GBI: the same for
 every family.
@@ -110,6 +129,9 @@ every family.
 | Super Smash Bros. | F3DEX (fifo 2.0) | the intro, the title and the character select at about 50 fps (no learning rounds) |
 | Blast Corps | Fast3D (2.0D) | the Rare logo, the attract demo at 50-56 fps with its text (the font's glyphs hashed whole), the title, the profile screen (its portrait frame empty) |
 | Banjo-Kazooie | F3DEX 1.21 | its intro: Banjo and Kazooie, textured, about 20 fps (`--learn`, captured code); the sky and a tree draw black. A tile inside a larger LOADBLOCK takes the latest load that covers its TMEM address (`XGFX_TMEM_WITHIN`: Banjo's faces) |
+| GoldenEye | Fast3D 2.0G with Rare's G_TRI4 | Nintendo/Rare logos, the gun barrel, the 440x330 file select and mission menus, the Dam in-game; the pause watch's model missing, the sky purple, one block's texture garbled (open) |
+| Mario Party | F3DEX | the intro's 3D scenes, the title (its 32-bit logo strips: `XGFX_LOAD32`), Mushroom Village; on red its frames whole since present-on-swap |
+| Ocarina of Time 1.2 | F3DZEX2 (+ S2DEX2 `[Safe]`, JPEG task) | the title, file select, name entry, Kokiri Forest; on red its textures wrong and two moons on the title (open) |
 
 ## Framebuffer effects (`xbox/src/gfx/fbfx.{h,c}`, f3d_interp.c)
 

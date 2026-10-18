@@ -314,6 +314,23 @@ Pokémon Stadium 20, Kirby 64 9. After s7 (not in it): the overlay
 precheck (Mario Party 3 builds), XRC_HIGH_TLB, the controller query names
 (Ocarina of Time's title sees the controller).
 
+**s8 and after (2026-10-17).** s8: 128 still presenting at 30 s (s7: 121);
+KUSEG NULL reads 30 (42), the boot code returning 19 (the dispatch start
+takes Blast Corps on), no frames in the first round 52. Since: the VI
+framebuffers at K0BASE before the first swap (Airboarders 64 presents); a
+false `osContGetReadData` corrected: the rule matched Mario Party's own
+ring of recorded pads (4 shorts a call, within 0x100 of
+`osContStartReadData`'s command byte) and the runtime replaced it, while
+the game's real one read a PIF buffer nothing filled (no buttons, on red).
+The SI buffer now also comes from the pack routine `osContStartReadData`
+calls, a halfword written at arg0 + 2 rules a candidate out (an OSContPad
+has bytes there), and the reader of that buffer wins a tie: Mario Party
+1-3 name the one beside `osContStartReadData`; Mario Kart 64, Super Mario
+64, Smash Bros. and Pilotwings 64 name what they did. GoldenEye: TLB-paged
+code found verbatim in the ROM becomes one ROM-backed segment, and
+`patches/recomp/0001` with RDRAM table sections takes its switch tables
+(134 -> 7 functions the recompiler refuses).
+
 ## Known gaps
 
 - Code loaded with computed addresses (overlay tables, compressed code) is
