@@ -187,7 +187,13 @@ static void fill_e(void) {
 static unsigned s_test_hang;   /* env MX_TEST_HANG */
 /* milliseconds from the ACPI clock: GetTickCount (the kernel tick) fell
  * behind under load in xemu, so a "for 100" press lasted 300 ms */
-static DWORD xhw_ms_now(void) { return (DWORD)(xhw_time_us() / 1000u); }
+/* the game's clock (xhw_clock.c), which stops while a screenshot dumps
+ * (10-15 s over serial each): a script's times stay the game's however many
+ * SHOTs it takes. -DXHW_AUTOPAD_GAME_CLOCK=0: the wall clock, as before */
+#ifndef XHW_AUTOPAD_GAME_CLOCK
+#define XHW_AUTOPAD_GAME_CLOCK 1
+#endif
+static DWORD xhw_ms_now(void) { return (DWORD)((XHW_AUTOPAD_GAME_CLOCK ? xhw_game_time_us() : xhw_time_us()) / 1000u); }
 static DWORD s_load_t0;        /* the time base of t<ms> events */
 
 void xhw_autopad_clock(void) { s_load_t0 = xhw_ms_now(); }

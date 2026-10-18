@@ -22,7 +22,7 @@ only.
 | Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text; one present a frame (its frames are several tasks; presented at the swap), audio; its processes run as coroutines; 720p at 29-30 fps; START past the title to Mushroom Village (`0e5dc19`) | `vmp5`: flicker gone, 29.9 fps; the logo garbled and the controls dead (both fixed since, `vmp8` staged); the first boot's audio stuck |
 | Mario Party 2 / 3 | the ROM alone | intro, menus; 2: its audio thread, destroyed and made again by the game, plays on (58 tasks a second, 2026-10-17) | - |
 | Super Mario 64 | the ROM alone (+ three `--learn` rounds before) | head screen, Lakitu intro, castle grounds and Lakitu's text drawn right (scripted, 2026-10-17); 720p hor+ at 29-30 fps (the skybox stays in the 4:3 box) | `vsm6`: works perfectly, 29.9 fps |
-| Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, title, the photographer card, Professor Oak's lab and his whole briefing, every glyph right (2026-10-18); the courses not reached by script | `vsnap1` (before the thread-stack fix): the crash xemu had then; `vsnap3` staged |
+| Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, title, the photographer card, Professor Oak's lab and his whole briefing, every glyph right; the Beach course whole to the goal gate, back to the lab and out again at 29.9 fps (2026-10-18, 64 thread records); some cliff and tunnel walls flat grey (open) | `vsnap1` (before the thread-stack fix): the crash xemu had then; `vsnap3` staged |
 | Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro with the lair drawn whole, Banjo's house (~28 fps); near/far now the game's (the IPL3 copy); 720p hor+ at ~28 fps, 10 MB free (geometry the game culls shows as void at the far edges) | `vbk6`: works well, widescreen right, 29.9 fps; textures wrong as jiggies come in and in the START menu |
 | Blast Corps | the ROM alone + 15 `--learn` rounds | Rare logo, title, profile screen, the attract demo (50-56 fps) | - |
 | Majora's Mask | the ROM alone | title, file select, name entry, audio (2026-10-17) | `vmm3`: crashed at its first uncached write (KSEG1 alias refused); `vmm5` staged |
@@ -74,8 +74,7 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
    first round (52).
 5. Per game: Paper Mario's map textures, Donkey Kong 64's audio, Bomberman
    64's loader, Perfect Dark (past its boot: a TLB miss through its own
-   exception code, round 8), Snap's courses (never
-   reached), Mario Party's 720p title logo.
+   exception code, round 8), Snap's flat grey cliff walls on the Beach, Mario Party's 720p title logo.
 6. Renderer: S2DEX's own commands, F3DDKR, framebuffer effects by default;
    hor+ for orthographic backgrounds (Super Mario 64's sky); MusyX and the
    other audio microcodes.
@@ -1709,3 +1708,21 @@ frames in 55 s. The relocatable code runs interpreted inline (4.7 million
 instructions per 300 retraces at its busiest). `[MEM]` 32.5 MB free after
 nv2a; `[CLOCK]` 733 MHz (xemu). Not verified: past the menu, and the
 console.
+
+**Pokémon Snap's Beach course (xemu, test build, slot 14, scripted).**
+Two script problems first. Autopad's `t<ms>` times ran on the wall clock,
+so each SHOT (10-15 s over serial) ate the script's time: they now run on
+the game's clock, which the dump holds (`XHW_AUTOPAD_GAME_CLOCK`). And N64 B
+is the Duke's X (the Duke's B is C-right): the script had answered Oak's
+"Shall I repeat this information?" with C-right and looped the briefing
+(`build-host/scen/snap19`: A through the name and the briefing, A then X
+5 s apart until 117 s, then A alone). The course then stopped at its start
+with "Too many N64 threads" (32): HAL's object manager runs a thread per
+object, and the Beach has more than 32 at once. The records are now 64
+(`XRC_MAX_THREADS`); the run went through the whole course (Pikachu,
+Snorlax, Butterfree, Eevee, Pidgey drawn), past the goal gate, back to
+Oak's lab ("Welcome back!") and onto the course again, with no stall.
+29.9 fps on the course, 53-55 in the lab. `[MEM]` 11.0 MB free on the course
+(17.0 after nv2a); `[CLOCK]` 733 MHz (xemu). Open: some cliff and tunnel
+walls draw flat grey. Not verified: the console, the other courses, the
+photo review.

@@ -13,7 +13,14 @@
 
 #include "ultra.h"
 
-#define MAX_THREADS 32
+/* N64 threads with a record (and, once started, a host thread with a
+ * committed 128 KB stack): Pokemon Snap's object threads on its Beach
+ * course passed 32 at once ("Too many N64 threads"); only a game that makes
+ * them pays for them. -DXRC_MAX_THREADS=32: as before */
+#ifndef XRC_MAX_THREADS
+#define XRC_MAX_THREADS 64
+#endif
+#define MAX_THREADS XRC_MAX_THREADS
 /* osStopThread(self) waits for an osStartThread instead of parking for
  * good: HAL's object manager (Pokemon Snap) runs each object's thread a
  * frame at a time that way, and destroys and creates them again on the
@@ -120,6 +127,7 @@ static Thr* add(uint32_t t) {
     d->t = t;
     d->ev = xhw_event_create();
     s_nthr++;
+    if (s_nthr > 32 && !(s_nthr & 7)) xhw_logf("[OS] %d N64 thread records", s_nthr);
     return d;
 }
 
