@@ -842,3 +842,26 @@ revision), since another version is another build. The first table
 (named by the maintainer); Silver Mario Kart 64, GoldenEye, Banjo-Kazooie,
 Ocarina of Time; the rest Experimental.
 
+
+## A desktop app over n64rx, with a prebuilt toolchain (maintainer, 2026-10-18)
+
+PLAN.md §8 Q4 asked whether the CLI gets a GUI. Answer: yes, an Electron
+app (`app/`) a non-technical person downloads, drops a ROM on, and gets the
+Xbox folder from, in the port's galaxy look. It is a shell over `n64rx`:
+it runs `n64rx info --json` when a ROM is loaded (the game, its tier and
+its known problems from `compat.py`) and `n64rx --events json build`
+(JSON lines, `docs/app.md`); no build step lives in JavaScript. The
+toolchain is a prebuilt per-OS download (`tools/xbox/pack_toolchain.py`:
+Python, LLVM 21, nxdk, N64Recomp, a trimmed MSYS2 on Windows), not Docker
+(Docker Desktop's WSL2 and virtualisation steps are the hard part for the
+people the app is for) and not `setup.sh` (an hour of building on the
+user's machine). Docker and the native toolchain stay for the CLI and for
+the app in dev mode (`N64RX_TOOLCHAIN=system`). Every piece builds locally
+with one command; CI only calls the same commands. Electron over pywebview
+(the OS webview is missing on many Linux installs) and Pygame (no real
+widgets, drag-drop or HiDPI).
+
+`compat.py` now lists every row of `docs/compat.md` with a ROM, the
+Experimental ones too, each with its "keeps it from the next tier" in a
+player's words: the known problems the app shows. The rule in
+`docs/compat.md` changed with it.

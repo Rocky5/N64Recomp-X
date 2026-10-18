@@ -5,6 +5,7 @@ the output folder's layout (a fake engine stands in for the toolchain),
 doctor on a machine without Docker, and a ROM dropped onto the CLI."""
 import contextlib
 import io
+import json
 import pathlib
 import shutil
 import struct
@@ -296,6 +297,29 @@ class Build(unittest.TestCase):
             self.assertFalse(cli.rom_inside(folder / 'default.xbe'))
             self.assertNotIn(b'$ROM\0', (folder / 'default.xbe').read_bytes()[:0x1000])
 
+    def test_events(self):
+        """the app's way in (--events json): the five steps, each closed by its time, then the folder"""
+        rom_data = synthetic()
+        with tempfile.TemporaryDirectory() as tmp:
+            rom_path = pathlib.Path(tmp) / 'game.z64'
+            rom_path.write_bytes(rom_data)
+            pack = fake_pack(tmp, romlib.parse(rom_path, rom_data))
+            eng = FakeEngine(ROOT / 'build-xbox/xbe/default.xbe')
+            evs, lines = [], []
+            try:
+                with mock.patch.object(packs, 'all_packs', return_value=[pack]), \
+                        mock.patch.object(pipeline, 'cache_dir', return_value=pathlib.Path(tmp)):
+                    folder = pipeline.build(rom_path, out=pathlib.Path(tmp) / 'out', eng=eng, echo=lines.append,
+                                            events=evs.append)
+            finally:
+                shutil.rmtree(ROOT / 'build-xbox/n64rxtest', ignore_errors=True)
+            self.assertEqual(lines, [], 'text out with events on')
+            steps = [e for e in evs if e['ev'] == 'step']
+            self.assertEqual([(e['n'], e['of']) for e in steps], [(n, 5) for n in range(1, 6)])
+            self.assertEqual(sum(e['ev'] == 'done' for e in evs), 5)
+            self.assertEqual(evs[-1], {'ev': 'result', 'folder': str(folder), 'status': evs[-1]['status']})
+            self.assertTrue(evs[-1]['status'].startswith('Status: Experimental'))
+
 
 class Doctor(unittest.TestCase):
     def test_without_docker(self):
@@ -330,6 +354,59 @@ class Cli(unittest.TestCase):
         with contextlib.redirect_stderr(err):
             self.assertEqual(cli.main(['build', 'no-such-file.z64']), 2)
         self.assertIn('What to do:', err.getvalue())
+
+    def run_json(self, argv):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = cli.main(argv)
+        cli.EVENTS = False
+        return code, [json.loads(l) for l in out.getvalue().splitlines()]
+
+    def test_info_json(self):
+        """what the app shows on a loaded ROM: the header, the tier and its known problems"""
+        with tempfile.TemporaryDirectory() as tmp:
+            r = pathlib.Path(tmp) / 'Game (USA).v64'
+            r.write_bytes(to_v64(synthetic(code=b'NKTE', title=b'MARIOKART64         ')))
+            code, out = self.run_json(['info', str(r), '--json'])
+        self.assertEqual(code, 0)
+        i, = out
+        self.assertEqual((i['rom']['code'], i['rom']['order'], i['rom']['revision']), ('NKTE', 'v64', '1.0'))
+        self.assertEqual(i['compat']['tier'], 'Silver')
+        self.assertEqual(i['compat']['name'], 'Mario Kart 64 (US)')
+        self.assertTrue(i['compat']['issues'])
+        self.assertIsNone(i['pack'])
+
+    def test_iso_events(self):
+        """--iso: six steps, the build's result held back, one result naming the disc image, the folder gone"""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = pathlib.Path(tmp) / 'home'
+
+            def fake_build(rom, out, events=None, **kw):
+                (out / 'Game').mkdir(parents=True)
+                (out / 'Game/default.xbe').write_bytes(b'XBEH')
+                for n in range(1, 6):
+                    events({'ev': 'step', 'n': n, 'of': 5, 'text': f's{n}'})
+                    events({'ev': 'done', 'secs': 0.0})
+                events({'ev': 'result', 'folder': str(out / 'Game'), 'status': 'Status: Gold'})
+
+            iso = pathlib.Path(tmp) / 'out' / 'Game.iso'
+            with mock.patch.dict('os.environ', {'N64RX_HOME': str(home)}), \
+                    mock.patch.object(pipeline, 'build', fake_build), \
+                    mock.patch.object(cli, 'make_iso', lambda folder, out: out.parent.mkdir() or out.write_bytes(b'')):
+                code, out = self.run_json(['--events', 'json', 'build', 'x.z64', '--iso', str(iso)])
+            self.assertEqual(code, 0)
+            steps = [e for e in out if e['ev'] == 'step']
+            self.assertEqual([(e['n'], e['of']) for e in steps], [(n, 6) for n in range(1, 7)])
+            results = [e for e in out if e['ev'] == 'result']
+            self.assertEqual(results, [{'ev': 'result', 'file': str(iso.resolve()), 'status': 'Status: Gold'}])
+            self.assertFalse((home / 'iso-staging').exists(), 'the staging folder was left behind')
+
+    def test_error_event(self):
+        code, out = self.run_json(['--events', 'json', 'build', 'no-such-file.z64'])
+        self.assertEqual(code, 2)
+        self.assertEqual(out[-1]['ev'], 'error')
+        self.assertIn('No file at', out[-1]['message'])
+        self.assertTrue(out[-1]['hint'])
 
 
 class ReadsRa(unittest.TestCase):

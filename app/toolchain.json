@@ -1,0 +1,6 @@
+{
+  "win32-x64": { "url": "PLACEHOLDER: set by the release (tools/xbox/pack_toolchain.py prints url, sha256, size, key)", "sha256": "", "size": 0, "key": "" },
+  "darwin-arm64": { "url": "PLACEHOLDER", "sha256": "", "size": 0, "key": "" },
+  "darwin-x64": { "url": "PLACEHOLDER", "sha256": "", "size": 0, "key": "" },
+  "linux-x64": { "url": "PLACEHOLDER", "sha256": "", "size": 0, "key": "" }
+}

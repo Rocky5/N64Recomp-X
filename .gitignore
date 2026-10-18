@@ -47,3 +47,13 @@ __pycache__/
 .DS_Store
 build-sweep/
 /build-*/
+
+# the desktop app (app/): dependencies, staged sources, installers, the generated icon
+/app/node_modules/
+/app/dist/
+/app/stage/
+/app/build/icon.png
+/app/build/icon.ico
+/app/build/icon.icns
+/app/renderer/img/
+/app/renderer/mark-stars.js

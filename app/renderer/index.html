@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>N64Recomp-X</title>
+<link rel="icon" href="img/mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="intro-on">
+<canvas id="sky" aria-hidden="true"></canvas>
+
+<header class="topbar">
+  <div class="brand"><img class="brand-logo" src="img/mark.svg" alt="" width="22" height="22"><span class="pixel">N64Recomp-X</span></div>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="menu-btn" aria-label="Menu" aria-haspopup="true" aria-expanded="false" data-icon="gear"></button>
+  </div>
+</header>
+
+<div class="menu glass" id="menu" role="menu" hidden>
+  <button role="menuitem" data-act="settings"><i data-icon="folder"></i>Data and storage</button>
+  <button role="menuitem" data-act="logs"><i data-icon="file"></i>Open log folder</button>
+  <button role="menuitem" data-act="about"><i data-icon="info"></i>About N64Recomp-X</button>
+</div>
+
+<main class="stage" id="stage">
+
+  <!-- 2 first run: the build tools -->
+  <section class="screen" data-screen="tools" hidden>
+    <div class="card glass narrow">
+      <div class="card-head">
+        <div class="hero-icon" data-icon="cube"></div>
+        <div>
+          <div class="eyebrow pixel">First run</div>
+          <h1>Get the build tools</h1>
+        </div>
+      </div>
+      <p class="lead">N64Recomp-X needs its build tools once: the compilers that turn a game's code into an Xbox program. They stay on this computer for every game you build.</p>
+      <div class="tools-facts">
+        <span class="chip"><i data-icon="download"></i><span id="tools-size">About 700 MB</span></span>
+        <span class="chip"><i data-icon="shield"></i>Checked before use</span>
+        <span class="chip"><i data-icon="repeat"></i>Resumes if stopped</span>
+      </div>
+      <div class="where" id="tools-where"><i data-icon="folder"></i><div class="min0"><div class="where-path truncate" id="tools-where-path"></div><div class="where-note">Saved in <b>N64Recomp-X Data</b>. Delete that folder to remove everything.</div></div></div>
+      <div class="progress-block" id="tools-progress" hidden>
+        <div class="progress-row"><span id="tools-phase">Downloading</span><span id="tools-amount" class="num"></span></div>
+        <div class="bar"><div class="bar-fill" id="tools-bar"></div></div>
+        <div class="progress-row sub"><span id="tools-speed" class="num"></span><span id="tools-eta" class="num"></span></div>
+        <ol class="phases" id="tools-phases">
+          <li data-phase="space">Space</li><li data-phase="download">Download</li><li data-phase="verify">Verify</li><li data-phase="unpack">Unpack</li>
+        </ol>
+      </div>
+      <div class="notice danger" id="tools-error" hidden>
+        <div class="notice-title" id="tools-error-msg"></div>
+        <div class="notice-body" id="tools-error-hint"></div>
+      </div>
+      <div class="actions">
+        <button class="link-btn" id="tools-system">Use the tools already on this computer</button>
+        <span class="grow"></span>
+        <button class="btn ghost" id="tools-cancel" hidden>Cancel</button>
+        <button class="btn primary" id="tools-go"><i data-icon="download"></i><span>Download build tools</span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 home: the drop zone -->
+  <section class="screen" data-screen="home" hidden>
+    <div class="drop glass" id="drop" tabindex="0" role="button" aria-label="Drop your N64 ROM here, or press Enter to choose it">
+      <div class="orbit" aria-hidden="true">
+        <svg viewBox="0 0 240 240" class="orbit-svg">
+          <defs>
+            <radialGradient id="core-g" cx="40%" cy="35%" r="70%">
+              <stop offset="0" stop-color="#bff3ff"/>
+              <stop offset="0.35" stop-color="#4fb6cc"/>
+              <stop offset="1" stop-color="#14305a"/>
+            </radialGradient>
+            <radialGradient id="halo-g" cx="50%" cy="50%" r="50%">
+              <stop offset="0.45" stop-color="rgba(90,190,205,0.35)"/>
+              <stop offset="1" stop-color="rgba(90,190,205,0)"/>
+            </radialGradient>
+            <linearGradient id="ring-g" x1="0" x2="1">
+              <stop offset="0" stop-color="rgba(90,190,205,0)"/>
+              <stop offset="0.5" stop-color="rgba(140,225,240,0.9)"/>
+              <stop offset="1" stop-color="rgba(90,190,205,0)"/>
+            </linearGradient>
+          </defs>
+          <circle cx="120" cy="120" r="70" fill="url(#halo-g)" class="halo"/>
+          <g class="ring r1"><ellipse cx="120" cy="120" rx="104" ry="104" fill="none" stroke="rgba(120,200,230,0.16)"/><path d="M16 120 A104 104 0 0 1 224 120" fill="none" stroke="url(#ring-g)" stroke-width="1.5"/><circle cx="224" cy="120" r="3.2" fill="#bff3ff"/></g>
+          <g class="ring r2"><ellipse cx="120" cy="120" rx="80" ry="80" fill="none" stroke="rgba(120,200,230,0.12)" stroke-dasharray="2 6"/><circle cx="40" cy="120" r="2.4" fill="#78c86e"/></g>
+          <g class="ring r3"><ellipse cx="120" cy="120" rx="58" ry="58" fill="none" stroke="rgba(120,200,230,0.10)"/><circle cx="120" cy="62" r="1.8" fill="#ffc86e"/></g>
+          <g class="core">
+            <rect x="94" y="88" width="52" height="64" rx="7" fill="rgba(10,20,46,0.85)" stroke="rgba(170,230,245,0.75)" stroke-width="1.6"/>
+            <rect x="102" y="96" width="36" height="26" rx="3" fill="none" stroke="rgba(170,230,245,0.5)" stroke-width="1.4"/>
+            <path d="M101 152 v8 M108 152 v8 M115 152 v8 M122 152 v8 M129 152 v8 M136 152 v8" stroke="rgba(170,230,245,0.55)" stroke-width="1.6" stroke-linecap="round"/>
+            <path d="M112 136 l8 -6 l8 6" fill="none" stroke="#78c86e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="arrow"/>
+          </g>
+        </svg>
+      </div>
+      <h1 class="drop-title">Drop your N64 ROM here</h1>
+      <p class="drop-sub" id="drop-sub">The game is checked, recompiled and packed into a folder for your Xbox.</p>
+      <div class="drop-actions">
+        <button class="btn primary" id="choose-rom"><i data-icon="folder"></i><span>Choose ROM…</span></button>
+      </div>
+      <div class="exts pixel">.z64  .n64  .v64  .rom  .bin</div>
+      <div class="drop-busy" id="drop-busy" hidden><span class="spinner"></span><span>Reading the ROM…</span></div>
+    </div>
+    <div class="notice danger floating" id="home-error" hidden>
+      <div class="notice-title" id="home-error-msg"></div>
+      <div class="notice-body" id="home-error-hint"></div>
+    </div>
+  </section>
+
+  <!-- 4 the game card -->
+  <section class="screen" data-screen="game" hidden>
+    <div class="card glass">
+      <div class="game-head">
+        <div class="min0">
+          <h1 class="game-title" id="g-title"></h1>
+          <div class="meta" id="g-meta"></div>
+        </div>
+      </div>
+      <div class="rule"></div>
+      <div class="tier" id="g-tier">
+        <div class="tier-mark" id="g-tier-mark"></div>
+        <div class="min0">
+          <div class="tier-name pixel" id="g-tier-name"></div>
+          <div class="tier-meaning" id="g-tier-meaning"></div>
+        </div>
+      </div>
+      <div class="section-label pixel" id="g-problems-label">Known problems</div>
+      <ul class="problems" id="g-problems"></ul>
+      <div class="note-line" id="g-other" hidden><i data-icon="info"></i><span id="g-other-text"></span></div>
+
+      <div class="output-choice" id="g-output" role="radiogroup" aria-label="What to build">
+        <button role="radio" data-v="xbe" aria-checked="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg><span class="oc-text"><span class="oc-title">Xbox folder (XBE)</span><span class="oc-desc">Copy to the hard disk, or Send to Xbox</span></span></button>
+        <button role="radio" data-v="iso" aria-checked="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M16.8 7.2a6.5 6.5 0 0 1 1.7 3.3"/></svg><span class="oc-text"><span class="oc-title">Disc image (ISO)</span><span class="oc-desc">Burn to a DVD-R, or a disc loader</span></span></button>
+      </div>
+      <div class="saves-to"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg><span id="g-saves" class="truncate"></span><span class="sep" id="g-saves-sep">·</span><button class="link-btn" id="g-saves-change" type="button">Change</button><button class="drawer-toggle inline adv-right" id="adv-toggle" aria-expanded="false"><i data-icon="chev"></i><span>Advanced</span><span class="drawer-summary" id="adv-summary"></span></button></div>
+      <div class="notice danger" id="g-out-error" hidden><div class="notice-title" id="g-out-error-msg"></div><div class="notice-body" id="g-out-error-hint"></div></div>
+      <div class="drawer" id="adv" hidden>
+        <div class="opt">
+          <div><div class="opt-name">Video</div><div class="opt-desc">The mode the game starts in. Auto picks what the Xbox is set to.</div></div>
+          <div class="seg" id="opt-video" role="radiogroup">
+            <button role="radio" data-v="auto">Auto</button><button role="radio" data-v="480">480</button><button role="radio" data-v="720">720p</button>
+          </div>
+        </div>
+        <div class="opt">
+          <div><div class="opt-name">Quick build</div><div class="opt-desc">Builds sooner, runs slower. For a first look.</div></div>
+          <button class="switch" id="opt-fast" role="switch" aria-checked="false"><span></span></button>
+        </div>
+        <div class="opt">
+          <div><div class="opt-name">ROM beside the XBE</div><div class="opt-desc">Keep the ROM as its own file instead of inside default.xbe.</div></div>
+          <button class="switch" id="opt-beside" role="switch" aria-checked="false"><span></span></button>
+        </div>
+        <div class="opt">
+          <div class="min0"><div class="opt-name">learn.txt</div><div class="opt-desc truncate" id="opt-learn-name">Code the Xbox ran but the build missed. Optional.</div></div>
+          <div class="opt-btns"><button class="btn small ghost" id="opt-learn-clear" hidden aria-label="Remove learn.txt" data-icon="x"></button><button class="btn small" id="opt-learn">Choose…</button></div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn ghost" id="g-back"><i data-icon="back"></i><span>Another ROM</span></button>
+        <span class="grow"></span>
+        <span class="estimate" id="g-estimate"></span>
+        <button class="btn primary big" id="g-build"><span>Build for Xbox</span><i data-icon="arrow"></i></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 building: the constellation -->
+  <section class="screen" data-screen="build" hidden>
+    <div class="card glass wide">
+      <div class="game-head">
+        <div class="min0">
+          <div class="eyebrow pixel" id="b-eyebrow">Building</div>
+          <h1 class="game-title" id="b-title"></h1>
+        </div>
+        <div class="clock">
+          <div class="clock-time num" id="b-elapsed">0:00</div>
+          <div class="clock-est" id="b-estimate"></div>
+        </div>
+      </div>
+      <div class="constellation" id="b-const"></div>
+      <div class="step-now">
+        <div class="step-text" id="b-step"><span class="step-count">Starting</span></div>
+        <div class="step-note" id="b-note">&nbsp;</div>
+      </div>
+      <pre class="log" id="b-log" hidden></pre>
+      <div class="actions">
+        <button class="drawer-toggle inline" id="b-details-toggle" aria-expanded="false"><i data-icon="chev"></i><span>Details</span></button>
+        <span class="grow"></span>
+        <button class="btn ghost danger-hover" id="b-cancel"><i data-icon="x"></i><span>Cancel</span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 done -->
+  <section class="screen" data-screen="done" hidden>
+    <div class="card glass">
+      <div class="game-head">
+        <div class="min0">
+          <div class="eyebrow pixel green">Build complete</div>
+          <h1>Ready for your Xbox</h1>
+          <div class="meta" id="d-sub"></div>
+        </div>
+        <div class="tier-mini" id="d-tier"></div>
+      </div>
+      <div class="rule"></div>
+      <div class="folder-box">
+        <i data-icon="folder"></i>
+        <div class="min0"><div class="folder-label" id="d-folder-label">Folder</div><div class="folder-path truncate" id="d-folder"></div></div>
+        <button class="btn small" id="d-show">Show folder</button>
+      </div>
+      <p class="hint-line" id="d-hint-folder">Copy this folder to <b>E:\Games</b> on your Xbox, then start <b>default.xbe</b> from your dashboard.</p>
+      <p class="hint-line" id="d-hint-iso" hidden>Burn it to a DVD-R, or put it on the console for a disc loader.</p>
+      <div class="tiles">
+        <button class="tile" id="d-send"><i data-icon="send"></i><span class="tile-title">Send to Xbox</span><span class="tile-desc">Over your network, by FTP</span></button>        <button class="tile" id="d-again"><i data-icon="plus"></i><span class="tile-title">Build another</span><span class="tile-desc">Drop the next ROM</span></button>
+      </div>
+      <div class="job-row" id="d-job" hidden><span class="spinner"></span><span class="job-text" id="d-job-text"></span><button class="btn small ghost danger-hover" id="d-job-cancel" type="button"><i data-icon="x"></i><span>Cancel</span></button></div>
+      <form class="send-form" id="send-form" hidden>
+        <label class="field"><span>Xbox address</span><input id="x-host" placeholder="192.168.1.50" autocomplete="off" spellcheck="false" required></label>
+        <label class="field"><span>User</span><input id="x-user" autocomplete="off" spellcheck="false"></label>
+        <label class="field"><span>Password</span><input id="x-pass" type="password" autocomplete="off"></label>
+        <label class="field"><span>Folder on the Xbox</span><input id="x-to" spellcheck="false"></label>
+        <div class="send-note">Sends the game folder over your local network to this Xbox only (FTP, unencrypted).</div>
+        <div class="pass-note" id="x-pass-note" hidden>The password is kept for this session only: this system offers no safe place to store it.</div>
+        <div class="send-row">
+          <div class="send-status" id="x-status"></div>
+          <button class="btn primary" id="x-go" type="submit"><i data-icon="send"></i><span>Send</span></button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- 7 error -->
+  <section class="screen" data-screen="error" hidden>
+    <div class="card glass narrow">
+      <div class="card-head">
+        <div class="hero-icon danger" data-icon="alert"></div>
+        <div class="min0">
+          <div class="eyebrow pixel red" id="e-eyebrow">Build stopped</div>
+          <h1 class="error-title" id="e-msg"></h1>
+        </div>
+      </div>
+      <div class="notice" id="e-hint-box">
+        <div class="notice-title">What to do</div>
+        <div class="notice-body" id="e-hint"></div>
+      </div>
+      <button class="drawer-toggle" id="e-details-toggle" aria-expanded="false" hidden><i data-icon="chev"></i><span>Details</span></button>
+      <pre class="log short" id="e-log" hidden></pre>
+      <div class="actions">
+        <button class="btn ghost" id="e-copy"><i data-icon="copy"></i><span>Copy log</span></button>
+        <button class="btn ghost" id="e-logs"><i data-icon="file"></i><span>Open log folder</span></button>
+        <span class="grow"></span>
+        <button class="btn ghost" id="e-home">Home</button>
+        <button class="btn primary" id="e-retry"><i data-icon="repeat"></i><span>Try again</span></button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot" id="foot"><i data-icon="lock"></i><span>Nothing leaves your computer except what you send to your own Xbox.</span></footer>
+
+<!-- 1 intro -->
+<div class="intro" id="intro">
+  <div class="intro-col">
+    <div class="intro-mark" id="intro-mark"><img src="img/mark.svg" alt=""></div>
+    <div class="intro-text">
+      <div class="intro-presents pixel">TechProGabe Presents...</div>
+      <div class="intro-word pixel">N64Recomp-X</div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-back" id="about" hidden>
+  <div class="modal glass" role="dialog" aria-modal="true" aria-labelledby="about-title">
+    <button class="icon-btn close" id="about-close" aria-label="Close" data-icon="x"></button>
+    <img class="about-logo" src="img/mark.svg" alt="" width="64" height="64">
+    <h2 class="pixel" id="about-title">N64Recomp-X</h2>
+    <div class="about-ver num" id="about-ver"></div>
+    <p class="about-text">Nintendo 64 games on the original Xbox, by static recompilation of your own ROM. Your ROM is read where it is; nothing leaves this computer except what you send to your own Xbox.</p>
+    <ul class="credits">
+      <li><span>N64Recomp-X</span><span>MIT</span></li>
+      <li><span>N64Recomp</span><span>MIT</span></li>
+      <li><span>nxdk</span><span>various open licences</span></li>
+      <li><span>LLVM</span><span>Apache-2.0 with LLVM exception</span></li>
+      <li><span>Electron</span><span>MIT</span></li>
+      <li><span>unscii font, by viznut</span><span>public domain</span></li>
+    </ul>
+    <p class="modal-foot center-text">Data folder: <span class="mono" id="about-data"></span></p>
+    <div class="actions center">
+      <button class="btn ghost" id="about-lic"><i data-icon="file"></i><span>Licences</span></button>
+      <button class="btn ghost" id="about-repo"><i data-icon="external"></i><span>Project page</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-back" id="settings" hidden>
+  <div class="modal glass left" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <button class="icon-btn close" id="settings-close" aria-label="Close" data-icon="x"></button>
+    <div class="eyebrow pixel">Settings</div>
+    <h2 class="modal-h" id="settings-title">Data and storage</h2>
+    <p class="modal-p" id="s-note">Everything the app keeps is in one folder. Delete it to remove everything.</p>
+    <div class="folder-box">
+      <i data-icon="folder"></i>
+      <div class="min0"><div class="folder-label">Data folder</div><div class="folder-path truncate" id="s-dir"></div></div>
+      <button class="btn small" id="s-open">Open</button>
+    </div>
+    <ul class="store">
+      <li><div><div class="opt-name">Build tools</div><div class="opt-desc">Compilers and the Xbox SDK, downloaded once</div></div><span class="size num" id="s-tools"></span><button class="btn small ghost danger-hover" id="s-rm-tools">Remove</button></li>
+      <li><div><div class="opt-name">Build cache</div><div class="opt-desc">Makes the next build of a game faster</div></div><span class="size num" id="s-builds"></span><button class="btn small ghost danger-hover" id="s-rm-builds">Remove</button></li>
+    </ul>
+    <p class="modal-foot">Built folders for the Xbox are kept where you chose: <span class="mono" id="s-out"></span></p>
+  </div>
+</div>
+
+<div class="toast glass" id="toast" hidden></div>
+
+<script src="mark-stars.js"></script>
+<script src="icons.js"></script>
+<script src="galaxy.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>

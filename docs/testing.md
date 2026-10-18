@@ -50,6 +50,27 @@ python tools/n64rx/n64rx.py build build-host/test/test.z64       # -> out/N64Rec
 On the console or in xemu it must end on **"Test ROM: passed"** with 34
 checks and none failed. `--gpr 64` (hidden) builds it with 64-bit registers.
 
+## The app and its toolchain (no ROM)
+
+```sh
+cd app && npm install
+npm test                 # node --test: toolchain download/verify/unpack (resume, sha, zip/tar links refused),
+                         # JSON lines, paths (portable, translocated, AppImage), jobs (one at a time, cancel),
+                         # settings (atomic, the password only through safeStorage), validate, the stage's leak scan
+npm run test:smoke       # Playwright on the real window with a fake n64rx (test/fake-n64rx.js): ROM -> badge ->
+                         # build -> Done, the ISO path, a failed build, Send to Xbox, a second instance
+npm start                # dev mode on this checkout (system Python, n64rx's own engine choice)
+npm run dist             # stage (leak-scanned) + this OS's packages in app/dist/
+python tools/xbox/pack_toolchain.py                 # the toolchain archive from this machine's setup.sh install
+python tools/xbox/pack_toolchain.py --install-to DIR --selftest-after   # unpack, then build the test ROM with it alone
+```
+
+The smoke tests need the window to themselves: a running copy of the app
+(`npm start`) holds the single-instance lock and fails the second-instance
+test. A build with every path holding a space (the source copy, the builds,
+the toolchain: the app's `N64Recomp-X Data`) was run by hand on Windows
+(2026-10-18, `--fast` and ThinLTO): the test ROM to an XBE.
+
 ## ROM-only builds (`docs/analyzer.md`)
 
 ```sh

@@ -22,8 +22,11 @@ FATX_BAD = '<>:"/\\|?*'
 
 
 def cache_dir():
+    """n64rx's own folder: %LOCALAPPDATA%\\n64rx or ~/.n64rx, or N64RX_HOME (the portable app's data
+    folder next to it, docs/app.md)"""
     base = os.environ.get('LOCALAPPDATA') if engines.IS_WINDOWS else None
-    d = pathlib.Path(base) / 'n64rx' if base else pathlib.Path.home() / '.n64rx'
+    home = os.environ.get('N64RX_HOME')
+    d = pathlib.Path(home) if home else pathlib.Path(base) / 'n64rx' if base else pathlib.Path.home() / '.n64rx'
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -39,21 +42,34 @@ def c_str(s):
 
 
 class Progress:
-    def __init__(self, out, total):
-        self.out, self.total, self.n, self.t = out, total, 0, None
+    """a line per step, note and step time; with events (the app's
+    --events json, cli.py) the same as dicts instead"""
+
+    def __init__(self, out, total, events=None):
+        self.out, self.total, self.n, self.t, self.events = out, total, 0, None, events
 
     def step(self, text):
         self.done()
         self.n += 1
         self.t = time.monotonic()
-        self.out(f'[{self.n}/{self.total}] {text}')
+        if self.events:
+            self.events({'ev': 'step', 'n': self.n, 'of': self.total, 'text': text})
+        else:
+            self.out(f'[{self.n}/{self.total}] {text}')
 
     def note(self, text):
-        self.out(f'      {text}')
+        if self.events:
+            self.events({'ev': 'note', 'text': text})
+        else:
+            self.out(f'      {text}')
 
     def done(self):
         if self.t is not None:
-            self.out(f'      done in {time.monotonic() - self.t:.1f} s')
+            secs = time.monotonic() - self.t
+            if self.events:
+                self.events({'ev': 'done', 'secs': round(secs, 1)})
+            else:
+                self.out(f'      done in {secs:.1f} s')
             self.t = None
 
 
@@ -535,9 +551,9 @@ def _inflate(rom, prog):
 
 
 def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None, echo=None, eng=None,
-          analyze=False, rom_beside=False, learn=()):
+          analyze=False, rom_beside=False, learn=(), events=None):
     echo = echo or (lambda s: print(s, flush=True))
-    prog = Progress(echo, 5)
+    prog = Progress(echo, 5, events)
     prog.step('Reading the ROM')
     rom = romlib.read(rom_path)
     try:
@@ -549,7 +565,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     eng = eng or engines.pick(engine)
     out_root = pathlib.Path(out) if out else pathlib.Path.cwd() / 'out'
     if eng.name == 'docker':
-        return _build_in_docker(eng, rom, out_root, video, fast, gpr, prog, rom_beside, learn)
+        return _build_in_docker(eng, rom, out_root, video, fast, gpr, prog, rom_beside, learn, events)
     ainfo = None
     learnt = learnmod.read(learn) if learn else None   # --learn: the console's learn.txt (learn.py)
     if analyze or pack is None or learnt is not None:
@@ -683,13 +699,16 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     prog.done()
     (cache_dir() / 'last.json').write_text(json.dumps({'pack': pack.id, 'log': str(log), 'folder': str(folder),
                                                         'time': time.time()}))
+    if events:
+        events({'ev': 'result', 'folder': str(folder), 'status': status})
+        return folder
     echo(f'\nDone: {folder}')
     echo(status)
     echo(f'Copy that folder to your Xbox (E:\\Games\\{folder.name}\\) and start default.xbe.')
     return folder
 
 
-def _build_in_docker(eng, rom, out_root, video, fast, gpr, prog, rom_beside=False, learn=()):
+def _build_in_docker(eng, rom, out_root, video, fast, gpr, prog, rom_beside=False, learn=(), events=None):
     out_root.mkdir(parents=True, exist_ok=True)
     log = cache_dir() / 'docker.log'
     log.write_text('', encoding='utf-8')
@@ -707,4 +726,8 @@ def _build_in_docker(eng, rom, out_root, video, fast, gpr, prog, rom_beside=Fals
     if eng.run_inside(args, rom.path.resolve().parent, out_root.resolve(), log):
         raise N64rxError('The build inside Docker failed.', f'{tail(log)}\nfull log: {log}')
     prog.done()
+    if events:   # the folder the run inside made: the newest one with an XBE
+        made = sorted((p for p in out_root.iterdir() if (p / 'default.xbe').exists()), key=lambda p: p.stat().st_mtime)
+        events({'ev': 'result', 'folder': str(made[-1] if made else out_root),
+                'status': compat.line(rom.code, rom.version)})
     return out_root

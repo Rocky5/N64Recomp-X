@@ -75,6 +75,32 @@ in this repository, and none is linked into anything it builds.
   inverse transform, the scale, the colour constants and clamps), written
   up in prose and implemented here (`xbox/src/rt/jpeg.c`).
 
+## 3a. What the toolchain bundle redistributes
+
+The prebuilt toolchain the app downloads (`tools/xbox/pack_toolchain.py`,
+`docs/toolchain.md`) is a build of other people's software, each under its
+own licence; the texts travel in the bundle's `licenses/` folder. It holds no
+Nintendo or Microsoft code and no ROM material.
+
+- **LLVM** (clang, lld, llvm-ar and friends, the clang resource headers):
+  Apache-2.0 with LLVM exceptions. MinGW-w64 build on Windows (MSYS2).
+- **nxdk** (headers, libraries, `cxbe`, `extract-xiso`) at the pinned commit:
+  MIT, Apache-2.0, CC0, NCSA and others per file (its `LICENSES/`). The
+  staged `bin/nxdk-cc`, `nxdk-cxx`, `nxdk-as`, `nxdk-cmake` and
+  `share/toolchain-nxdk.cmake` have `${NXDK_DIR}` quoted so a path with a
+  space works; nothing else is changed. The NVIDIA Cg tools are not shipped.
+- **N64Recomp and RSPRecomp**, built at the submodule's pin with
+  `patches/recomp`: MIT.
+- **MSYS2** (Windows only): bash, coreutils, make, sed, grep, gawk, cmake,
+  ninja, the MSYS2 runtime and their libraries, trimmed to what the build
+  runs. GPL, LGPL, BSD and other licences per package; sources are
+  available from https://packages.msys2.org (PKGBUILDs under
+  https://github.com/msys2/MSYS2-packages and MINGW-packages).
+- **cmake** (BSD-3-Clause) and **ninja** (Apache-2.0): the official portable
+  releases on Linux and macOS (pinned by version and sha256).
+- **CPython** from python-build-standalone (PSF licence), with **Pillow**
+  (HPND) and **rabbitizer** (MIT) installed into it.
+
 ## 4. Game code and game data: not licensed, not here
 
 The games are their publishers'. This repository holds no ROM, no byte of

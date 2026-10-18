@@ -950,6 +950,9 @@ The maintainer's requirement of 2026-10-16. What "really easy" means here:
   says so.
 - A GUI (a window with a drop target and a log) is §8 Q4; the CLI's functions
   are a library so one can be added without touching the pipeline.
+  Answered 2026-10-18: the desktop app (`app/`, `docs/app.md`), portable on
+  all three OSes, with a prebuilt toolchain download instead of Docker
+  (`docs/decisions.md`).
 
 ### 5.2 The BACK menu: the port's settings, game-agnostic
 
@@ -1173,7 +1176,7 @@ measurement gate, G1's pack.
 - **Files**: `xbox/src/hw/*` (from Wings64-X `83f1258`), `xbox/include/xhw.h`,
   `xbox/CMakeLists.txt`, `xbox/build.sh`, `tools/xbox/{setup.sh,docker/,msys/,
   compile_game.py,thinlto_link.py,patch_pbkit.py,xemu_run.sh,fbdump_to_png.py,
-  console.py,sym.py,rom_leak_check.py,xbe_sections.py,make_logo.py}`,
+  console.py,sym.py,rom_leak_check.py,xbe_sections.py,render_logo.js}`,
   `tools/recomp/` (submodule at `ffb39cd`), `tools/n64rx/` (CLI, engines,
   doctor, packaging spec), `games/README.md` (how a pack is made),
   `.github/workflows/build.yml`, `docs/` skeleton (`README.md`, `handoff.md`,
@@ -1403,6 +1406,8 @@ Hard problems named as such, so nobody is surprised by them:
    recompiled code; this plan does not follow it.)
 4. **The tool's shape**: CLI with per-OS single-file binaries (the plan), or
    also a small GUI (drop a ROM, watch the log)? And the name `n64rx`.
+   *Answered (maintainer, 2026-10-18): both; the app is the way in for
+   users (`docs/app.md`), `n64rx` stays the CLI.*
 5. **Title IDs** `4E52nnnn` ("NR", one per pack) and original icons per pack:
    fine, or another scheme?
 6. **Licence** of the port code: MIT, Melee-X-derived files relicensed by

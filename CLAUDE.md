@@ -26,7 +26,9 @@ camera), Majora's Mask (boot crash: fix staged), Jet Force Gemini, Kirby 64
 games, GoldenEye's Dam right (textures, sky, Bond's gun, the pause watch: its cosf fell into sinf), Pokémon Snap through its Beach course (its camera locked: the photo check copies the frame being drawn), Kirby 64 (E) to its tutorial, Jet Force Gemini past its boot, Perfect Dark past its boot, Paper Mario past its
 copy-protection boot. The library sweep (s9: 132 of 246 still presenting at
 30 s) (`tools/xbox/sweep.py`) ranks what blocks the rest
-(`docs/analyzer.md`). CI is manual-only (free minutes).** `docs/PLAN.md` is binding on
+(`docs/analyzer.md`). CI is manual-only (free minutes). The desktop app (`app/`, `docs/app.md`)
+is the way in for users: portable, a prebuilt toolchain download, Windows
+verified.** `docs/PLAN.md` is binding on
 the approach (§1), the architecture (§3), the build, game packs and tests
 (§4), the feature specs (§5), the milestone order and exit checks (§6).
 `docs/research.md` holds the evidence. Read both, then `docs/handoff.md` and
@@ -102,12 +104,13 @@ the approach (§1), the architecture (§3), the build, game packs and tests
 | `docs/architecture.md` | what exists: the tree, the boot, the runtime's pieces, the generated code's world, the BACK menu, the exit combos |
 | `docs/renderer.md` | the graphics side as built: the microcode registry, the GBI families in the interpreter, what each game draws, gaps |
 | `docs/analyzer.md` | the ROM-only path as built: the analyser's steps, what the runtime adds (interpreter, safety net, PIF, TLB), the learning loop, how well it does per game (decomps) and across the library (the sweep), gaps |
-| `docs/toolchain.md` | the two triples, setup per OS, Docker, N64Recomp, LTO |
+| `docs/toolchain.md` | the two triples, setup per OS, Docker, N64Recomp, LTO, the app's prebuilt toolchain |
+| `docs/app.md` | the desktop app (`app/`): how it drives `n64rx` (`info --json`, `--events json`), where it keeps the source, builds and toolchain |
 | `docs/testing.md` | host tests, the xemu runner, scripted input, the decomp check and the library sweep, the switch table |
 | `docs/decisions.md` | decisions made while building and why (incl. the plan's departures) |
 | `docs/compat.md` | each game's tier (Gold fully working, Silver playable, Experimental the rest), the rules that move a game, the console run behind each |
 | `docs/handoff.md` | where things stand (games x xemu x console), then per milestone and per piece of work: verified how, not verified, gaps |
-| `docs/look/` | the loading screen's baseline shots (xemu, STILL); the BACK menu card's, Paks page's and Controls page's host previews |
+| `docs/look/` | the logo (`logo/`: mark, mono, lockups; `tools/xbox/render_logo.js` renders the icons); the loading screen's baseline shots (xemu, STILL); the BACK menu card's, Paks page's and Controls page's host previews |
 | `games/README.md` | how a game pack is made |
 | `LICENSE.md` | MIT; what came from where; what was only read |
 

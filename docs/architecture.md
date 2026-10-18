@@ -9,6 +9,9 @@ The ROM-only path has its own page: `docs/analyzer.md`.
 games/<id>/          game packs (optional since PLAN.md 3.14): game.toml, symbols, recomp.toml, icon.png
   test/              the ROM-free end-to-end test (tools/xbox/make_test_rom.py)
   pw64/              Pilotwings 64: the A/B game; its MIT decomp's symbols are the analyser's first answer key
+app/                 the desktop app (Electron, docs/app.md): main.js, preload.js, src/ (paths, n64rx, jobs,
+                     toolchain, settings, validate), renderer/ (the galaxy UI), scripts/ (stage-src, make-icon),
+                     test/ (node --test, Playwright smoke with a fake n64rx)
 tools/recomp/        N64Recomp at ffb39cd (submodule, unmodified)
 tools/n64rx/         the user's tool: n64rx.py + n64rx_lib/: cli, rom, packs, pipeline (recompile, the
                      refusal retries, gen/ extras: xrc_interp.c, xrc_missing.c, the ultra table), engines,
@@ -19,7 +22,7 @@ tools/xbox/          build: compile_game.py, thinlto_link.py, patch_pbkit.py, xb
                      checks: decomp_check.py (the analyser against a decomp), sweep.py (every ROM in a
                      folder), rom_leak_check.py, recomp_scan64.py, syms_tools.py, make_test_rom.py
                      console + xemu: xemu_run.sh, scenarios/, console.py, sym.py, fbdump_to_png.py,
-                     auddump_to_wav.py, eeprom_video.py, make_logo.py
+                     auddump_to_wav.py, eeprom_video.py, render_logo.js
                      host tests: test_*.py (docs/testing.md)
 xbox/include/        xhw.h, xgfx.h, xrom.h (the structs both triples share), xbuiltin.h
 xbox/include/xrc/    recomp.h (the generated code's contract), librecomp/sections.h, xrc_game.h, xrc_prelude.h
@@ -41,7 +44,8 @@ xbox/src/rt/ultra/   libultra's surface: thread, time, vi, pi (ROM reads, domain
                      (every save type), more2 (the TLB family, __osEnqueueAndYield), more3 (internals
                      N64Recomp leaves bodiless)
 tests/xbox/          the host tests' C
-docs/look/           baseline shots: the loading screen (xemu, STILL); the BACK menu card, Paks and Controls pages (host)
+docs/look/           baseline shots: the loading screen (xemu, STILL); the BACK menu card, Paks and Controls pages (host);
+                     the app's screens (app-*.png, its fake n64rx); logo/ (the mark, mono, lockups)
 ```
 
 ## Boot

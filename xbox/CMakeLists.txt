@@ -72,7 +72,7 @@ target_include_directories(xrc_hw PRIVATE
     ${NXDK_DIR}/lib/zlib/zlib)
 target_compile_definitions(xrc_hw PRIVATE XBOX "USBH_USE_EXTERNAL_CONFIG=\"usbh_config_xbox.h\"")
 target_compile_options(xrc_hw PRIVATE -O2 -march=pentium3 -ffunction-sections -Wall -Wno-unused-function
-    "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/include/xbuiltin.h")
+    "SHELL:-include \"${CMAKE_CURRENT_SOURCE_DIR}/include/xbuiltin.h\"")   # quoted: the app's data folder has a space
 # the string routines must not be recognised as themselves (xhw_string.c)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/hw/xhw_string.c PROPERTIES
     COMPILE_OPTIONS "-fno-builtin;-ffreestanding" COMPILE_DEFINITIONS XBUILTIN_OFF)
@@ -98,7 +98,7 @@ target_link_options(n64recomp_x PRIVATE
     -include:_xrc_boot)
 add_dependencies(n64recomp_x game_objs)
 if(XBOX_LTO)
-    set_property(TARGET n64recomp_x PROPERTY RULE_LAUNCH_LINK "python3 ${ROOT}/tools/xbox/thinlto_link.py")
+    set_property(TARGET n64recomp_x PROPERTY RULE_LAUNCH_LINK "python3 \"${ROOT}/tools/xbox/thinlto_link.py\"")
 endif()
 set_property(TARGET n64recomp_x APPEND PROPERTY LINK_DEPENDS ${GAME_OUT}/objects.stamp)
 add_custom_command(TARGET n64recomp_x POST_BUILD

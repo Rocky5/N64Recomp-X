@@ -98,3 +98,78 @@ builds its own the first time.
 as ThinLTO bitcode, `tools/xbox/thinlto_link.py` in front of the link
 (Melee-X's machinery through Wings64-X). `-opt:noicf`: the game compares
 function pointers and the function table must not fold.
+
+## The prebuilt toolchain (the app's)
+
+The app (a non-technical user, no Docker, no `setup.sh`) downloads one archive
+per OS and architecture and unpacks it to `<cache>/toolchain/<key>/`. The
+Native engine then builds with that and nothing else: no MSYS2 at
+`C:\msys64`, no nxdk at `C:\xdev`, no system LLVM. `tools/xbox/pack_toolchain.py`
+makes it from what `setup.sh` already installed on the packing machine.
+
+What is in it (`<key>/`):
+
+| folder | Windows x64 | Linux, macOS |
+|---|---|---|
+| `python/` | python-build-standalone 3.12.15 (`install_only`, pinned URL and sha256) with `rabbitizer` and `pillow` (pinned) | the same |
+| `msys64/` | MSYS2 trimmed to the build: `usr/bin` bash, coreutils, make, sed, grep, gawk, **cmake**, **ninja** (MSYS2's own) and the DLLs they import (found by reading the PE import tables), `etc/`, cmake's modules; `mingw64/bin` clang, lld, `llvm-ar/lib/ranlib/nm/objcopy/strip/dlltool`, their DLLs, `mingw64/lib/clang/21` headers; a `usr/bin/python3` shim that runs the bundle's Python (the build's `python3` calls) | - |
+| `llvm/` | - | LLVM 21.1.8 trimmed to clang, lld and the llvm-* tools nxdk calls, plus `lib/clang/21/include` (macOS: brew's dylibs copied to `lib/ext` and re-pointed, then ad-hoc signed) |
+| `cmake/`, `bin/` | - | the official portable cmake 3.31.6 and ninja 1.12.1 (pinned sha256) |
+| `nxdk/` | built nxdk at `NXDK_PIN`: `bin/` (wrappers), `lib/` (headers, built `.lib`s, the pbkit sources the game build compiles), `share/`, `tools/cxbe`, `tools/extract-xiso/build/extract-xiso`; no `.git`, objects, dependency files, samples or `tools/cg` (NVIDIA Cg is not redistributable and the build does not use it) | the same |
+| `recomp/` | `N64Recomp`, `RSPRecomp` and `.n64rx-key` (refuses to pack if the key is not `engines.recompiler_pin()`; it says how to rebuild) | the same |
+| `licenses/` | the texts of everything above, with where the MSYS2 sources are | the same |
+| `manifest.json` | read by the app | the same |
+
+Pack it (one command; the stage folder and the archive go to `dist/toolchain`,
+which is not tracked):
+
+```sh
+python tools/xbox/pack_toolchain.py                       # stage, manifest, archive (.tar.zst if `zstandard` is installed, else .tar.xz), sha256 + a .json for app/toolchain.json
+python tools/xbox/pack_toolchain.py --no-archive          # the stage folder only
+python tools/xbox/pack_toolchain.py --install-to "D:/odd path/tc"      # unpack the newest archive and run the checks
+python tools/xbox/pack_toolchain.py --check "D:/odd path/tc"           # n64rx's Native checks with the manifest's env applied
+python tools/xbox/pack_toolchain.py --selftest "D:/odd path/tc"        # the ROM-free test ROM, built with ONLY the bundle
+```
+
+`--selftest` runs the bundle's Python on `tools/n64rx/n64rx.py build`, applies
+the manifest's `env` and `path`, drops everything else from the environment
+(Windows: `PATH` is the bundle plus `System32`), and fails if the build log
+names `C:/msys64`, `C:/xdev`, `/opt/nxdk` or `/opt/llvm21`. `.github/workflows/toolchain.yml`
+(manual) does the same on Windows, macOS arm64 and x64 and Ubuntu 22.04 and can
+upload the archives to a `toolchain-<key>` release. Other flags: `--python-from DIR`
+(offline), `--msys`, `--llvm`, `--nxdk`, `--recomp`, `--stage`, `--out`, `--cache`.
+
+`manifest.json`:
+
+```json
+{"key": "9bdcd5091aa1", "os": "windows", "arch": "x64", "python": "python/python.exe",
+ "env": {"MSYS2_ROOT": "msys64", "NXDK_DIR": "nxdk", "N64RX_RECOMP": "recomp"},
+ "path": [], "llvm": "21.1.8", "nxdk": "<NXDK_PIN>", "recompiler": "<recompiler_pin()>", "created": "2026-10-18"}
+```
+
+Every value in `env` and `path` is relative to the bundle root; the app makes
+them absolute. Linux and macOS use `"LLVM": "llvm"` and `"path": ["python/bin",
+"llvm/bin", "cmake/bin", "bin"]`. `key` is a hash of (OS, arch, LLVM version, nxdk
+pin, recompiler pin, Python version, the packer's `FORMAT`). The app also exports
+`N64RX_RECOMPILER_KEY=<manifest.recompiler>`: the app's copy of the sources has
+no git, so `engines.recompiler_pin()` takes the key from that variable when set
+(unset, it asks the checkout as before) and `Native.ensure_recompiler` accepts
+the shipped `recomp/` instead of trying to build one.
+
+Relocation: nothing is rewritten at unpack time. The built nxdk holds absolute
+paths only in dependency files (not shipped) and in assertion/debug strings
+inside `.lib` and `.obj` files (inert). `NXDK_DIR`, `MSYS2_ROOT`, `N64RX_RECOMP`
+and (POSIX) `LLVM` are read from the environment by `engines.Native`; MSYS2's
+root is found by `msys-2.0.dll` from its own location, so it runs from any
+folder. One upstream script problem is fixed in the staged copy only
+(`DIVERGES`): nxdk's `bin/nxdk-cc`, `-cxx`, `-as`, `-cmake` and
+`share/toolchain-nxdk.cmake` use `${NXDK_DIR}` unquoted, which breaks on a path
+with a space (a Windows user name like "Jo Smith" is enough); the packer quotes
+those words and changes nothing else.
+
+Measured on this machine (Windows 11, x64): staged 644 MB (msys64 297, nxdk 190,
+python 148, recomp 9, licenses 1); `.tar.zst` level 19 124 MB; packing about
+2 min; unpacking about 50 s with the checks; the ROM-free test ROM builds from
+an unpacked bundle at a path with spaces in 19 s (ThinLTO, clean build folder).
+Linux and macOS packing is written but was not run here; the CI workflow is its
+first run.

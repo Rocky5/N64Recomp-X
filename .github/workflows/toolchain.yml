@@ -1,0 +1,113 @@
+# The prebuilt toolchain the app downloads (tools/xbox/pack_toolchain.py,
+# docs/toolchain.md "The prebuilt toolchain"): setup.sh as a user's doctor runs
+# it, then the packer, then the proof: the ROM-free test ROM built with ONLY
+# the unpacked bundle (its own Python, MSYS2/LLVM, nxdk, N64Recomp), from a
+# path with spaces. Manual only (free Actions minutes; macOS counts 10x): run it
+# when the key moves (LLVM, nxdk pin, recompiler pin, Python, pack format), e.g.
+# `gh workflow run toolchain.yml --ref dev -f release=true`.
+name: toolchain
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "also upload the archives to the GitHub release toolchain-<key>"
+        type: boolean
+        default: false
+
+concurrency:
+  group: toolchain-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pack:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-2022, name: windows-x64 }
+          - { os: macos-14, name: macos-arm64 }
+          - { os: macos-13, name: macos-x64 }
+          - { os: ubuntu-22.04, name: linux-x64 }   # the older glibc: the bundle runs on newer systems, not the reverse
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Toolchain locations
+        run: |
+          if [ "$RUNNER_OS" != Windows ]; then
+            echo "NXDK_DIR=$HOME/toolchain/nxdk" >> "$GITHUB_ENV"
+          fi
+          if [ "$RUNNER_OS" = Linux ]; then
+            echo "LLVM=$HOME/toolchain/llvm21" >> "$GITHUB_ENV"
+          fi
+
+      # same cache as build.yml's native job: nxdk, LLVM and N64Recomp take most of the time
+      - name: Toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/toolchain
+            C:/xdev/nxdk
+            build-host/recomp
+          key: toolchain-${{ runner.os }}-${{ matrix.name }}-${{ hashFiles('tools/xbox/setup.sh') }}-${{ hashFiles('.gitmodules') }}-${{ hashFiles('patches/recomp/*') }}
+
+      - name: Toolchain (tools/xbox/setup.sh)
+        run: bash tools/xbox/setup.sh
+
+      - name: Homebrew's LLVM 21 and lld on the PATH (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "LLVM=$(brew --prefix llvm@21)" >> "$GITHUB_ENV"
+          if brew --prefix lld@21 >/dev/null 2>&1; then echo "$(brew --prefix lld@21)/bin" >> "$GITHUB_PATH"; fi
+
+      - name: zstandard (the archive is .tar.zst)
+        run: python -m pip install -q zstandard
+
+      - name: Pack
+        run: python tools/xbox/pack_toolchain.py --out dist/toolchain
+
+      # unpacked to a path with spaces, then the test ROM with nothing but the bundle
+      - name: Install to an odd path and build the test ROM with only the bundle
+        run: |
+          python tools/xbox/pack_toolchain.py --out dist/toolchain --install-to "$RUNNER_TEMP/odd path/n64rx toolchain"
+          python tools/xbox/pack_toolchain.py --selftest "$RUNNER_TEMP/odd path/n64rx toolchain"
+
+      - name: Key
+        id: key
+        run: |
+          key=$(python -c "import json,glob; print(json.load(open(glob.glob('dist/toolchain/n64rx-toolchain-*.json')[0]))['key'])")
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          cat dist/toolchain/n64rx-toolchain-*.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: n64rx-toolchain-${{ matrix.name }}
+          path: |
+            dist/toolchain/n64rx-toolchain-*.tar.*
+            dist/toolchain/n64rx-toolchain-*.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Release toolchain-${{ steps.key.outputs.key }}
+        if: inputs.release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="toolchain-${{ steps.key.outputs.key }}"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "Toolchain $tag" \
+            --notes "Prebuilt build tools for the N64Recomp-X app (tools/xbox/pack_toolchain.py). Pinned by the app via app/toolchain.json."
+          gh release upload "$tag" dist/toolchain/n64rx-toolchain-*.tar.* dist/toolchain/n64rx-toolchain-*.json --clobber

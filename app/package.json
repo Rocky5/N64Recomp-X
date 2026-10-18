@@ -1,0 +1,130 @@
+{
+  "name": "n64recomp-x",
+  "productName": "N64Recomp-X",
+  "version": "0.1.0",
+  "description": "Drop your own N64 ROM, get a folder for the original Xbox.",
+  "author": "TechProGabe",
+  "license": "MIT",
+  "homepage": "https://github.com/TechProGabe/N64Recomp-X",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "fake": "node scripts/run-fake.js",
+    "test": "node --test \"test/*.test.js\"",
+    "test:smoke": "node --test test/smoke.e2e.js",
+    "stage": "node scripts/stage-src.js",
+    "icon": "node scripts/make-icon.js",
+    "dist": "node scripts/make-icon.js && node scripts/stage-src.js && electron-builder --publish never",
+    "dist:dir": "node scripts/make-icon.js && node scripts/stage-src.js && electron-builder --dir --publish never",
+    "prestart": "node scripts/make-icon.js",
+    "pretest": "node scripts/make-icon.js",
+    "pretest:smoke": "node scripts/make-icon.js",
+    "prefake": "node scripts/make-icon.js"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9",
+    "tar": "7.5.22",
+    "yauzl": "3.4.0"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "2.6.2",
+    "electron": "44.9.0",
+    "electron-builder": "26.15.3",
+    "playwright-core": "1.64.1"
+  },
+  "build": {
+    "appId": "com.techprogabe.n64recompx",
+    "productName": "N64Recomp-X",
+    "copyright": "Copyright (c) TechProGabe. MIT licence.",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "renderer/**/*",
+      "build/icon.png",
+      "toolchain.json",
+      "package.json",
+      "!test/**",
+      "!scripts/**",
+      "!stage/**",
+      "!dist/**"
+    ],
+    "extraResources": [
+      {
+        "from": "stage/src",
+        "to": "src",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "N64Recomp-X-${version}-win-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "N64Recomp-X.exe"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns",
+      "identity": null,
+      "artifactName": "N64Recomp-X-${version}-mac-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Development",
+      "icon": "build/icon.png",
+      "maintainer": "TechProGabe <noreply@github.com>",
+      "synopsis": "N64 games on the original Xbox, from your own ROM",
+      "artifactName": "N64Recomp-X-${version}-linux-${arch}.${ext}"
+    },
+    "publish": null,
+    "appImage": {
+      "artifactName": "N64Recomp-X-${version}-${arch}.AppImage"
+    }
+  }
+}

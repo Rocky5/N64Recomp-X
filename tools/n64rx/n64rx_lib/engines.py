@@ -74,7 +74,9 @@ def _recomp_src():
 
 def recompiler_pin():
     """the submodule's pin plus patches/recomp (tools/xbox/recomp_src.py): what generated code depends on"""
-    return _recomp_src().key()
+    # prebuilt toolchain (tools/xbox/pack_toolchain.py): the app's source copy has no git, so the bundle's manifest
+    # names the key its recompiler was built with and the app exports it; unset: the checkout decides, as before
+    return os.environ.get('N64RX_RECOMPILER_KEY') or _recomp_src().key()
 
 
 SETUP_HINT = ('run: bash tools/xbox/setup.sh' if not IS_WINDOWS

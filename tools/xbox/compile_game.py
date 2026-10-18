@@ -22,6 +22,7 @@ import concurrent.futures
 import json
 import os
 import pathlib
+import re
 import shlex
 import shutil
 import subprocess
@@ -165,7 +166,9 @@ def up_to_date(obj, dep, source, flags_stamp):
     if not obj.exists() or not dep.exists():
         return False
     stamp = obj.stat().st_mtime
-    deps = dep.read_text().replace('\\\n', ' ').split(': ', 1)[-1].split()
+    # a make rule: continuation lines, and a space in a path written "\ " (the app's data folder has one)
+    rule = dep.read_text().replace('\\\n', ' ').split(': ', 1)[-1]
+    deps = [d.replace('\\ ', ' ') for d in re.split(r'(?<!\\)\s+', rule) if d]
     for d in [str(source), __file__, str(flags_stamp), *deps]:
         path = pathlib.Path(d) if os.path.isabs(d) else ROOT / d
         try:

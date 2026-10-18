@@ -1991,3 +1991,62 @@ frames, all threads waiting.
 - Test builds can log every texture made: `-DXGFX_TEXLOG=<n>` (`[TEX]`,
   format, size, palette mode, the first two palette entries, the source).
   `XRC_PEEK2` peeks a second address. `osViSetEvent` is logged.
+
+## 2026-10-18: the desktop app, the prebuilt toolchain, the logo (orchestrator + agents)
+
+Maintainer requests of 2026-10-18: a downloadable app, "download, click and
+run", no installer; a galaxy look; a game's tier and known problems shown
+when its ROM is loaded; ask where to save; XBE or ISO before the build;
+Xbox login `xbox` / `xbox` by default; a new logo. No console run (no
+`[MEM]` / `[CLOCK]` lines: nothing here runs on the Xbox but the icon).
+
+- **n64rx**: `info <rom> [--json]` (the header, its pack, `compat.report()`:
+  tier, meaning, known problems, another region's row); `--events json`
+  (step / note / done / log / result / error JSON lines; an internal error
+  is an event, exit 3); `build --iso FILE` (a sixth step, the staging folder
+  removed); `N64RX_HOME` (the cache, the portable app's data folder);
+  `N64RX_FTP_PASS` (deploy's password off the command line);
+  `N64RX_RECOMPILER_KEY` (`engines.py`: a bundle's prebuilt recompiler
+  accepted without `tools/recomp`). `compat.py` lists every row of
+  `docs/compat.md` with its problems in a player's words. The estimate is
+  "about 1 to 3 minutes": measured SM64 38 s, OoT 41 s, an SM64 rebuild 17 s
+  (Ryzen 7 5700X3D; `docs/app.md`). Host tests: `test_n64rx.py` 21,
+  `test_compat.py` 12 rows.
+- **Paths with spaces**: `xbox/CMakeLists.txt`'s `-include` and
+  `RULE_LAUNCH_LINK` were unquoted (every build under a folder with a space
+  failed: the app's data folder has one); quoted. `compile_game.py` read
+  `.d` files split on spaces (every rebuild recompiled everything): parses
+  make's `\ ` now. The test ROM built with the source, builds and toolchain
+  all under spaced paths (`--fast` and ThinLTO); a plain checkout build is
+  unchanged.
+- **The toolchain bundle** (`tools/xbox/pack_toolchain.py`, Windows x64
+  verified): python-build-standalone 3.12 + rabbitizer + Pillow, MSYS2
+  trimmed by an allowlist and PE imports, nxdk (its wrappers' `${NXDK_DIR}`
+  quoted in the staged copy only, `DIVERGES`), N64Recomp with its key;
+  644 MB staged, 124 MB `.tar.zst`; unpacked to a path with spaces it built
+  the test ROM with PATH cut to the bundle and System32 (18-21 s). Linux and
+  macOS packing is written, not run (`.github/workflows/toolchain.yml`,
+  manual, not run).
+- **The app** (`app/`, Windows verified): the packaged app downloaded the
+  local archive (`N64RX_TOOLCHAIN_URL=file://`), checked and unpacked it
+  (59-65 s) and built the test ROM through its UI (20.6 s). The portable exe
+  makes `N64Recomp-X Data` next to itself; the zip too. A code review (16
+  findings: a screen race, a double-click double build, the FTP password in
+  argv and logs, no single-instance lock, PYTHON* leaking into the bundle,
+  archive links, ...) was fixed and tested; `npm test` 67 + 1 Linux-only
+  skip, `npm run test:smoke` 8. Shots: `docs/look/app-*.png` (the fake).
+- **The logo** ("Constellation X", `docs/look/logo/`): original art; the
+  first draft's four same-handed side spurs read as a pinwheel and were
+  removed (arms straight on the diagonals, mirror-symmetric).
+  `tools/xbox/render_logo.js` renders `xbox/assets/logo.png` (replaces
+  `make_logo.py`) and the app's icon; checked as the XBE stores it (128x128,
+  1-bit alpha) and at 32 px.
+
+Not verified: macOS and Linux (the app and the bundle); Send to Xbox and an
+ISO against red; a real game built through the app (the CLI built SM64 and
+OoT); the README's steps on a fresh machine per OS (CLAUDE.md, before a
+release). Before a release: the repository (or a releases repository)
+public, so the toolchain and the app can be downloaded; the toolchain's
+GPL parts (MSYS2) and their source offer; unsigned builds (Gatekeeper's
+right-click Open, SmartScreen); the portable exe unpacks to `%TEMP%` at
+every start (the zip does not).

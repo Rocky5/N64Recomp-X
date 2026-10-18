@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/look/logo/lockup-dark.svg">
+    <img src="docs/look/logo/lockup-light.svg" alt="N64Recomp-X" width="560">
+  </picture>
+</p>
+
 # N64Recomp-X
 
 Nintendo 64 games running natively on an original Xbox, by static
@@ -32,18 +39,35 @@ real Xbox moves a game up:
 
 ## Three steps
 
+1. Download the app for your computer (Windows `N64Recomp-X.exe`, macOS
+   `.zip`, Linux `.AppImage`) and open it: nothing to install. The first
+   start downloads the build tools (about 125 MB on Windows) into an
+   `N64Recomp-X Data` folder next to the app; deleting that folder removes
+   everything. (Not released yet: until then, run it from a checkout,
+   [`app/README.md`](app/README.md).)
+2. Drop your ROM on the window. It shows the game, its tier and its known
+   problems. Choose an Xbox folder (XBE) or a disc image (ISO), press
+   Build, and say where to save it: about 1 to 3 minutes.
+3. Copy the folder to your Xbox (`E:\Games\`) and start `default.xbe`, or
+   press Send to Xbox (FTP, login `xbox` / `xbox` by default); or burn the
+   ISO. Your ROM is inside `default.xbe` (it is checked by SHA-1 at every
+   start), so each game is one file to copy, plus its icon (`default.tbn`).
+
+### From the command line
+
 1. Install Docker Desktop, or run `n64rx doctor --install` for a native
    toolchain (Windows, macOS, Linux). `n64rx doctor` says what is there and
    what is missing.
-2. `n64rx build "Your Game (USA).z64"` (or drop the ROM onto `n64rx.cmd` on
-   Windows).
-3. Copy the folder it makes (`out/<game>/`) to your Xbox, for example to
-   `E:\Games\`, and start `default.xbe`. Your ROM is inside `default.xbe`
-   (it is checked by SHA-1 at every start), so each game is one file to
-   copy, plus its icon (`default.tbn`).
+2. `n64rx info "Your Game (USA).z64"` says what it is and how well it runs;
+   `n64rx build "Your Game (USA).z64"` builds it (`--iso FILE` for a disc
+   image; or drop the ROM onto `n64rx.cmd` on Windows).
+3. Copy the folder it makes (`out/<game>/`) to your Xbox, or
+   `n64rx deploy out/<game> --ftp <the Xbox's address>`.
 
-Nothing leaves your machine: the ROM is read where it is, the build is
-local, and the tool uploads nothing.
+Nothing leaves your machine except what you send to your own Xbox: the ROM
+is read where it is, the build is local, and the tool uploads nothing to
+anyone else (Send to Xbox / `n64rx deploy` copies the game folder to the
+console over your local network by FTP, which is unencrypted).
 
 From a checkout today:
 

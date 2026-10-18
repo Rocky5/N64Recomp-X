@@ -25,8 +25,11 @@ Rules:
 - One ROM per row: the tier is the build from that ROM, named by the
   header's game code and revision; another version of the game is its own
   row and starts Experimental. `n64rx` reads its table
-  (`tools/n64rx/n64rx_lib/compat.py`) by the same two, and
-  `tools/xbox/test_compat.py` checks it against this file.
+  (`tools/n64rx/n64rx_lib/compat.py`) by the same two: every row here,
+  with "keeps it from the next tier" put in a player's words as the
+  known problems the app shows when that ROM is loaded (a Gold row has
+  none). `tools/xbox/test_compat.py` checks it against this file, so a
+  row that changes here changes there in the same commit.
 - Built from the ROM alone (`n64rx build`, no pack) unless the row says
   otherwise.
 
