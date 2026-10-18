@@ -59,11 +59,21 @@ unsigned xu_vi_rows(void) {
     return (ys * lines + 512u) >> 10;
 }
 
+/* DIVERGES: a PAL game (osTvType 0, ../boot.c) gets 50 retraces a second
+ * from the console's 60: every sixth vblank is skipped, so its game speed
+ * and its music are right, its frame pacing a little uneven.
+ * -DXRC_PAL_50HZ=0: 60 retraces for every game (a PAL game runs 20% fast) */
+#ifndef XRC_PAL_50HZ
+#define XRC_PAL_50HZ 1
+#endif
+
 static void vi_thread(void* arg) {
+    unsigned vbl = 0;
     (void)arg;
     for (;;) {
         uint32_t mq;
         xhw_wait_vblank();
+        if (XRC_PAL_50HZ && xrc_tv_type == 0 && ++vbl % 6u == 0) continue;
         if (s_cur != s_next) s_cur = s_next;
         s_retrace++;
         xu_lock();
@@ -73,6 +83,20 @@ static void vi_thread(void* arg) {
         xrc_menu_vi(s_retrace);
         xrc_video_vi(s_retrace);   /* the video-mode prompt: A, or the timeout (../video.c) */
         xrc_gfx_vi(s_retrace);     /* a frame that waited too long for its swap (../gfx.c) */
+#ifdef XRC_PEEK
+        if (s_retrace % 30 == 0) {   /* diagnosis: -DXRC_PEEK=<N64 address>, 32 bytes twice a second */
+            uint32_t a = (uint32_t)(XRC_PEEK);
+            xhw_logf("[PEEK] %08x: %08x %08x %08x %08x %08x %08x %08x %08x", (unsigned)a, (unsigned)rd32(a),
+                     (unsigned)rd32(a + 4), (unsigned)rd32(a + 8), (unsigned)rd32(a + 12), (unsigned)rd32(a + 16),
+                     (unsigned)rd32(a + 20), (unsigned)rd32(a + 24), (unsigned)rd32(a + 28));
+#ifdef XRC_PEEK2   /* a second address, the same way */
+            a = (uint32_t)(XRC_PEEK2);
+            xhw_logf("[PEEK] %08x: %08x %08x %08x %08x %08x %08x %08x %08x", (unsigned)a, (unsigned)rd32(a),
+                     (unsigned)rd32(a + 4), (unsigned)rd32(a + 8), (unsigned)rd32(a + 12), (unsigned)rd32(a + 16),
+                     (unsigned)rd32(a + 20), (unsigned)rd32(a + 24), (unsigned)rd32(a + 28));
+#endif
+        }
+#endif
         if (mq && s_retrace % s_every == 0 && !xrc_menu_open()) {
             int32_t count = (int32_t)rd32(mq + MQ_MSGCOUNT), valid = (int32_t)rd32(mq + MQ_VALIDCOUNT);
             if (!XRC_VI_RESERVE || valid + 1 + XRC_VI_RESERVE <= count) xu_send(mq, s_msg, 0, 0);
@@ -125,6 +149,8 @@ ULTRA(osViSetEvent) {
     s_msg = ARG(1);
     s_every = ARG(2) ? ARG(2) : 1;
     s_mq = ARG(0);
+    xhw_logf("[OS] osViSetEvent: queue %08x message %08x every %u retraces", (unsigned)ARG(0), (unsigned)ARG(1),
+             (unsigned)s_every);
 }
 
 ULTRA(osViSwapBuffer) {

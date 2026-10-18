@@ -123,10 +123,31 @@ static void test_rom(void) {
 /* the renderer's start once the mode is set (the interpreter, M1); weak until it exists */
 __attribute__((weak)) void xrc_gfx_boot(void) {}
 
+/* osTvType from the header's region byte: 0 PAL, 1 NTSC, 2 MPAL. A PAL
+ * ROM told NTSC stops at its lockout screen (Kirby 64 (E): "This game is
+ * not designed for use on this system"). -DXRC_TV_FROM_REGION=0: NTSC for
+ * every game, as before */
+#ifndef XRC_TV_FROM_REGION
+#define XRC_TV_FROM_REGION 1
+#endif
+uint32_t xrc_tv_type = 1;
+static uint32_t tv_of_region(uint32_t r) {
+    switch (r) {
+    case 'D': case 'F': case 'H': case 'I': case 'L': case 'P': case 'S': case 'U': case 'W': case 'X': case 'Y':
+        return 0;   /* Germany, France, the Netherlands, Italy, Gateway (PAL), Europe, Spain, Australia, Scandinavia, other Europe */
+    case 'B':
+        return 2;   /* Brazil */
+    default:
+        return 1;
+    }
+}
+
 /* what the IPL3 and the boot ROM leave in low RDRAM (libultra's os globals) */
-static void boot_block(void) {
+static void boot_block(const xrom_info* info) {
     uint32_t i;
-    wr32(0x80000300, 1);                 /* osTvType: NTSC */
+    xrc_tv_type = XRC_TV_FROM_REGION && info ? tv_of_region(info->region) : 1;
+    if (xrc_tv_type != 1) xhw_logf("[BOOT] region %c: osTvType %s", (char)info->region, xrc_tv_type ? "MPAL" : "PAL");
+    wr32(0x80000300, xrc_tv_type);       /* osTvType */
     wr32(0x80000304, 0);                 /* osRomType: cartridge */
     wr32(0x80000308, 0xB0000000u);       /* osRomBase */
     wr32(0x8000030C, 0);                 /* osResetType: cold */
@@ -213,7 +234,7 @@ static void game(void) {
     if (!xrc_mem_init(xrc_game.rdram_mb ? xrc_game.rdram_mb : 4))
         xhw_fatal("Out of memory", "No room for the N64's RAM.");
     ipl3_left();
-    boot_block();
+    boot_block(&info);
     xrc_tlb_init();   /* a TLB miss goes to the game's refill vector or fault thread (tlb.c) */
     boot = xrc_game.boot_size;
     if (boot > info.size - 0x1000) boot = info.size - 0x1000;

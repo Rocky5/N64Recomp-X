@@ -85,6 +85,9 @@
 #ifndef XGFX_TEX_MEMO
 #define XGFX_TEX_MEMO 1        /* per-frame (load address, tile key) -> texture memo */
 #endif
+#ifndef XGFX_LOADTILE32
+#define XGFX_LOADTILE32 1      /* LOADTILE into a 32-bit tile: a row is twice its line (both banks) */
+#endif
 #ifndef XGFX_LOAD32
 #define XGFX_LOAD32 1          /* LOADBLOCK into a 32-bit tile counts 32-bit texels */
 #endif
@@ -118,6 +121,15 @@
 #ifndef XGFX_CLAMP_EXTENT
 #define XGFX_CLAMP_EXTENT 1    /* a clamp bit clamps at the tile's extent: wider than the mask, the texture repeats */
 #endif
+#ifndef XGFX_TILE_LINEW
+#define XGFX_TILE_LINEW 1      /* a tile wider than its line: the line's texels (the extra column for the filter) */
+#endif
+#ifndef XGFX_PROBE
+#define XGFX_PROBE 1           /* small copies of the frame being drawn, from a software sample grid (Pokemon Snap's photo check) */
+#endif
+#ifndef XGFX_RGBA_LOWBIT
+#define XGFX_RGBA_LOWBIT 1     /* RGBA at 4 or 8 bits: through the palette (TLUT on) or as I4/I8 */
+#endif
 #ifndef XGFX_TILE_ROWHASH
 #define XGFX_TILE_ROWHASH 1    /* a LOADTILE's change check hashes every row, not the first and last */
 #endif
@@ -126,6 +138,9 @@
 #endif
 #ifndef XGFX_DESWIZZLE32
 #define XGFX_DESWIZZLE32 1     /* LOADBLOCK dxt 0 of RGBA32: odd rows swap texel pairs (TMEM's two banks) */
+#endif
+#ifndef XGFX_DXT32
+#define XGFX_DXT32 1           /* the same rule for RGBA32 (texel pairs) */
 #endif
 #ifndef XGFX_DXT_EXACT
 #define XGFX_DXT_EXACT 1       /* LOADBLOCK dxt not sized for the line: the RDP's odd-line rule */
@@ -683,6 +698,17 @@ static void tex_miss(const char* why, int tidx);
 static void fb_touch(uint32_t addr, uint32_t bytes);
 static uint32_t s_cimg_w, s_cimg_siz, s_cimg_maxy;   /* the colour image's width and pixel size; the frame's lowest scissor row */
 
+
+/* G_MOVEWORD G_MW_SEGMENT; test builds log segment 15's first values (Pokemon
+ * Snap's photo check copies the crosshair's 8x8 from an image there) */
+static void set_segment(unsigned n, uint32_t v) {
+    if (XHW_TEST_BUILD && n == 15 && R.seg[15] != v) {
+        static unsigned s_n15;
+        if (s_n15++ < 8)
+            xhw_logf("[GFX] segment 15 = %08x (cimg %08x zimg %08x)", (unsigned)v, (unsigned)R.cimg, (unsigned)R.zimg);
+    }
+    R.seg[n & 15] = v;
+}
 /* The texture tile `tidx` samples: converted, padded to powers of two,
  * uploaded once and cached. NULL when it can't be made. */
 static TexEntry* texture_for_tile(int tidx) {
@@ -697,7 +723,7 @@ static TexEntry* texture_for_tile(int tidx) {
     unsigned w = XGFX_TILE_WRAP ? ((((unsigned)t->lrs - t->uls) & 0xFFFu) >> 2) + 1 : ((t->lrs - t->uls) >> 2) + 1,
              h = XGFX_TILE_WRAP ? ((((unsigned)t->lrt - t->ult) & 0xFFFu) >> 2) + 1 : ((t->lrt - t->ult) >> 2) + 1;
     /* RGBA32 splits each texel across TMEM's two banks: SETTILE's line covers half a row */
-    unsigned line = t->line * 8u * (t->siz == 3 ? 2u : 1u), bytes, pw, ph, slot, i;
+    unsigned line = t->line * 8u * (t->siz == 3 ? 2u : 1u), bytes, pw, ph, slot, i, pal;
     uint32_t key, sample, full = 0;
     int big, hot = 0;
     uint64_t tex_t0;
@@ -726,16 +752,35 @@ static TexEntry* texture_for_tile(int tidx) {
     if (!ld->valid || t->line == 0) { tex_miss("no load", tidx); return NULL; }
     if (t->masks && (1u << t->masks) < w) w = 1u << t->masks;
     if (t->maskt && (1u << t->maskt) < h) h = 1u << t->maskt;
+    /* DIVERGES: a tile one texel wider than its line (Mario Party's board,
+     * 64-texel rows under a 0-64 tile, for the filter's last column): the
+     * RDP reads that column from the next row in TMEM; here the row's own
+     * texels, the edge clamped. -DXGFX_TILE_LINEW=0: a miss, as before */
+    if (XGFX_TILE_LINEW && w * (4u << t->siz) > line * 8u) w = line * 8u / (4u << t->siz);
     /* tiles may declare more rows than were loaded (UVBT, fonts): only loaded rows exist */
     if (h > ld->bytes / line) h = ld->bytes / line;
     /* a load shorter than one row (Banjo-Kazooie: 48 bytes under a 64-byte
      * line) still fills that row's start: one row, the rest as RDRAM has it */
     if (!h && ld->bytes && XGFX_TILE_WRAP) h = 1;
     if (w == 0 || h == 0 || w > 1024 || h > 1024) { tex_miss("size", tidx); return NULL; }
+    if (XHW_TEST_BUILD && t->siz == 3) {   /* test builds: the first 32-bit tiles' shapes (Mario Party's logo) */
+        static uint32_t s_seen[12];
+        static unsigned s_n;
+        unsigned k;
+        for (k = 0; k < s_n && s_seen[k] != ld->addr; k++) {}
+        if (k == s_n && s_n < 12) {
+            s_seen[s_n++] = ld->addr;
+            xhw_logf("[GFX] 32-bit tile %d: %ux%u (tile %u-%u x %u-%u), line %u words, load %08x %u bytes dxt %u %s",
+                     tidx, w, h, t->uls >> 2, t->lrs >> 2, t->ult >> 2, t->lrt >> 2, t->line, (unsigned)ld->addr,
+                     (unsigned)ld->bytes, ld->dxt, ld->tile ? "tile" : "block");
+        }
+    }
     bytes = line * h;
     if (bytes > sizeof raw) { tex_miss("too big", tidx); return NULL; }
     key = t->fmt | t->siz << 3 | (w - 1) << 5 | (h - 1) << 15 | (uint32_t)(line & 0xFF) << 24 | (uint32_t)(ld->dxt != 0) << 31;
-    if (t->fmt == F3D_G_IM_FMT_CI) {   /* the palette is part of the picture: in the key (equality only) */
+    pal = t->fmt == F3D_G_IM_FMT_CI ||
+          (XGFX_RGBA_LOWBIT && t->fmt == F3D_G_IM_FMT_RGBA && t->siz <= F3D_G_IM_SIZ_8b && f3d_omh_text_lut(R.omh));
+    if (pal) {   /* the palette is part of the picture: in the key (equality only) */
         unsigned n = t->siz == F3D_G_IM_SIZ_4b ? 16u : 256u, b = t->siz == F3D_G_IM_SIZ_4b ? t->palette * 16u : 0u;
         uint32_t th = f3d_omh_text_lut(R.omh);
         for (i = 0; i < n; i++) th = (th ^ R.tlut[b + i]) * 16777619u;
@@ -811,17 +856,37 @@ build:
 #if XGFX_DXT_EXACT
     else if (t->siz != 3 && (uint32_t)ld->dxt * (line / 8) != 2048u)
         texconv_deswizzle_dxt(raw, line, bytes / line, ld->dxt);
+    /* RGBA32 the same way, its texel pairs trading places (the rule carried
+     * over from 16 bits; no game seen needing it yet). -DXGFX_DXT32=0: as loaded */
+    else if (t->siz == 3 && XGFX_DXT32 && (uint32_t)ld->dxt * (line / 8) != 2048u)
+        texconv_deswizzle32_dxt(raw, line, bytes / line, ld->dxt);
 #endif
     pw = texconv_pow2(w);
     ph = texconv_pow2(h);
     if (pw * ph > sizeof conv / 4) { tex_miss("too big", tidx); return NULL; }
-    if (t->fmt == F3D_G_IM_FMT_CI
-            ? !texconv_ci_to_argb8(raw, line, w, h, (n64_siz_t)t->siz, R.tlut, t->palette * 16u,
+    /* RGBA at 4 or 8 bits (no such format: Banjo-Kazooie's start screen,
+     * vbk12): the RDP reads it through the palette when the TLUT is on, as
+     * CI; with it off, as intensity (I4, I8). -DXGFX_RGBA_LOWBIT=0: a miss */
+    if (pal ? !texconv_ci_to_argb8(raw, line, w, h, (n64_siz_t)t->siz, R.tlut, t->palette * 16u,
                                    f3d_omh_text_lut(R.omh) == 3, conv, pw, ph)
-            : !texconv_to_argb8(raw, line, w, h, (n64_fmt_t)t->fmt, (n64_siz_t)t->siz, conv, pw, ph)) {
+            : !texconv_to_argb8(raw, line, w, h,
+                                XGFX_RGBA_LOWBIT && t->fmt == F3D_G_IM_FMT_RGBA && t->siz <= F3D_G_IM_SIZ_8b
+                                    ? (n64_fmt_t)F3D_G_IM_FMT_I
+                                    : (n64_fmt_t)t->fmt,
+                                (n64_siz_t)t->siz, conv, pw, ph)) {
         tex_miss("format", tidx);
         return NULL;
     }
+#ifdef XGFX_TEXLOG   /* debug: -DXGFX_TEXLOG=<n>, the first n textures made (format, size, palette, source) */
+    {
+        static unsigned s_tl;
+        if (s_tl++ < (unsigned)(XGFX_TEXLOG))
+            xhw_logf("[TEX] %u: fmt %d siz %d %ux%u line %u pal %u tlut %u (%04x %04x) %s %08x %u bytes dxt %u, px0 %08x",
+                     s_tl, t->fmt, t->siz, w, h, t->line, t->palette, (unsigned)f3d_omh_text_lut(R.omh),
+                     R.tlut[t->palette * 16u], R.tlut[t->palette * 16u + 1u], ld->tile ? "tile" : "block",
+                     (unsigned)ld->addr, (unsigned)ld->bytes, ld->dxt, (unsigned)conv[0]);
+    }
+#endif
     e->handle = xgfx_tex_create(pw, ph, conv);
     if (!e->handle) {   /* pool full: drop everything not used this frame and try once more */
         for (i = 0; i < TEX_CACHE; i++)
@@ -1133,12 +1198,137 @@ static void overlay_full(XgfxVtx* p, int n) {
     }
 }
 
+/* ---- the probe: small copies of the frame being drawn ----
+ * DIVERGES: Pokemon Snap tells what is in a photo by copying the 8x8
+ * pixels under its crosshair out of the frame it is drawing (LOADTILE from
+ * the colour image, a COPY texrect into an 8-wide image), drawing a
+ * Pokemon, copying again, ... and counting on the CPU how many of the 64
+ * pixels each one changed (0x80359244: 32 or more and it is the subject).
+ * The frame is drawn by the NV2A and is not in RDRAM mid-frame, so here a
+ * software grid of that region (the first LOADTILE's rectangle, at most
+ * 256 pixels) follows the frame's triangles with their own depths, each
+ * pixel holding the number of the copy it was last drawn before; a copy
+ * writes those numbers, not colours. What the game compares (changed or
+ * not) comes out as the RDP's; colours do not exist here. -DXGFX_PROBE=0:
+ * the copies draw on the screen, as before (the photo check sees nothing) */
+#define PROBE_MAX 256
+static struct {
+    int on, pending, logged;
+    uint32_t main;               /* the frame's colour image */
+    uint32_t target;             /* the copy's small colour image, while set */
+    unsigned tw;                 /* its width */
+    int x0, y0, w, h;            /* the region, N64 pixels */
+    uint16_t epoch;              /* the copy each pixel was last drawn before */
+    uint16_t id[PROBE_MAX];
+    float z[PROBE_MAX];
+} s_probe;
+
+static void probe_reset(void) {
+    int k;
+    for (k = 0; k < PROBE_MAX; k++) s_probe.id[k] = 0, s_probe.z[k] = 3e38f;
+    s_probe.epoch = 1;
+}
+
+/* LOADTILE: a rectangle of the colour image being drawn is a copy's source */
+static void probe_load(uint32_t addr, unsigned x0, unsigned y0, unsigned x1, unsigned y1, unsigned siz) {
+    unsigned w = x1 - x0 + 1u, h = y1 - y0 + 1u;
+    s_probe.pending = 0;
+    if (!R.cimg || R.cimg == R.zimg || (addr & 0x1FFFFFFFu) != (R.cimg & 0x1FFFFFFFu) || siz != 2u || w * h > PROBE_MAX)
+        return;
+    if (!s_probe.on || (int)x0 != s_probe.x0 || (int)y0 != s_probe.y0 || (int)w != s_probe.w || (int)h != s_probe.h) {
+        if (!s_probe.logged++)
+            xhw_logf("[GFX] probe: the game copies %ux%u at %u,%u of the frame it draws: a software grid follows it", w,
+                     h, x0, y0);
+        s_probe.on = 1;
+        s_probe.x0 = (int)x0, s_probe.y0 = (int)y0, s_probe.w = (int)w, s_probe.h = (int)h;
+        s_probe.main = R.cimg;
+        probe_reset();
+    }
+    s_probe.pending = 1;
+}
+
+/* SETCIMG: 1 when it is a copy's small target (not the screen); a new
+ * frame's colour image starts the grid over */
+static int probe_cimg(uint32_t c, unsigned w, unsigned siz) {
+    if (!s_probe.on) return 0;
+    if (w >= 64u) {
+        if (c != R.zimg && c != s_probe.main) s_probe.main = c, probe_reset();
+        s_probe.target = 0;
+        return 0;
+    }
+    if (s_probe.pending && siz == 2u && w <= 32u) {
+        s_probe.target = c;
+        s_probe.tw = w;
+        return 1;
+    }
+    return 0;
+}
+
+/* a texrect into the copy's target: the grid's numbers into RDRAM */
+static int probe_copy(uint32_t w0, uint32_t w1) {
+    uint16_t xl, yl, xh, yh;
+    uint8_t tile;
+    int i, j;
+    if (!s_probe.target || R.cimg != s_probe.target) return 0;
+    f3d_texrect_decode(w0, w1, &xl, &yl, &xh, &yh, &tile);
+    for (j = 0; j < s_probe.h; j++)
+        for (i = 0; i < s_probe.w; i++) {
+            unsigned dx = (unsigned)(xl >> 2) + (unsigned)i, dy = (unsigned)(yl >> 2) + (unsigned)j;
+            if (dx >= s_probe.tw) continue;
+            wr16(XU_K0(s_probe.target + 2u * (dy * s_probe.tw + dx)),
+                 (uint16_t)((s_probe.id[j * s_probe.w + i] << 1) | 1u));
+        }
+    if (XHW_TEST_BUILD) {   /* test builds: the first copies that saw something drawn since the one before */
+        static unsigned s_said;
+        int k, changed = 0;
+        for (k = 0; k < s_probe.w * s_probe.h; k++) changed += s_probe.id[k] == s_probe.epoch;
+        if (changed && s_said < 40) {
+            s_said++;
+            xhw_logf("[GFX] probe copy %u: %d of %d pixels drawn since the last (frame %u)", (unsigned)s_probe.epoch,
+                     changed, s_probe.w * s_probe.h, (unsigned)s_frame_no);
+        }
+    }
+    s_probe.epoch++;
+    s_probe.pending = 0;
+    return 1;
+}
+
+/* a triangle of the frame onto the grid (N64 pixel centres, depth-tested
+ * as the RDP would) */
+static void probe_tri(const XgfxVtx* a, const XgfxVtx* b, const XgfxVtx* c) {
+    float ax = (a->x - s_ox - s_xoff) / s_sx, ay = (a->y - s_oy) / s_sy;
+    float bx = (b->x - s_ox - s_xoff) / s_sx, by = (b->y - s_oy) / s_sy;
+    float cx = (c->x - s_ox - s_xoff) / s_sx, cy = (c->y - s_oy) / s_sy;
+    float area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    float rx0 = (float)s_probe.x0, ry0 = (float)s_probe.y0, rx1 = rx0 + (float)s_probe.w, ry1 = ry0 + (float)s_probe.h;
+    int zb = (R.geom & F3D_G_ZBUFFER) != 0, cmp = zb && (R.oml & F3D_Z_CMP), upd = zb && (R.oml & F3D_Z_UPD), i, j;
+    if (area == 0.0f) return;
+    if ((ax < rx0 && bx < rx0 && cx < rx0) || (ax >= rx1 && bx >= rx1 && cx >= rx1) ||
+        (ay < ry0 && by < ry0 && cy < ry0) || (ay >= ry1 && by >= ry1 && cy >= ry1))
+        return;
+    for (j = 0; j < s_probe.h; j++)
+        for (i = 0; i < s_probe.w; i++) {
+            float px = rx0 + (float)i + 0.5f, py = ry0 + (float)j + 0.5f;
+            float e0 = (bx - px) * (cy - py) - (by - py) * (cx - px);   /* a's weight x area */
+            float e1 = (cx - px) * (ay - py) - (cy - py) * (ax - px);
+            float e2 = area - e0 - e1, z;
+            int k = j * s_probe.w + i;
+            if (area > 0.0f ? (e0 < 0.0f || e1 < 0.0f || e2 < 0.0f) : (e0 > 0.0f || e1 > 0.0f || e2 > 0.0f)) continue;
+            z = (e0 * a->z + e1 * b->z + e2 * c->z) / area;
+            if (cmp && z > s_probe.z[k]) continue;
+            s_probe.id[k] = s_probe.epoch;
+            if (upd) s_probe.z[k] = z;
+        }
+}
+
 static void emit_poly(const Vtx* poly, int n, const Vtx* flat) {
     XgfxVtx pv[12];
     int i;
     if (s_nb + (uint32_t)(n - 2) > BATCH_TRIS) flush();
     for (i = 0; i < n; i++) to_out(&poly[i], &pv[i], flat);
     if (s_overlay) overlay_full(pv, n);
+    if (XGFX_PROBE && s_probe.on && R.cimg == s_probe.main)
+        for (i = 1; i + 1 < n; i++) probe_tri(&pv[0], &pv[i], &pv[i + 1]);
     for (i = 1; i + 1 < n; i++) {
         XgfxVtx* d = &s_batch[s_nb * 3];
         d[0] = pv[0];
@@ -1381,6 +1571,7 @@ static void do_fillrect(uint32_t w0, uint32_t w1) {
 
 static void do_texrect(uint32_t w0, uint32_t w1) {
     uint16_t xl, yl, xh, yh;
+    if (XGFX_PROBE && probe_copy(w0, w1)) return;
     s_rects++;
     uint8_t tile;
     int16_t s, t, dsdx, dtdy;
@@ -2103,7 +2294,7 @@ static int ex_cmd(uint32_t* pw0, uint32_t* pw1) {
             uint8_t idx, l;
             uint16_t off;
             f3dex2_moveword_decode(w0, &idx, &off);
-            if (idx == F3D_G_MW_SEGMENT) R.seg[(off >> 2) & 15] = w1;
+            if (idx == F3D_G_MW_SEGMENT) set_segment((off >> 2) & 15, w1);
             else if (idx == F3D_G_MW_NUMLIGHT) R.num_lights = f3dex2_numlights_from_data(w1);
             else if (idx == F3D_G_MW_FOG) f3d_fog_from_data(w1, &R.fog_m, &R.fog_o);
             else if (idx == F3D_G_MW_LIGHTCOL && (l = f3dex2_lightcol_index(off)) < 9) {
@@ -2221,7 +2412,7 @@ static void run_dl(const uint32_t* pc) {
                 uint16_t off;
                 uint32_t data;
                 f3d_moveword_decode(w0, w1, &idx, &off, &data);
-                if (idx == F3D_G_MW_SEGMENT) R.seg[(off >> 2) & 15] = data;
+                if (idx == F3D_G_MW_SEGMENT) set_segment((off >> 2) & 15, data);
                 else if (idx == F3D_G_MW_NUMLIGHT) R.num_lights = f3d_numlights_from_data(data);
                 else if (idx == F3D_G_MW_FOG) f3d_fog_from_data(data, &R.fog_m, &R.fog_o);
                 else if (idx == F3D_G_MW_LIGHTCOL) {
@@ -2326,6 +2517,11 @@ static void run_dl(const uint32_t* pc) {
                 ld->stride = (uint16_t)(R.timg_w * bpp2 / 2);
                 ld->rows = (uint16_t)(y1 - y0 + 1);
                 ld->bytes = ld->rows * R.tile[tile & 7].line * 8u;
+                if (XGFX_PROBE) probe_load(seg(R.timg_addr), x0, y0, x1, y1, R.timg_siz);
+                /* a 32-bit tile's line covers one of TMEM's two banks: a row is
+                 * twice it (Mario Party's title logo, 188x5 RGBA32 strips by
+                 * LOADTILE, came out 2 rows tall and stretched). -DXGFX_LOADTILE32=0: as before */
+                if (XGFX_LOADTILE32 && R.tile[tile & 7].siz == 3) ld->bytes *= 2u;
                 ld->dxt = 0;
                 ld->tile = 1;
                 ld->valid = 1;
@@ -2378,6 +2574,10 @@ static void run_dl(const uint32_t* pc) {
             case F3D_G_SETFILLCOLOR: R.fill = w1; break;
             case F3D_G_SETCIMG: {
                 uint32_t c = seg(w1);
+                if (XGFX_PROBE && probe_cimg(c, (w0 & 0xFFFu) + 1u, (w0 >> 19) & 3u)) {
+                    R.cimg = c;   /* a probe copy's target: not the screen */
+                    break;
+                }
                 if (c != R.zimg) {   /* the frame's colour image as the RDP has it (framebuffer readback) */
                     s_cimg_siz = (w0 >> 19) & 3u;
                     s_cimg_w = (w0 & 0xFFFu) + 1u;

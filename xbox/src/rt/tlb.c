@@ -232,7 +232,9 @@ uint32_t xrc_high_addr(uint32_t a) {
 
 static int fixup(uint32_t host, int write) {
     uint32_t v = host - (uint32_t)(uintptr_t)xrc_rdram;
-    if (v >= 0x80000000u) return 0;   /* KSEG0/1 are always there: a real crash */
+    if (v >= 0xA0000000u && v < 0xC0000000u) return xrc_kseg1_heal(host);   /* a lost alias page (mem.c) */
+    if (v >= 0x80000000u) return 0;   /* KSEG0 is always there: a real crash */
+    if (!(XRC_TLB && XRC_TLB_MISS)) return 0;
     /* DIVERGES: the first 64 KB of KUSEG is never a page a game maps; an access
      * there is a NULL pointer, reported as a crash rather than handed to the
      * game's fault thread (which would hang, as on the N64) */
@@ -241,5 +243,5 @@ static int fixup(uint32_t host, int write) {
 }
 
 void xrc_tlb_init(void) {
-    if (XRC_TLB && XRC_TLB_MISS) xhw_crash_set_fixup(fixup);
+    xhw_crash_set_fixup(fixup);   /* TLB misses (XRC_TLB_MISS) and lost KSEG1 pages (mem.c) */
 }

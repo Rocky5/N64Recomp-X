@@ -120,6 +120,39 @@ int xrc_mem_init(uint32_t mb) {
     return 1;
 }
 
+/* A fault on the KSEG1 alias (the crash handler's fixup, tlb.c). Majora's
+ * Mask on the console (vmm9, 2026-10-18): the 8 MB alias at 0xA3631000 was
+ * made whole at boot (no refusal logged), yet its first uncached write at
+ * a38af402 faulted a few seconds later: the kernel had used and released
+ * pages of that range (vmm3 found one in use at boot). A page whose PTE is
+ * gone is aliased again and the access retried; a page the kernel holds
+ * now is logged with its PDE/PTE and stays a crash. DIVERGES: none (the
+ * same bytes). Kill switch: -DXRC_KSEG1_HEAL=0 (such a fault is a crash). */
+#ifndef XRC_KSEG1_HEAL
+#define XRC_KSEG1_HEAL 1
+#endif
+int xrc_kseg1_heal(uint32_t host) {
+#if XRC_KSEG1 && XRC_KSEG1_HEAL
+    static unsigned s_healed, s_refused;
+    uint32_t base = (uint32_t)(uintptr_t)(xrc_rdram + 0xA0000000u), off = host - base, page, pde, pte;
+    if (!xrc_rdram_host || off >= xrc_rdram_size) return 0;
+    page = base + (off & ~0xFFFu);
+    xhw_alias_why(page, &pde, &pte);
+    if (xhw_alias_map(page, ((uint32_t)(uintptr_t)xrc_rdram_host & 0x7FFFFFFFu) + (off & ~0xFFFu), 4096)) {
+        if (s_healed++ < 16)
+            xhw_logf("[MEM] KSEG1 page %08x lost (PDE %08x, PTE %08x): aliased again (%u)", (unsigned)page,
+                     (unsigned)pde, (unsigned)pte, s_healed);
+        return 1;
+    }
+    if (s_refused++ < 4)
+        xhw_logf("[MEM] KSEG1 page %08x taken (PDE %08x, PTE %08x): the access faults", (unsigned)page,
+                 (unsigned)pde, (unsigned)pte);
+#else
+    (void)host;
+#endif
+    return 0;
+}
+
 void* xrc_host(uint32_t vram, uint32_t bytes) {
     uint32_t phys = vram & 0x1FFFFFFFu;
     if ((int32_t)vram >= 0) {   /* KUSEG: through the game's TLB (Turok 2's code and data) */

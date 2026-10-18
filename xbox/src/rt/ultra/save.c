@@ -174,6 +174,14 @@ void xu_pak_apply_settings(int hot) {
 void xu_pak_dirty(int port) { dirty(&s_pak[port & 3]); }
 
 void xu_pak_rumble(int port, int on) {
+    static int s_on[4], s_said;
+    /* each change, the first 64: when a game rumbles (Ocarina of Time buzzed
+     * at its scene changes on red, 2026-10-18: the game's, or a hitch's?) */
+    if (s_on[port & 3] != !!on && s_said < 64) {
+        s_said++;
+        xhw_logf("[PAK] port %d: motor %s at %u ms", port + 1, on ? "on" : "off", (unsigned)(xhw_time_us() / 1000u));
+    }
+    s_on[port & 3] = !!on;
     xhw_pad_rumble(port, on && g_xrc_settings.rumble ? 0xA000 : 0, on ? 1000 : 0);
 }
 

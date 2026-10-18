@@ -58,7 +58,14 @@ void xgfx_clear(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t argb, i
 void xgfx_present(void) {}
 static unsigned s_tex_creates;
 static uint32_t s_tex_px0;   /* the last texture's first texel */
-uint32_t xgfx_tex_create(uint32_t w, uint32_t h, const uint32_t* argb) { (void)w; (void)h; s_tex_px0 = argb[0]; s_tex_creates++; return 1; }
+static uint32_t s_tex_h, s_tex_row4;   /* the last texture's height, and row 4's first texel */
+uint32_t xgfx_tex_create(uint32_t w, uint32_t h, const uint32_t* argb) {
+    s_tex_px0 = argb[0];
+    s_tex_h = h;
+    s_tex_row4 = h > 4 ? argb[4 * w] : 0;
+    s_tex_creates++;
+    return 1;
+}
 void xgfx_tex_destroy(uint32_t tex) { (void)tex; }
 uint32_t xgfx_capture_last(float* u, float* v) { (void)u; (void)v; return 0; }
 uint32_t xgfx_tex_linear_last(float* w, float* h) { (void)w; (void)h; return 0; }
@@ -208,6 +215,16 @@ static void test_parse(void) {
     {
         GfxUcode u = uc_of("RSP Gfx ucode F3DEX       fifo 1.23 Yoshitaka Yasumoto 1997 Nintendo.");
         CHECK(!strncmp(u.name, "RSP Gfx ucode F3DEX", 19), "name '%s'", u.name);
+    }
+    {   /* no version text: the display list's command bytes say the family */
+        static const uint32_t ex2[8] = { 0xE7000000, 0xD9000000, 0xE3000A01, 0xDA380003, 0xDE000000, 0x01020040,
+                                         0x05000204, 0xDF000000 };
+        static const uint32_t f3d[8] = { 0xE7000000, 0xB6000000, 0xB7000000, 0xBA001402, 0x01300040, 0x06000000,
+                                         0xBF000000, 0xB8000000 };
+        static const uint32_t rdp[4] = { 0xE7000000, 0xFF10013F, 0xF6000000, 0xE9000000 };
+        CHECK(gfx_ucode_guess(ex2, 8) == GFX_UC_F3DEX2, "an F3DEX2 list read as %d", gfx_ucode_guess(ex2, 8));
+        CHECK(gfx_ucode_guess(f3d, 8) == GFX_UC_F3D, "a Fast3D list read as %d", gfx_ucode_guess(f3d, 8));
+        CHECK(gfx_ucode_guess(rdp, 4) == -1, "RDP commands alone said %d", gfx_ucode_guess(rdp, 4));
     }
 }
 
@@ -445,6 +462,27 @@ static void test_deswizzle32(void) {
     CHECK(!memcmp(d, want, sizeof d), "deswizzle32: byte 32 is %u, 40 is %u", d[32], d[40]);
 }
 
+/* RGBA32 with a dxt sized for the line: as loaded (the swap at the load and
+ * the one at the sample cancel); dxt 0 is texconv_deswizzle32 */
+static void test_deswizzle32_dxt(void) {
+    uint8_t d[64], want[64];
+    unsigned i;
+    for (i = 0; i < 64; i++) d[i] = want[i] = (uint8_t)i;
+    texconv_deswizzle32_dxt(d, 32, 2, 2048 / 4);
+    CHECK(!memcmp(d, want, sizeof d), "deswizzle32_dxt: a matching dxt moved byte %u", d[0]);
+    texconv_deswizzle32_dxt(d, 32, 2, 0);
+    texconv_deswizzle32(want, 32, 2);
+    CHECK(!memcmp(d, want, sizeof d), "deswizzle32_dxt: dxt 0 is not deswizzle32 (byte 32 is %u)", d[32]);
+    /* 6 words a line (12 texels), dxt 342 (2048/6 rounded up): a few rows come back in place */
+    {
+        static uint8_t e[6 * 8 * 4];
+        for (i = 0; i < sizeof e; i++) e[i] = (uint8_t)i;
+        texconv_deswizzle32_dxt(e, 48, 4, 342);
+        for (i = 0; i < sizeof e && e[i] == (uint8_t)i; i++) {}
+        CHECK(i == sizeof e, "deswizzle32_dxt: 6-word lines: byte %u is %u", i, i < sizeof e ? e[i] : 0);
+    }
+}
+
 static void test_readback(void) {
     GfxUcode u = uc_of("RSP SW Version: 2.0D, 04-01-96");
     unsigned i;
@@ -572,6 +610,98 @@ static void test_tex_recheck(void) {
     put8(TEXB_AT + 20u, 0x66);   /* hot now: the next frame */
     block_frame(&u);
     CHECK(s_tex_creates == before + 2, "recheck: a hot texture's change waited");
+}
+
+/* a tile one texel wider than its line (Mario Party's board: 0-64 over a
+ * 64-texel line, XGFX_TILE_LINEW) still makes a texture */
+static void test_tile_linew(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    unsigned i, before;
+    for (i = 0; i < 4096; i++) put8(TEXB_AT + i, (uint8_t)(i * 7u));
+    before = s_tex_creates;
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xFD000000u | (0u << 21) | (2u << 19) | (64u - 1u), TEXB_AT);   /* SETTIMG RGBA16 width 64 */
+    cmd(0xF5000000u | (0u << 21) | (2u << 19), 7u << 24);                /* SETTILE 7 */
+    cmd(0xF3000000u, (7u << 24) | (2047u << 12) | 128u);                 /* LOADBLOCK 2048 texels, dxt 128 */
+    cmd(0xF5000000u | (0u << 21) | (2u << 19) | (16u << 9), 0);          /* SETTILE 0: line 16 (64 texels) */
+    cmd(0xF2000000u, (256u << 12) | 124u);                               /* SETTILESIZE 0: s 0-64, t 0-31 */
+    cmd(0xE4000000u | (256u << 12) | 128u, 0);
+    cmd(0xE1000000u, 0);
+    cmd(0xF1000000u, (1u << 26) | (1u << 10));
+    cmd(0xDF000000u, 0);
+    run(&u);
+    CHECK(s_tex_creates == before + 1, "linew: a 65-texel tile over a 64-texel line made %u textures (want 1)",
+          s_tex_creates - before);
+}
+
+/* a 188x5 RGBA32 strip by LOADTILE (Mario Party's title logo,
+ * XGFX_LOADTILE32): all 5 rows come through, row 4 its own */
+static void test_loadtile32(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    unsigned i, y;
+    for (y = 0; y < 5; y++)
+        for (i = 0; i < 188u * 4u; i++) put8(TEXB_AT + y * 188u * 4u + i, (uint8_t)(i & 3u ? 0x30u * y + 1u : 0xFFu));
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xFD000000u | (0u << 21) | (3u << 19) | (188u - 1u), TEXB_AT);             /* SETTIMG RGBA32 width 188 */
+    cmd(0xF5000000u | (0u << 21) | (3u << 19) | (47u << 9), 7u << 24);             /* SETTILE 7: line 47 */
+    cmd(0xF4000000u, (7u << 24) | (187u * 4u << 12) | (4u * 4u));                  /* LOADTILE 0-187 x 0-4 */
+    cmd(0xF5000000u | (0u << 21) | (3u << 19) | (47u << 9), 0);                    /* SETTILE 0: line 47 */
+    cmd(0xF2000000u, (187u * 4u << 12) | (4u * 4u));                               /* SETTILESIZE 0: 188x5 */
+    cmd(0xE4000000u | (188u * 4u << 12) | (5u * 4u), 0);
+    cmd(0xE1000000u, 0);
+    cmd(0xF1000000u, (1u << 26) | (1u << 10));
+    cmd(0xDF000000u, 0);
+    run(&u);
+    /* rows 0..4 have green 0x01, 0x31, 0x61, 0x91, 0xC1: cut to 2 rows, row 4 would repeat row 1 */
+    CHECK(s_tex_h == 8 && ((s_tex_row4 >> 8) & 0xFFu) == 0xC1u,
+          "loadtile32: texture %u rows high, row 4 starts %08x (want 8 rows, green c1)", s_tex_h, s_tex_row4);
+}
+
+/* the probe (Pokemon Snap's photo check, XGFX_PROBE): an 8x8 LOADTILE of
+ * the frame being drawn, COPY-texrected into an 8-wide image; a triangle
+ * over the region drawn between two copies changes all 64 pixels, nothing
+ * drawn between the next two changes none */
+#define PROBE_SMALL 0x50000u
+static void probe_copy_cmds(uint32_t small) {
+    cmd(0xFD000000u | (0u << 21) | (2u << 19) | (320u - 1u), CIMG_AT);     /* SETTIMG the frame */
+    cmd(0xF5000000u | (0u << 21) | (2u << 19) | (2u << 9), 7u << 24);       /* SETTILE 7 */
+    cmd(0xF4000000u | (156u * 4u << 12) | (116u * 4u), (7u << 24) | (163u * 4u << 12) | (123u * 4u));
+    cmd(0xFF000000u | (0u << 21) | (2u << 19) | (8u - 1u), small);          /* SETCIMG the small image */
+    cmd(0xE3000A01u, 0x00200000u);                                          /* cycle type COPY */
+    cmd(0xE4000000u | (28u << 12) | 28u, 0);                                /* TEXRECT 0,0..7,7 */
+    cmd(0xE1000000u, 0);
+    cmd(0xF1000000u, (4u << 26) | (1u << 10));
+    cmd(0xFF000000u | (0u << 21) | (2u << 19) | (320u - 1u), CIMG_AT);     /* the frame again */
+    cmd(0xE3000A01u, 0);                                                    /* 1-cycle */
+}
+static unsigned probe_diff(uint32_t a, uint32_t b) {
+    unsigned i, n = 0;
+    for (i = 0; i < 64; i++) n += *(uint16_t*)(s_ram + ((a + 2 * i) ^ 2)) != *(uint16_t*)(s_ram + ((b + 2 * i) ^ 2));
+    return n;
+}
+static void test_probe(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    unsigned i;
+    for (i = 0; i < 3 * 128; i++) put8(PROBE_SMALL + i, 0);
+    vtx(48, -200, -150, 0);   /* a triangle over the screen's centre */
+    vtx(49, 200, -150, 0);
+    vtx(50, 0, 200, 0);
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xFF000000u | (0u << 21) | (2u << 19) | (320u - 1u), CIMG_AT);
+    probe_copy_cmds(PROBE_SMALL);
+    cmd(0x01000000u | (3u << 12) | (3u << 1), VTX_AT + 48u * 16u);
+    cmd(0x05000000u | (0u << 16) | (2u << 8) | 4u, 0);
+    probe_copy_cmds(PROBE_SMALL + 128u);
+    probe_copy_cmds(PROBE_SMALL + 256u);
+    cmd(0xDF000000u, 0);
+    run(&u);
+    CHECK(probe_diff(PROBE_SMALL, PROBE_SMALL + 128u) == 64, "probe: the triangle changed %u of 64 (want 64)",
+          probe_diff(PROBE_SMALL, PROBE_SMALL + 128u));
+    CHECK(probe_diff(PROBE_SMALL + 128u, PROBE_SMALL + 256u) == 0, "probe: nothing drawn changed %u of 64 (want 0)",
+          probe_diff(PROBE_SMALL + 128u, PROBE_SMALL + 256u));
 }
 
 /* a raw RDP triangle sent as RDPHALF_1/RDPHALF_CONT pairs (GoldenEye's sky,
@@ -703,6 +833,10 @@ int main(void) {
     test_f3dex2();
     test_fast3d();   /* and Fast3D again after the others: nothing left over */
     test_deswizzle32();
+    test_deswizzle32_dxt();
+    test_tile_linew();
+    test_loadtile32();
+    test_probe();
     test_readback();
     test_tile_rowhash();
     test_clamp_extent();

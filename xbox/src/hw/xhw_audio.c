@@ -515,7 +515,9 @@ static uint16_t codec_power_up(int* wrote) {
 /* [AUDIO] found: the AC97 and the APU as the previous XBE left them. The
  * moving parts (CIV, PICB, the APU's sample counter, the DSPs' output
  * FIFO positions) are read twice, 5 ms apart: what moves is running. */
-static void audio_found(void) {
+/* returns 1 when the APU was found running (its sample counter or a DSP's
+ * output FIFO moved in the 5 ms) */
+static int audio_found(void) {
     volatile uint32_t* m = (volatile uint32_t*)ACI;
     volatile uint8_t* apu = apu_io();
     uint32_t pci_aci = pci_read32(PCI_ACI, 0x04), pci_apu = pci_read32(PCI_APU, 0x04);
@@ -559,6 +561,7 @@ static void audio_found(void) {
                  codec_read(0x7E));
     else
         xhw_logf("[AUDIO] found: codec not ready");
+    return apu && (x0 != x1 || g0 != g1 || e0 != e1);
 }
 
 /* Before aci_init's cold reset: the controller's PCI enables, both bus
@@ -576,6 +579,7 @@ static void audio_idle(int apu_too, char* note, size_t cap) {
     ok_pcm = aci_halt(0x110, &us_pcm);
     ok_spdif = aci_halt(0x170, &us_spdif);
     if (apu) {
+        xhw_logf("[AUDIO] step: APU to idle (bus masters halted: pcm %d spdif %d)", ok_pcm, ok_spdif);
         AIO(0x1004) = 0;             /* IEN: no interrupts */
         AIO(0x2000) = 0;             /* SECTL XCNTMODE off: the setup engine (voices) stops */
         AIO(0x3FFFC) = 0;            /* GPRST, EPRST: both DSPs held in reset, their FIFO DMA stops */
@@ -584,7 +588,7 @@ static void audio_idle(int apu_too, char* note, size_t cap) {
     }
     snprintf(note, cap, "pci aci %04x%s, halt pcm %s %u us spdif %s %u us, apu %s", (unsigned)(cmd & 0xFFFF),
              (cmd & 6) != 6 ? " (enabled)" : "", ok_pcm ? "ok" : "TIMEOUT", us_pcm, ok_spdif ? "ok" : "TIMEOUT",
-             us_spdif, apu ? "stopped" : apu_too ? "not mapped" : "left (xemu voice)");
+             us_spdif, apu ? "stopped" : apu_too ? "not mapped" : "left alone (idle, or the xemu voice)");
 }
 
 static int running_in_xemu(void) {
@@ -593,8 +597,17 @@ static int running_in_xemu(void) {
     return !(d & (1u << 1));   /* xemu's CPU model has no VME */
 }
 
+/* The APU is stopped only when it was found running. Smash Bros. on the
+ * console (vssb7, 2026-10-18) froze the whole Xbox in this step or the next
+ * the boot after a stuck one (both found the APU idle: its counter and FIFOs
+ * still); an idle APU is left alone. -DXHW_AUDIO_APU_IDLE_ALWAYS=1: always
+ * stopped, as before. */
+#ifndef XHW_AUDIO_APU_IDLE_ALWAYS
+#define XHW_AUDIO_APU_IDLE_ALWAYS 0
+#endif
+
 int xhw_audio_init(uint32_t rate) {
-    int i, xemu, wrote;
+    int i, xemu, wrote, apu_running;
     uint16_t pd;
     char note[128];
     if (s_started) return 1;
@@ -609,12 +622,19 @@ int xhw_audio_init(uint32_t rate) {
         memset(s_outbuf[i], 0, OUT_FRAMES * 4);
     }
     xemu = running_in_xemu();
-    audio_found();
-    audio_idle(!(XHW_AUDIO_APU && xemu), note, sizeof note);
+    apu_running = audio_found();
+    /* step lines (flushed: the boot logs every line until the first frame):
+     * Smash Bros. on the console (vssb7, 2026-10-18) froze the whole Xbox
+     * between the "found" lines and "idle", the boot after one whose AC97
+     * was stuck (relaunched from the dashboard, no power-off) */
+    xhw_logf("[AUDIO] step: bus masters to idle");
+    audio_idle(!(XHW_AUDIO_APU && xemu) && (apu_running || XHW_AUDIO_APU_IDLE_ALWAYS), note, sizeof note);
+    xhw_logf("[AUDIO] step: cold reset");
     if (!aci_init()) {
         xhw_logf("[AUDIO] AC97 init failed");
         return 0;
     }
+    xhw_logf("[AUDIO] step: codec power");
     pd = codec_power_up(&wrote);
     xhw_logf("[AUDIO] idle: %s, bus-master reset %u polls, codec 26 %04x%s", note, s_rr_polls, pd,
              wrote ? " (powered up)" : "");

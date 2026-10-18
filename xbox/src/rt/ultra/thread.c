@@ -782,15 +782,28 @@ void xu_post_event_first(int e) { post(e, 1); }
 /* __osDisableInt / __osRestoreInt and COP0 status IE: a thread that turns
  * interrupts off holds one level of the lock until it turns them back on, so
  * a game's critical section excludes the runtime's own queue updates. */
+/* DIVERGES: while a thread has its interrupts off it runs above every game
+ * thread (level 14), as nothing preempted it on the N64. Without this a
+ * low thread holding the lock (Kirby 64's idle thread, N64 priority 0, at
+ * level 2) was preempted by a higher one spinning on a flag the audio
+ * thread sets (Kirby's wait for its music to stop, 0x800A77F8): the
+ * holder never ran again, the VI thread waited on the lock, no retrace
+ * reached the scheduler and the game stopped (xemu, about one boot in two).
+ * -DXRC_INTS_BOOST=0: the thread keeps its level, as before */
+#ifndef XRC_INTS_BOOST
+#define XRC_INTS_BOOST 1
+#endif
 static int ints_off(Thr* me) {
     if (me->ints_off) return 0;
     xu_lock();
     me->ints_off = 1;
+    if (XRC_INTS_BOOST && me->kt && me->t) xhw_thread_set_level(me->kt, 14);
     return 1;
 }
 static void ints_on(Thr* me) {
     if (!me->ints_off) return;
     me->ints_off = 0;
+    if (XRC_INTS_BOOST && me->kt && me->t) xhw_thread_set_level(me->kt, xu_level_of((int)rd32(me->t + TH_PRIORITY)));
     xu_unlock();
 }
 

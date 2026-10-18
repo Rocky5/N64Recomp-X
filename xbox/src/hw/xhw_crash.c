@@ -159,8 +159,15 @@ static int try_fixup(const EXCEPTION_RECORD* er) {
 static volatile uint32_t s_watch;
 static volatile LONG s_watch_hits;
 
+/* -DXHW_WATCH_RW=1: reads too (RW0 = 3); each code address that touches
+ * the word is logged once (the first 64), whatever the value: who reads a
+ * game's pad record (Pokemon Snap's camera, 2026-10-18) */
+#ifndef XHW_WATCH_RW
+#define XHW_WATCH_RW 0
+#endif
+
 void xhw_watch_write(uint32_t host) {
-    uint32_t dr7 = 0x1u | (0x1u << 16) | (0x3u << 18);   /* L0, RW0 = write, LEN0 = 4 bytes */
+    uint32_t dr7 = 0x1u | ((XHW_WATCH_RW ? 0x3u : 0x1u) << 16) | (0x3u << 18);   /* L0, RW0, LEN0 = 4 bytes */
     s_watch = host;
     __asm__ volatile("movl %0, %%dr0" : : "r"(host));
     __asm__ volatile("movl %0, %%dr7" : : "r"(dr7));
@@ -178,6 +185,20 @@ static int on_watch(CONTEXT* cx) {
     uint32_t v = *(volatile uint32_t*)s_watch;
     LONG k;
     __asm__ volatile("movl %0, %%dr6" : : "r"(0u));
+    if (XHW_WATCH_RW) {
+        static ULONG s_seen[64];
+        static volatile LONG s_nseen;
+        LONG j, n = s_nseen;
+        for (j = 0; j < n && j < 64; j++)
+            if (s_seen[j] == cx->Eip) return DISP_CONTINUE_EXECUTION;
+        if (n >= 64) return DISP_CONTINUE_EXECUTION;
+        s_seen[n] = cx->Eip, s_nseen = n + 1;
+        for (i = 0; i < 64 && up[0] == 0; i++)
+            if (sp[i] >= xhw_image_base + 0x1000 && sp[i] < xhw_image_end) up[0] = sp[i];
+        xhw_logf("[WATCH] %08x touched by eip %08lx (up %08lx) value %08x at %u ms", (unsigned)s_watch, cx->Eip, up[0],
+                 (unsigned)v, (unsigned)(xhw_time_us() / 1000u));
+        return DISP_CONTINUE_EXECUTION;
+    }
     if (v == s_last || ((v ^ s_last) & ~(uint32_t)(XHW_WATCH_IGNORE)) == 0)
         return DISP_CONTINUE_EXECUTION;   /* only changes are logged, outside the -DXHW_WATCH_IGNORE bits */
     s_last = v;

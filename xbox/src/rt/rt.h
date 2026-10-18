@@ -16,6 +16,8 @@ extern uint8_t* xrc_rdram;
 extern uint8_t* xrc_rdram_host;
 extern uint32_t xrc_rdram_size;
 int xrc_mem_init(uint32_t mb);
+int xrc_kseg1_heal(uint32_t host);
+extern uint32_t xrc_tv_type;   /* osTvType from the ROM's region: 0 PAL, 1 NTSC, 2 MPAL (boot.c) */   /* a fault on the KSEG1 alias: 1 if the page was aliased again */
 /* host pointer of a KSEG0/KSEG1/physical N64 address inside the window, or NULL */
 void* xrc_host(uint32_t vram, uint32_t bytes);
 /* tlb.c: the N64 TLB's 32 entries; a valid entry's pages are aliased at

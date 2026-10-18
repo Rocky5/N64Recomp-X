@@ -80,6 +80,26 @@ void texconv_deswizzle_dxt(uint8_t* data, unsigned line_bytes, unsigned rows, un
     }
 }
 
+/* RGBA32: LOADBLOCK puts RAM's 8-byte word i (two texels) at TMEM word i ^ 1 when the line counter is
+   on an odd line, and an odd tile row reads word p from p ^ 1. With a dxt that does not divide the
+   line, a line can start mid-pair and two words land on one place in TMEM: placed in load order, as
+   the RDP writes them, then read back as the sampler does. */
+void texconv_deswizzle32_dxt(uint8_t* data, unsigned line_bytes, unsigned rows, unsigned dxt)
+{
+    static uint8_t tmem[8192];
+    unsigned words = line_bytes / 8, n = words * rows;
+    if (!words || n * 8 > sizeof tmem) return;
+    memset(tmem, 0, n * 8);
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t t = i ^ (((i * dxt) >> 11) & 1);
+        if (t < n) memcpy(tmem + t * 8, data + i * 8, 8);
+    }
+    for (uint32_t p = 0; p < n; p++) {
+        uint32_t s = p ^ ((p / words) & 1);
+        memcpy(data + p * 8, tmem + (s < n ? s : p) * 8, 8);
+    }
+}
+
 unsigned texconv_pow2(unsigned n)
 {
     unsigned p = 1;

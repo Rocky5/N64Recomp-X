@@ -35,6 +35,8 @@
 #include "rt.h"
 #include "xhw.h"
 
+xhw_thread* xu_spawn(void (*fn)(void*), void* arg, int level, uint32_t stack);   /* ultra/thread.c */
+
 /* addresses the net remembers (each a stub or a logged in-line callee); 512
  * ran out in Paperboy (C++: its virtual functions are reached only through
  * vtables, 521 of them in 20 s), and a lookup past it was the "no function"
@@ -115,26 +117,94 @@ static void text_load(void) {
     s_text[s_tlen] = 0;
 }
 
+/* learn.txt is written by its own thread, at most every LEARN_WRITE_MS,
+ * outside every lock. Ocarina of Time on the console (vzel13, 2026-10-18):
+ * written at once for each new line (a temp file, flushed, read back,
+ * renamed), 2208 lines rewrote up to 48 KB 2208 times on the game's
+ * thread; the HDD never stopped and frames took up to 2.6 s. The same line
+ * again in one boot (an overlay loaded again) is not logged again either.
+ * -DXRC_LEARN_WRITE_MS=0: written at once, every line logged, as before. */
+#ifndef XRC_LEARN_WRITE_MS
+#define XRC_LEARN_WRITE_MS 3000
+#endif
+static xhw_mutex* s_text_lock;
+static int s_text_dirty;
+static uint32_t s_lines[8192];   /* this boot's lines, hashed (0: free) */
+
+static int seen_line(const char* line) {
+    uint32_t h = 2166136261u, i;
+    const char* c;
+    for (c = line; *c; c++) h = (h ^ (uint8_t)*c) * 16777619u;
+    h |= 1u;
+    for (i = 0; i < 8192; i++) {
+        uint32_t* s = &s_lines[(h + i) & 8191];
+        if (*s == h) return 1;
+        if (!*s) {
+            if (i < 64) *s = h;   /* nearly full: logged again rather than probed for long */
+            return 0;
+        }
+    }
+    return 0;
+}
+
+static void text_write(const char* text, unsigned n) {
+    char path[96];
+    snprintf(path, sizeof path, "%slearn.txt", xhw_save_dir());
+    if (!xhw_write_file_atomic(path, text, n)) xhw_logf("[LEARN] could not write %s", path);
+}
+
+static void text_writer(void* arg) {
+    static char copy[TEXT_MAX];
+    (void)arg;
+    for (;;) {
+        unsigned n = 0;
+        xhw_sleep_ms(XRC_LEARN_WRITE_MS);
+        xhw_mutex_lock(s_text_lock);
+        if (s_text_dirty) memcpy(copy, s_text, s_tlen), n = s_tlen, s_text_dirty = 0;
+        xhw_mutex_unlock(s_text_lock);
+        if (n) text_write(copy, n);
+    }
+}
+
 /* one line, logged and added to the file unless the file has it */
 static void emit(const char* line) {
-    char path[96];
     unsigned n = (unsigned)strlen(line);
+    if (!s_text_lock) {   /* two first lines at once: one mutex wins */
+        xhw_mutex* m = xhw_mutex_create();
+        __sync_val_compare_and_swap(&s_text_lock, (xhw_mutex*)0, m);
+    }
+    xhw_mutex_lock(s_text_lock);
+    if (XRC_LEARN_WRITE_MS && seen_line(line)) {
+        xhw_mutex_unlock(s_text_lock);
+        return;
+    }
     xhw_logf("[LEARN] %s", line);
     if (!s_text_loaded) text_load();
     {   /* the same line from an earlier boot: already there */
         const char* p = s_text;
         while ((p = strstr(p, line)) != NULL) {
-            if ((p == s_text || p[-1] == '\n') && p[n] == '\n') return;
+            if ((p == s_text || p[-1] == '\n') && p[n] == '\n') {
+                xhw_mutex_unlock(s_text_lock);
+                return;
+            }
             p += n;
         }
     }
-    if (s_tlen + n + 2 >= TEXT_MAX) return;
+    if (s_tlen + n + 2 >= TEXT_MAX) {
+        xhw_mutex_unlock(s_text_lock);
+        return;
+    }
     memcpy(s_text + s_tlen, line, n);
     s_tlen += n;
     s_text[s_tlen++] = '\n';
     s_text[s_tlen] = 0;
-    snprintf(path, sizeof path, "%slearn.txt", xhw_save_dir());
-    if (!xhw_write_file_atomic(path, s_text, s_tlen)) xhw_logf("[LEARN] could not write %s", path);
+    if (!XRC_LEARN_WRITE_MS) {
+        text_write(s_text, s_tlen);
+    } else if (!s_text_dirty++) {
+        static int s_up;
+        if (!s_up) s_up = 1, xu_spawn(text_writer, NULL, 6, 16 * 1024);
+    }
+    xhw_mutex_unlock(s_text_lock);
 }
 
 /* ---- code no ROM DMA put there (decompressed: Rare's games, gzip ones) ----

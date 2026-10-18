@@ -46,6 +46,7 @@ xhw_thread* xhw_thread_self(void) { return (xhw_thread*)0; }
 int xu_fault_wait(uint32_t vaddr, int store) { (void)vaddr; (void)store; return 0; }   /* ultra/thread.c */
 uint32_t xu_self_sp(void) { return 0; }
 void xhw_crash_set_fixup(int (*fn)(uint32_t host, int write)) { (void)fn; }
+int xrc_kseg1_heal(uint32_t host) { (void)host; return 0; }
 void xrc_learn_kuseg(uint32_t va, int aliased) { (void)va, (void)aliased; }
 
 void xu_post_event(int e) { s_ev |= 1u << e; }

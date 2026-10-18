@@ -104,7 +104,8 @@ void xrc_gfx_task(uint32_t task) {
     }
     before = f3d_presents();
     s_busy = 1;
-    f3d_set_ucode(gfx_ucode_at(rd32(task + TK_UCODE_DATA), rd32(task + TK_UCODE_DATA_SIZE)));
+    f3d_set_ucode(gfx_ucode_for_task(rd32(task + TK_UCODE_DATA), rd32(task + TK_UCODE_DATA_SIZE),
+                                     rd32(task + TK_DATA_PTR)));
     f3d_run(rd32(task + TK_DATA_PTR), !split);
     s_busy = 0;
     s_task_retrace = xu_retrace();

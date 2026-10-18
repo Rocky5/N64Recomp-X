@@ -23,6 +23,8 @@ void texconv_deswizzle32(uint8_t* data, unsigned line_bytes, unsigned rows);
 /* General LOADBLOCK odd-line swap for any dxt (see texconv.c). dxt 0 equals texconv_deswizzle;
    a dxt matching the tile line (2048 / words per line) changes nothing. */
 void texconv_deswizzle_dxt(uint8_t* data, unsigned line_bytes, unsigned rows, unsigned dxt);
+/* The same for RGBA32 (8-byte texel pairs trade places, as texconv_deswizzle32); data at most 8 KB. */
+void texconv_deswizzle32_dxt(uint8_t* data, unsigned line_bytes, unsigned rows, unsigned dxt);
 
 /* Next power of two >= n, clamped to [1, 1024]. The NV2A takes any pow2 down to 1, so unlike the DC
    (minimum 8) tiny textures are not inflated. n == 0 gives 1. */

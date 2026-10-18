@@ -57,4 +57,16 @@ int gfx_ucode_parse(const uint8_t* data, size_t n, GfxUcode* out);
  * and remembered; logs "[GFX] ucode ..." the first time. Never NULL. */
 const GfxUcode* gfx_ucode_at(uint32_t data_addr, uint32_t data_size);
 
+/* A microcode with no version text (Jet Force Gemini's: Rare stripped it)
+ * read as Fast3D drew nothing right: its display list says the family. The
+ * GBI's command bytes differ: F3DEX2 sets state with 0xD9-0xDF, 0xE2 and
+ * 0xE3, Fast3D and F3DEX with 0xB6-0xBF. `words` is the first n command
+ * words (w0 of each, the top-level list in N64 order). Pure, host-tested.
+ * Returns the family it votes for, or -1 when the list does not say. */
+int gfx_ucode_guess(const uint32_t* w0s, unsigned n);
+/* gfx_ucode_at for a task: a microcode without text guessed from its
+ * display list (dl: the task's data_ptr) the first time.
+ * -DXGFX_UCODE_GUESS=0: Fast3D, as before. */
+const GfxUcode* gfx_ucode_for_task(uint32_t data_addr, uint32_t data_size, uint32_t dl);
+
 #endif
