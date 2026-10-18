@@ -80,12 +80,17 @@ than TMEM, through the texture cache in 64-texel LOADTILE chunks, each a
 quad at the screen span its texels cover, 1:1 or scaled, wrapping at the
 image's size (not handled: imageFlip, the scaled BG's imageYorig; host test
 `s2dex_bg`; Ocarina of Time sends them in its intro, not yet seen drawn).
-Its other own commands (G_OBJ_RECTANGLE, G_OBJ_SPRITE, G_OBJ_MOVEMEM,
-G_OBJ_LOADTXTR ..., G_SELECT_DL, G_OBJ_RENDERMODE) are skipped (counted in
-the 600-frame `[GFX] unhandled op` line) so they never reach Fast3D's
-switch, where their numbers mean MTX, VTX, MOVEMEM; its shared commands
-(DL, ENDDL, the segment table, the RDP, the othermodes) run as in its
-parent. Objects of S2DEX games stay undrawn.
+Its objects too (`XGFX_S2DEX_OBJ`, 2026-10-18): G_OBJ_LOADTXTR's block,
+tile and TLUT loads are replayed as the RDP commands the microcode sends;
+G_OBJ_RECTANGLE (unscaled), G_OBJ_RECTANGLE_R (the 2D sub-matrix's X, Y
+and BaseScale) and G_OBJ_SPRITE (the whole A B C D matrix, rotated) draw
+uObjSprite from TMEM as the render tile, the LDTX forms load first;
+G_OBJ_MOVEMEM (S2DEX2: G_MOVEMEM G_MV_MATRIX) sets the matrix,
+G_OBJ_RENDERMODE its clamp and filter (host test `s2dex_obj`). Yoshi's
+Story's title and story pages draw in xemu with none unhandled. Still
+skipped (counted in the 600-frame `[GFX] unhandled op` line): G_SELECT_DL.
+Its shared commands (DL, ENDDL, the segment table, the RDP, the
+othermodes) run as in its parent.
 
 Textures: G_LOADTLUT keeps TMEM's upper half (256 entries, one a 64-bit
 word) and CI4/CI8 tiles convert through it (`texconv_ci_to_argb8`, RGBA16
@@ -216,7 +221,7 @@ screen.
   frame, depth-tested, no depth write) in front of the sprite; maybe as on
   the hardware, maybe too opaque: to compare with a console.
 
-- S2DEX's objects are not drawn (its backgrounds are; no game in the ladder needs the objects yet
+- S2DEX's G_SELECT_DL is skipped (backgrounds and objects are drawn; no game in the ladder needs it yet
   from its ROM alone).
 - F3DEX2's forced matrix (`G_MV_MATRIX` + `G_MW_FORCEMTX`), `G_MV_POINT`,
   G_LINE3D, `G_DMA_IO`, `G_SPECIAL_*`: skipped (counted).

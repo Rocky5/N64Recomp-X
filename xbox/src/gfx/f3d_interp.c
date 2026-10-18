@@ -100,6 +100,9 @@
 #ifndef XGFX_TEXRECT_SNAP
 #define XGFX_TEXRECT_SNAP 1    /* 1/2-cycle texrects cover every pixel row and column they touch */
 #endif
+#ifndef XGFX_S2DEX_OBJ
+#define XGFX_S2DEX_OBJ 1       /* S2DEX's objects drawn: texture loads, rectangles, sprites (Yoshi's Story) */
+#endif
 #ifndef XGFX_S2DEX_BG
 #define XGFX_S2DEX_BG 1        /* S2DEX's G_BG_COPY and G_BG_1CYC drawn (Ocarina of Time's pre-rendered backgrounds) */
 #endif
@@ -1833,10 +1836,165 @@ static void s2dex_bg(uint32_t w1, int copy) {
     DIRTY();
 }
 
+/* ---------------------------------------------- S2DEX objects
+ *
+ * uObjTxtr loads (a block, a tile or a TLUT) are replayed as the RDP
+ * commands the microcode sends (SETTIMG, SETTILE 7, LOADBLOCK / LOADTILE /
+ * LOADTLUT) through the interpreter itself; uObjSprite draws from TMEM at
+ * imageAdrs with imageStride, as the render tile: OBJ_RECTANGLE unscaled by
+ * the matrix, OBJ_RECTANGLE_R through the 2D sub-matrix (X, Y, BaseScale),
+ * OBJ_SPRITE through the whole one (A B C D, X Y). uObjMtx: s32 A B C D
+ * (s15.16), s16 X Y (s10.2), u16 BaseScaleX/Y (u5.10); uObjSprite: objX
+ * s10.2, scaleW u5.10, imageW u10.5, objY, scaleH, imageH, imageStride
+ * (64-bit words), imageAdrs (TMEM words), fmt, siz, pal, flags (flipS 0x01,
+ * flipT 0x10). -DXGFX_S2DEX_OBJ=0: skipped, as before */
+static void run_dl(const uint32_t* pc);
+static float s_omtx[8] = { 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f };   /* A B C D X Y BaseScaleX BaseScaleY */
+static uint32_t s_obj_rm;   /* G_OBJ_RENDERMODE */
+
+static void obj_matrix(uint32_t a, unsigned len) {
+    a = seg(a);
+    if (len >= 24) {
+        s_omtx[0] = (int32_t)rd32(a) / 65536.0f; s_omtx[1] = (int32_t)rd32(a + 4) / 65536.0f;
+        s_omtx[2] = (int32_t)rd32(a + 8) / 65536.0f; s_omtx[3] = (int32_t)rd32(a + 12) / 65536.0f;
+        a += 16;
+    }
+    s_omtx[4] = (int16_t)rd16(a) / 4.0f; s_omtx[5] = (int16_t)rd16(a + 2) / 4.0f;
+    s_omtx[6] = rd16(a + 4) / 1024.0f; s_omtx[7] = rd16(a + 6) / 1024.0f;
+    if (s_omtx[6] <= 0.0f) s_omtx[6] = 1.0f;
+    if (s_omtx[7] <= 0.0f) s_omtx[7] = 1.0f;
+}
+
+static void obj_loadtxtr(uint32_t a) {
+    uint32_t type, img, d[16];
+    unsigned n = 0, tmem, p1, p2;
+    a = seg(a);
+    type = rd32(a); img = rd32(a + 4);
+    tmem = rd16(a + 8); p1 = rd16(a + 10); p2 = rd16(a + 12);
+    if (type == 0x00001033u) {          /* G_OBJLT_TXTRBLOCK: tsize, tline */
+        d[n++] = 0xFD000000u | (1u << 19); d[n++] = img;                                   /* SETTIMG 8-bit, width 1 */
+        d[n++] = 0xF5000000u | (1u << 19) | (tmem & 0x1FFu); d[n++] = 7u << 24;            /* SETTILE 7 */
+        d[n++] = 0xF3000000u; d[n++] = (7u << 24) | ((((p1 + 1u) << 3) - 1u) & 0xFFFu) << 12 | (p2 & 0xFFFu);
+    } else if (type == 0x00FC1034u) {   /* G_OBJLT_TXTRTILE: twidth, theight */
+        unsigned w = (p1 + 1u) << 1;
+        d[n++] = 0xFD000000u | (2u << 19) | ((w - 1u) & 0xFFFu); d[n++] = img;             /* SETTIMG 16-bit */
+        d[n++] = 0xF5000000u | (2u << 19) | (((p1 + 1u) >> 2) & 0x1FFu) << 9 | (tmem & 0x1FFu); d[n++] = 7u << 24;
+        d[n++] = 0xF4000000u; d[n++] = (7u << 24) | (((w - 1u) << 2) & 0xFFFu) << 12 | (p2 & 0xFFFu);
+    } else if (type == 0x00000030u) {   /* G_OBJLT_TLUT: phead, pnum */
+        d[n++] = 0xFD000000u | (2u << 19); d[n++] = img;
+        d[n++] = 0xF5000000u | (2u << 19) | (p1 & 0x1FFu); d[n++] = 7u << 24;
+        d[n++] = 0xF0000000u; d[n++] = (7u << 24) | ((p2 << 2) & 0xFFFu) << 12;
+    } else {
+        return;
+    }
+    d[n++] = (uint32_t)(s_fam == GFX_UC_S2DEX2 ? F3DEX2_G_ENDDL : F3D_G_ENDDL) << 24; d[n++] = 0;
+    run_dl(d);
+}
+
+/* mode 0: OBJ_RECTANGLE, 1: OBJ_RECTANGLE_R (the sub-matrix), 2: OBJ_SPRITE (the whole matrix) */
+static void obj_sprite(uint32_t a, int mode) {
+    float sw, sh, iw, ih, x0, y0, x1, y1, s0 = 0.0f, t0 = 0.0f, s1, t1, px[4], py[4], ps[4], pt[4];
+    unsigned flags, i;
+    int cycle = (R.omh >> F3D_G_MDSFT_CYCLETYPE) & 3;
+    Tile* t = &R.tile[0];
+    XgfxVtx o[4];
+    a = seg(a);
+    sw = rd16(a + 2) / 1024.0f; iw = rd16(a + 4) / 32.0f;
+    sh = rd16(a + 10) / 1024.0f; ih = rd16(a + 12) / 32.0f;
+    if (sw <= 0.0f || sh <= 0.0f || iw < 1.0f || ih < 1.0f) return;
+    x0 = (int16_t)rd16(a) / 4.0f; y0 = (int16_t)rd16(a + 8) / 4.0f;
+    x1 = x0 + iw / sw; y1 = y0 + ih / sh;
+    s1 = iw; t1 = ih;
+    flags = rd16(a + 22) & 0xFFu;
+    if (flags & 0x01u) { float k = s0; s0 = s1; s1 = k; }
+    if (flags & 0x10u) { float k = t0; t0 = t1; t1 = k; }
+    /* the render tile, as the microcode sets it */
+    memset(t, 0, sizeof *t);
+    t->fmt = (uint8_t)(rd16(a + 20) >> 8); t->siz = (uint8_t)(rd16(a + 20) & 3);
+    t->palette = (uint8_t)((rd16(a + 22) >> 8) & 15);
+    t->line = rd16(a + 16); t->tmem = rd16(a + 18);
+    t->cms = t->cmt = (s_obj_rm & 0x01u) ? 0 : 2;   /* G_OBJRM_NOTXCLAMP */
+    t->lrs = (uint16_t)(((unsigned)iw - 1u) << 2); t->lrt = (uint16_t)(((unsigned)ih - 1u) << 2);
+    if (mode == 1) {
+        x0 = x0 / s_omtx[6] + s_omtx[4]; x1 = x1 / s_omtx[6] + s_omtx[4];
+        y0 = y0 / s_omtx[7] + s_omtx[5]; y1 = y1 / s_omtx[7] + s_omtx[5];
+    }
+    flush();
+    memset(&s_st, 0, sizeof s_st);
+    pixel_state(1);
+    s_st.fog = 0;
+    s_st.depth_bias = 0;
+    if (cycle == 2) {
+        s_st.cc0 = cc_words_const(1 /* TEXEL0 */, 1, &s_st.cc1);
+    } else {
+        s_st.cc0 = R.cc0 & 0x00FFFFFFu;
+        s_st.cc1 = R.cc1;
+        s_st.two_cycle = cycle == 1;
+    }
+    bind_unit(0, 0);
+    s_textured = s_st.tex[0] != 0;
+    s_tex1 = 0;
+    s_overlay = 0;
+    if (!(s_obj_rm & 0x08u)) s_st.filter[0] = 0;   /* G_OBJRM_BILERP, else point */
+    if (XHW_TEST_BUILD) {   /* test builds: the first objects drawn */
+        static unsigned s_said;
+        if (s_said++ < 4)
+            xhw_logf("[GFX] S2DEX object %s at %d,%d %dx%d (fmt %u siz %u, TMEM %u)", mode == 2 ? "sprite" : "rectangle",
+                     (int)x0, (int)y0, (int)(x1 - x0), (int)(y1 - y0), t->fmt, t->siz, t->tmem);
+    }
+    if (s_trace)
+        xhw_logf("[DRAW] obj %s %d,%d-%d,%d tmem %u line %u fmt %u siz %u", mode == 2 ? "sprite" : "rect", (int)x0, (int)y0,
+                 (int)x1, (int)y1, t->tmem, t->line, t->fmt, t->siz);
+    if (mode != 2) {
+        screen_quad(x0, y0, x1, y1, s0, t0, s1, t1);
+        flush();
+        DIRTY();
+        return;
+    }
+    px[0] = x0; py[0] = y0; ps[0] = s0; pt[0] = t0;
+    px[1] = x1; py[1] = y0; ps[1] = s1; pt[1] = t0;
+    px[2] = x0; py[2] = y1; ps[2] = s0; pt[2] = t1;
+    px[3] = x1; py[3] = y1; ps[3] = s1; pt[3] = t1;
+    for (i = 0; i < 4; i++) {
+        float X = s_omtx[0] * px[i] + s_omtx[1] * py[i] + s_omtx[4], Y = s_omtx[2] * px[i] + s_omtx[3] * py[i] + s_omtx[5];
+        memset(&o[i], 0, sizeof o[i]);
+        o[i].x = X * s_sx + s_ox + s_xoff;
+        o[i].y = Y * s_sy + s_oy;
+        o[i].w = 1.0f;
+        o[i].s0 = ps[i] * s_u_scale[0] - s_u_off[0];
+        o[i].t0 = pt[i] * s_v_scale[0] - s_v_off[0];
+    }
+    if (s_nb + 2 > BATCH_TRIS) flush();
+    {
+        XgfxVtx* d = &s_batch[s_nb * 3];
+        d[0] = o[0]; d[1] = o[1]; d[2] = o[2];
+        d[3] = o[1]; d[4] = o[3]; d[5] = o[2];
+        s_nb += 2;
+    }
+    flush();
+    DIRTY();
+}
+
 static int ex_cmd(uint32_t* pw0, uint32_t* pw1) {
     uint32_t w0 = *pw0, w1 = *pw1, op = w0 >> 24, n, v0;
     uint8_t a, b, c, where, q[4];
     uint16_t vi;
+    if (XGFX_S2DEX_OBJ && (s_fam == GFX_UC_S2DEX || s_fam == GFX_UC_S2DEX2)) {
+        int f2 = s_fam == GFX_UC_S2DEX2;
+        if (op == (f2 ? 0x05u : 0xC1u)) { obj_loadtxtr(w1); return 1; }                           /* OBJ_LOADTXTR */
+        if (op == (f2 ? 0x06u : 0xC2u)) { obj_loadtxtr(w1); obj_sprite(w1 + 24u, 2); return 1; }   /* LDTX_SPRITE */
+        if (op == (f2 ? 0x07u : 0xC3u)) { obj_loadtxtr(w1); obj_sprite(w1 + 24u, 0); return 1; }   /* LDTX_RECT */
+        if (op == (f2 ? 0x08u : 0xC4u)) { obj_loadtxtr(w1); obj_sprite(w1 + 24u, 1); return 1; }   /* LDTX_RECT_R */
+        if (op == (f2 ? 0x01u : 0x03u)) { obj_sprite(w1, 0); return 1; }                           /* OBJ_RECTANGLE */
+        if (op == (f2 ? 0x02u : 0x04u)) { obj_sprite(w1, 2); return 1; }                           /* OBJ_SPRITE */
+        if (op == (f2 ? 0xDAu : 0xB2u)) { obj_sprite(w1, 1); return 1; }                           /* OBJ_RECTANGLE_R */
+        if (op == (f2 ? 0x0Bu : 0xB1u)) { s_obj_rm = w1; return 1; }                               /* OBJ_RENDERMODE */
+        if (!f2 && op == 0x05u) { obj_matrix(w1, w0 & 0xFFFFu); return 1; }                        /* OBJ_MOVEMEM */
+        if (f2 && op == 0xDCu && (w0 & 0xFFu) == 14u) {   /* G_MOVEMEM G_MV_MATRIX: the obj matrix (24) or sub-matrix (8) */
+            obj_matrix(w1, ((w0 >> 19) & 0x1Fu) * 8u + 8u);
+            return 1;
+        }
+    }
     if (s2dex_own(op)) {
         int fam2 = s_fam == GFX_UC_S2DEX2;
         if (XGFX_S2DEX_BG && op == (fam2 ? 0x0Au : 0x02u)) { s2dex_bg(w1, 1); return 1; }   /* G_BG_COPY */

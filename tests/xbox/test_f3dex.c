@@ -638,6 +638,32 @@ static void test_s2dex_bg(void) {
     CHECK(t == 4, "bg copy 96 wide: %u triangles (want two chunks)", t);
 }
 
+/* S2DEX2's G_OBJ_LDTX_RECT (XGFX_S2DEX_OBJ): a 16x8 RGBA16 texture loaded
+ * as a block (uObjTxtrBlock) and drawn as a rectangle at 10,20 */
+#define OBJ_AT 0x3F000u
+static void test_s2dex_obj(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode S2DEX  fifo 2.05  Yoshitaka Yasumoto 1998 Nintendo.");
+    unsigned t, before = s_tex_creates, i;
+    for (i = 0; i < 256; i++) put8(BGI_AT + i, (uint8_t)(i | 1));
+    put32(OBJ_AT + 0, 0x00001033u); put32(OBJ_AT + 4, BGI_AT);             /* TXTRBLOCK, image */
+    put16(OBJ_AT + 8, 0); put16(OBJ_AT + 10, 256u / 8u - 1u);              /* tmem 0, tsize */
+    put16(OBJ_AT + 12, (2048u + 3u) / 4u); put16(OBJ_AT + 14, 0);           /* tline (4 words a row), sid */
+    put32(OBJ_AT + 16, 0); put32(OBJ_AT + 20, 0);
+    put16(OBJ_AT + 24, 10u << 2); put16(OBJ_AT + 26, 1024); put16(OBJ_AT + 28, 16u << 5); put16(OBJ_AT + 30, 0);
+    put16(OBJ_AT + 32, 20u << 2); put16(OBJ_AT + 34, 1024); put16(OBJ_AT + 36, 8u << 5); put16(OBJ_AT + 38, 0);
+    put16(OBJ_AT + 40, 4); put16(OBJ_AT + 42, 0);                           /* imageStride (words), imageAdrs */
+    put16(OBJ_AT + 44, (0u << 8) | 2u); put16(OBJ_AT + 46, 0);             /* RGBA, 16-bit; pal, flags */
+    s_pc = DL_AT;
+    cmd(0x07000000u, OBJ_AT);   /* G_OBJ_LDTX_RECT */
+    cmd(0xDF000000u, 0);
+    t = run(&u);
+    CHECK(t == 2, "obj rect: %u triangles (want one quad)", t);
+    if (t == 2)
+        CHECK(near(s_v[0].x, 20.0f) && near(s_v[0].y, 40.0f) && near(s_v[4].x, 52.0f) && near(s_v[4].y, 56.0f),
+              "obj rect: quad %.1f,%.1f - %.1f,%.1f", s_v[0].x, s_v[0].y, s_v[4].x, s_v[4].y);
+    CHECK(s_tex_creates > before, "obj rect: no texture made from the loaded block");
+}
+
 int main(void) {
     test_ci();
     setup_data();
@@ -655,6 +681,7 @@ int main(void) {
     test_rdp_tri();
     test_tlut_offset();
     test_s2dex_bg();
+    test_s2dex_obj();
     if (s_fail) printf("test_f3dex: %d failed\n", s_fail);
     return s_fail ? 1 : 0;
 }
