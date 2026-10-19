@@ -26,6 +26,7 @@ uint8_t* xrc_rdram_host;
 uint32_t xrc_rdram_size;
 void xhw_logf(const char* fmt, ...) { (void)fmt; }
 int xu_send(uint32_t mq, uint32_t msg, int block, int jam) { (void)mq; (void)msg; (void)block; (void)jam; return 0; }
+void xu_post_event(int e) { (void)e; }                                   /* thread.c: the PI event after a raw DMA */
 uint64_t xu_count64(void) { return 0x12345678u; }
 void xu_save_lock(void) {}
 void xu_save_unlock(void) {}
@@ -175,7 +176,8 @@ static void test_pif(void) {
     CHECK(!memcmp(s_pak[0] + 100 * 32, a, 32), "the write landed at block 100");
     CHECK(pif_read(0, 100, b) == 0 && !memcmp(a, b, 32), "read back, CRC good");
     CHECK(pif_read(0, 1, b) == 0 && xu_pak_id_ok(b), "the ID through the PIF");
-    /* the bank register: one bank, reads zeros, writes change nothing */
+    /* the bank register: one bank, reads zeros, writes change nothing (a Controller Pak set as one) */
+    xu_pak_set_kind(0, XU_PAK_MEMORY);
     memset(a, 0, 32);
     CHECK(pif_write(0, 0x400, a) == 0, "bank select");
     CHECK(pif_read(0, 0x400, b) == 0 && b[31] == 0, "0x8000 reads zero");
@@ -191,13 +193,14 @@ static void test_pif(void) {
 
 static void test_rumble(void) {
     uint8_t a[32], b[32];
-    /* AUTO, the motor probe first: a Rumble Pak */
+    /* AUTO, the motor probe first: a Rumble Pak from 0x8000 up, a Controller Pak below (XRC_PAK_BOTH) */
     xu_pak_set_kind(1, XU_PAK_AUTO);
     CHECK(xu_pak_kind(1) == XU_PAK_MEMORY, "AUTO answers as a Controller Pak");
     memset(a, 0xFE, 32);
     pif_write(1, 0x400, a);
-    CHECK(xu_pak_kind(1) == XU_PAK_RUMBLE, "the 0xFE probe made it a Rumble Pak");
+    CHECK(xu_pak_kind(1) == XU_PAK_MEMORY, "the 0xFE probe leaves its files");
     CHECK(pif_read(1, 0x400, b) == 0 && b[31] == 0x80, "0x8000 reads 0x80: %02x", b[31]);
+    CHECK(pif_read(1, 1, b) == 0 && xu_pak_id_ok(b), "and the ID is there after the probe");
     memset(a, 1, 32);
     pif_write(1, 0x600, a);
     CHECK(s_motor[1] == 1, "0xC000 <- 1: the motor on");

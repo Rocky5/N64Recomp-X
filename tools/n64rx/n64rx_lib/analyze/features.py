@@ -9,7 +9,13 @@ registers, store at a0 + 8, call this and that) that a straight-line view
 answers for every libultra version seen."""
 from dataclasses import dataclass, field
 
+import os
+
 from .mips import Ins, SP, RA
+
+# code linked in KUSEG (Acclaim's games run at 0x00100000 through a TLB entry, Mario Tennis's modules at
+# 0x10000000): its globals sit in the same 16 MB as the code, not at 0x80000000 (N64RX_KUSEG_GLOBALS=0: off)
+KUSEG_GLOBALS = os.environ.get('N64RX_KUSEG_GLOBALS', '1') != '0'
 
 HW_BLOCKS = {0x0404: 'SP', 0x0410: 'DP', 0x0430: 'MI', 0x0440: 'VI', 0x0450: 'AI', 0x0460: 'PI', 0x0470: 'RI',
              0x0480: 'SI', 0x1FC0: 'PIF'}
@@ -77,6 +83,10 @@ def _mark(d, k, rw):
 
 def features(img, f):
     ft = Feat(f.start, f.end - f.start)
+    ku = f.start & 0xFF000000 if KUSEG_GLOBALS and f.start < 0x80000000 else None
+
+    def ram(a):
+        return 0x80000000 <= a < 0x80800000 or ku is not None and ku <= a < ku + 0x01000000 and a >= 0x10000
     ft.tails = set(getattr(f, 'tails', ()))
     const = {0: 0}                 # reg -> value
     gload = {}                     # reg -> global the register's value was loaded from
@@ -165,7 +175,7 @@ def features(img, f):
                     # (0xBFF00000: a development board's ID, "KMC" on Kyoto Microcomputer's; Mario Party 3 probes
                     # it at boot. The interpreter's model reads 0 there, as a retail cartridge bus does)
                     _mark(ft.hw, a & 0x1FFFFFFF, rw)
-                elif 0x80000000 <= a < 0x80800000:
+                elif ram(a):
                     _mark(ft.globals_, a, rw)
                 elif 0xA0000000 <= a < 0xA0800000:
                     ft.k1ram = True
@@ -187,7 +197,7 @@ def features(img, f):
                 v, a = const.get(i.rs), argof.get(i.rs)
             elif i.op == 0 and i.funct == 33 and i.rt == 0:       # addu d, rs, $0
                 v, a = const.get(i.rs), argof.get(i.rs)
-            elif i.op == 35 and i.rs in const and 0x80000000 <= (const[i.rs] + i.simm) & 0xFFFFFFFF < 0x80800000:
+            elif i.op == 35 and i.rs in const and ram((const[i.rs] + i.simm) & 0xFFFFFFFF):
                 gl = (const[i.rs] + i.simm) & 0xFFFFFFFF   # lw d, global: a pointer read from a global
             elif i.op == 35 and i.rs == SP and i.simm in slot:    # lw d, n(sp): a saved argument
                 kind, val = slot[i.simm]
@@ -198,7 +208,7 @@ def features(img, f):
             if d in (2, 3):
                 ft.returns_value = True
             gaddr = None
-            if i.op == 35 and i.rs in const and 0x80000000 <= (const[i.rs] + i.simm) & 0xFFFFFFFF < 0x80800000:
+            if i.op == 35 and i.rs in const and ram((const[i.rs] + i.simm) & 0xFFFFFFFF):
                 gaddr = (const[i.rs] + i.simm) & 0xFFFFFFFF   # before the base register is overwritten
             written.add(d)
             const.pop(d, None)
@@ -208,7 +218,7 @@ def features(img, f):
                 gload[d] = gaddr
             if v is not None:
                 const[d] = v & 0xFFFFFFFF
-                if i.op in (9, 13) and 0x80000000 <= const[d] < 0x80800000:
+                if i.op in (9, 13) and ram(const[d]):
                     ft.addr_taken.add(const[d])
             if a is not None:
                 argof[d] = a

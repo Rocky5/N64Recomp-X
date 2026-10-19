@@ -115,7 +115,14 @@ const xrom_info* xhw_rom_info(void);   /* what the last successful load found */
 typedef void (*xrom_sink)(void* user, uint32_t at, const uint8_t* src, uint32_t n);
 int xhw_rom_read(uint32_t off, uint32_t n, xrom_sink sink, void* user);
 uint32_t xhw_rom_size(void);
-const uint8_t* xhw_rom_resident(void);   /* the whole image, or NULL with the page cache */
+const uint8_t* xhw_rom_resident(void);   /* the whole image, or NULL with the page cache (or once native) */
+/* The resident image seen by the game's own loads at the cartridge's KSEG1
+ * addresses (A Bug's Life reads its data in place there): the image is put
+ * in RDRAM's word order once (xhw_rom_read hands out big-endian bytes as
+ * before) and every page of it mapped read only at va + offset. 1 when the
+ * whole image is mapped; 0 with the page cache, an image not page-aligned,
+ * or a range in use. */
+int xhw_rom_cart_map(uint32_t va);
 /* Keep [off, off + len) of the image held (the pack's [rom] pin); no-op when
  * resident. Returns the 64 KB chunks pinned. */
 uint32_t xhw_rom_pin(uint32_t off, uint32_t len);

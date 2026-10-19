@@ -19,6 +19,7 @@
  * is not seen (the N64 would run stale cache lines too, mostly).
  * Kill switch: N64RX_GUARD=0 (n64rx: no wrappers, as before). */
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "rt.h"
 #include "xhw.h"
@@ -29,6 +30,7 @@ __attribute__((weak)) const uint32_t xrc_guard_size[1];
 __attribute__((weak)) const uint32_t xrc_guard_hash[1];
 __attribute__((weak)) const unsigned xrc_guard_count;
 __attribute__((weak)) volatile unsigned char xrc_guard_state[1];
+__attribute__((weak)) recomp_func_t* const xrc_guard_body[1];   /* where one vram has several versions */
 
 #define PAGE 0x1000u   /* invalidations round to it */
 enum { UNVERIFIED = 0, VERIFIED = 1, OTHER = 2 };
@@ -57,14 +59,68 @@ static int fn_hash(uint32_t v, uint32_t n, uint32_t* out) {
     return 1;
 }
 
-void xrc_guard_miss(uint8_t* rdram, recomp_context* ctx, uint32_t vram, unsigned i, recomp_func_t* body) {
-    static unsigned s_logged;
+static int verify(unsigned i) {
     uint32_t h;
-    if (i < xrc_guard_count && xrc_guard_state[i] == UNVERIFIED)
+    if (xrc_guard_state[i] == UNVERIFIED)
         xrc_guard_state[i] = fn_hash(xrc_guard_vram[i], xrc_guard_size[i], &h) && h == xrc_guard_hash[i] ? VERIFIED
                                                                                                       : OTHER;
-    if (i < xrc_guard_count && xrc_guard_state[i] == VERIFIED) {
+    return xrc_guard_state[i] == VERIFIED;
+}
+
+/* Versions: a game that loads several scenes' code at one address (Mario
+ * Tennis at 0x800E8000..0x8010D000) was captured once per scene, and n64rx
+ * recompiled each version as its own overlay section (learn.py
+ * code_<vram>_v<n>); the table maps one of them at the address. When the
+ * version called does not match RDRAM, the others at that vram are tried
+ * (they sit beside it, sorted by vram) and the one that matches runs.
+ * Kill switch: -DXRC_GUARD_VERSIONS=0 (the interpreter, as before). */
+#ifndef XRC_GUARD_VERSIONS
+#define XRC_GUARD_VERSIONS 1
+#endif
+static recomp_func_t* sibling(unsigned i) {
+    unsigned j;
+    uint32_t v = xrc_guard_vram[i];
+    if (!XRC_GUARD_VERSIONS) return NULL;
+    for (j = i; j > 0 && xrc_guard_vram[j - 1] == v; j--) {}
+    for (; j < xrc_guard_count && xrc_guard_vram[j] == v; j++)
+        if (j != i && xrc_guard_body[j] && verify(j)) return xrc_guard_body[j];
+    return NULL;
+}
+
+/* Each retrace the versioned entries (one vram, several versions) are checked
+ * again: a game that decompresses a scene's code with the CPU writes it with
+ * no DMA the guard sees, and may invalidate the cache before it writes (the
+ * N64's cache would hold the old lines a moment; the guard's state held them
+ * for good). One hash each on their next call, a frame. Kill switch:
+ * -DXRC_GUARD_RETRACE=0 (only invalidations and DMAs, as before). */
+#ifndef XRC_GUARD_RETRACE
+#define XRC_GUARD_RETRACE 1
+#endif
+static unsigned char s_multi_known, *s_multi;
+void xrc_guard_retrace(void) {
+    unsigned i;
+    if (!XRC_GUARD_RETRACE || !xrc_guard_count) return;
+    if (!s_multi_known) {   /* which entries share their vram, once (none: no versions) */
+        s_multi_known = 1;
+        for (i = 0; i + 1 < xrc_guard_count && xrc_guard_vram[i] != xrc_guard_vram[i + 1]; i++) {}
+        if (i + 1 < xrc_guard_count && (s_multi = (unsigned char*)calloc(xrc_guard_count, 1)) != NULL)
+            for (i = 0; i + 1 < xrc_guard_count; i++)
+                if (xrc_guard_vram[i] == xrc_guard_vram[i + 1]) s_multi[i] = s_multi[i + 1] = 1;
+    }
+    if (!s_multi) return;
+    for (i = 0; i < xrc_guard_count; i++)
+        if (s_multi[i]) xrc_guard_state[i] = UNVERIFIED;
+}
+
+void xrc_guard_miss(uint8_t* rdram, recomp_context* ctx, uint32_t vram, unsigned i, recomp_func_t* body) {
+    static unsigned s_logged;
+    recomp_func_t* other;
+    if (i < xrc_guard_count && verify(i)) {
         body(rdram, ctx);
+        return;
+    }
+    if (i < xrc_guard_count && (other = sibling(i)) != NULL) {
+        other(rdram, ctx);
         return;
     }
     if (s_logged < 32) {
@@ -75,11 +131,64 @@ void xrc_guard_miss(uint8_t* rdram, recomp_context* ctx, uint32_t vram, unsigned
     xrc_interp(rdram, ctx, vram);
 }
 
+/* Code captured at a KUSEG address the game maps through its TLB (Mario
+ * Tennis's 0x50000000) is reached at that vaddr, but the game loads it and
+ * invalidates the cache by its KSEG0 address, and remaps the TLB over other
+ * pages: either way its guard entries are checked again (they sort first,
+ * below 0x80000000). Kill switch: -DXRC_GUARD_KUSEG=0 (only the range named,
+ * as before). */
+#ifndef XRC_GUARD_KUSEG
+#define XRC_GUARD_KUSEG 1
+#endif
+void xrc_guard_kuseg(void) {
+    unsigned i;
+    if (!XRC_GUARD_KUSEG) return;
+    for (i = 0; i < xrc_guard_count && xrc_guard_vram[i] < 0x80000000u; i++) xrc_guard_state[i] = UNVERIFIED;
+}
+
+/* Only the KUSEG entries a change reaches: a TLB entry rewritten over
+ * [va0, va1), and a DMA or an invalidation by the physical pages under the
+ * entries' mappings. All-Star Baseball 2000 runs its whole game at KUSEG
+ * 0x00100000: every DMA and every TLB write (its pager's) had every
+ * function hashed again at its next call. A KUSEG page mapped nowhere is
+ * checked again whenever anything changes. -DXRC_GUARD_KUSEG_EXACT=0: every
+ * KUSEG entry, as before. */
+#ifndef XRC_GUARD_KUSEG_EXACT
+#define XRC_GUARD_KUSEG_EXACT 1
+#endif
+void xrc_guard_kuseg_range(uint32_t va0, uint32_t va1) {
+    unsigned i;
+    if (!XRC_GUARD_KUSEG) return;
+    if (!XRC_GUARD_KUSEG_EXACT) { xrc_guard_kuseg(); return; }
+    for (i = 0; i < xrc_guard_count && xrc_guard_vram[i] < 0x80000000u; i++)
+        if (xrc_guard_vram[i] < va1 && xrc_guard_vram[i] + xrc_guard_size[i] > va0) xrc_guard_state[i] = UNVERIFIED;
+}
+
+static void kuseg_phys(uint32_t p0, uint32_t p1) {
+    uint32_t page = ~0u, pp = ~0u;
+    unsigned i;
+    for (i = 0; i < xrc_guard_count && xrc_guard_vram[i] < 0x80000000u; i++) {
+        uint32_t v = xrc_guard_vram[i], n = xrc_guard_size[i], pg = v & ~(PAGE - 1), last, lp;
+        if (pg != page) page = pg, pp = xrc_tlb_to_phys(pg);
+        last = (v + (n ? n - 1 : 0)) & ~(PAGE - 1);
+        lp = last == pg ? pp : xrc_tlb_to_phys(last);
+        if (pp == ~0u || lp == ~0u) xrc_guard_state[i] = UNVERIFIED;
+        else if ((pp + (v - pg) < p1 && pp + PAGE > p0) || (last != pg && lp < p1 && lp + PAGE > p0))
+            xrc_guard_state[i] = UNVERIFIED;
+    }
+}
+
 /* the game invalidated the instruction cache over [vram, vram + len), or a DMA wrote it */
 void xrc_guard_inval(uint32_t vram, uint32_t len) {
     unsigned lo = 0, hi = xrc_guard_count;
     uint32_t end;
     if (!xrc_guard_count || !len) return;
+    if (!XRC_GUARD_KUSEG_EXACT || !XRC_GUARD_KUSEG) xrc_guard_kuseg();
+    else if (xrc_guard_vram[0] < 0x80000000u) {   /* KUSEG entries: by the physical range */
+        uint32_t p = (int32_t)vram < 0 ? vram & 0x1FFFFFFFu : xrc_tlb_to_phys(vram);
+        if (p == ~0u) xrc_guard_kuseg();
+        else kuseg_phys(p & ~(PAGE - 1), p + len);
+    }
     if ((vram & 0xE0000000u) == 0xA0000000u) vram ^= 0x20000000u;   /* KSEG1 onto KSEG0 */
     end = vram + len;
     vram &= ~(PAGE - 1);

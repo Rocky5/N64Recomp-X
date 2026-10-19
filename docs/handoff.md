@@ -10,7 +10,36 @@ Each game's tier (Gold fully working, Silver playable, Experimental the
 rest; only a console run promotes) is in `docs/compat.md`; a console
 result here moves its row there in the same change.
 
-**Newest (2026-10-18, late):** the loading screen is the deep-space title
+**Newest (2026-10-19, xemu only; nothing of it on red yet):**
+- Mario Tennis: intro, menus, character select, matches (~25 fps), the
+  attract demo, from the ROM alone plus learning rounds.
+- Castlevania: Legacy of Darkness: through to Foggy Lake (~30 fps).
+- Acclaim's KUSEG-linked games: All-Star Baseball 2000, 2001 and '99 play
+  a game; South Park: Chef's Luv Shack reaches its menus (logo drawn
+  wrong); Jeremy McGrath Supercross 2000 draws 5 frames (needs its process
+  switcher modelled).
+- Ocarina of Time and Majora's Mask recompile the overlays they relocate
+  themselves (from the ROM alone, the ones a learning run used): Ocarina
+  3137 frames in 120 s against 1950, into the opening cutscenes.
+- Runtime: AI busy/full status and its event per buffer and every
+  retrace; a blender that never reads the frame draws opaque; the PI event
+  after raw DMAs; AUTO paks answer as both; the guard's KUSEG checks by
+  what changed; test builds put an 8 MB RDRAM where xemu reads it fast.
+- The 12-game regression set presents frames with no crash after every
+  change; host tests pass; test_analyze 0 failures.
+
+**Open, in order:** Pokémon Snap's camera lock (the hook to the photo
+check is set and called; next: why `PokemonDetector_FindPokemonInFocus`
+finds nothing, the 8x8 regions' bytes after `osInvalDCache`); Jeremy
+McGrath's process switcher (`strand.c` taught its context save/load and
+the return to main); Chef's Luv Shack's logo; the sweep s10 (running at
+the end of this session in `build-host/sweep/s10`; its table into
+`docs/analyzer.md`, and entries NF2P, NF9E, NFBE run again: a test ran on
+its slot meanwhile); set 15 rebuilt at HEAD before red (it predates all
+of the above; red was unreachable all session). The entries at the end
+have the details.
+
+**Before that (2026-10-18, late):** the loading screen is the deep-space title
 card the maintainer approved on red (`vsm13`: Super Mario 64 through it to
 the end of Bob-omb Battlefield, 9 ms a frame, the game at 29.9 fps); the boot holds swapped (L + R safe video, BACK
 the BACK menu before the game); the analyser keeps far `j`s inside their
@@ -30,7 +59,7 @@ not marked red is xemu only.
 |---|---|
 | Gold | Super Mario 64, Pilotwings 64, Super Smash Bros. |
 | Silver | Mario Kart 64, GoldenEye, Banjo-Kazooie, Ocarina of Time 1.2 |
-| Experimental | Mario Party (its board: fix staged), Pokémon Snap (its camera lock: the photo check, open), Majora's Mask (boot crash: fix staged), Jet Force Gemini, Kirby 64 (E) (staged), the rest |
+| Experimental | Mario Party (its board: fix staged), Pokémon Snap (its camera lock: the photo check, open), Majora's Mask (boot crash: fix staged), Jet Force Gemini, Kirby 64 (E) (staged), Mario Tennis, Castlevania: Legacy of Darkness, All-Star Baseball 2000 / 2001 / '99, South Park: Chef's Luv Shack, the rest |
 
 | game (US) | how built | xemu | console (red) |
 |---|---|---|---|
@@ -2104,3 +2133,207 @@ after 300 retraces`: thread 1 (pri 0) runs, last interpreted pc 80031254,
 round 3 on learn nothing new (`code 1 func 0`). Next: what 80031254 spins
 on (likely a value an interpreted or unnamed libultra routine should set:
 the VI or SP), 258 functions in 5 segments, 70 libultra names.
+
+## 2026-10-18/19 (night): Mario Tennis to a match from its ROM alone; captured code in versions; the six far-j games build (xemu)
+
+The seed's priority: Mario Tennis (`NM8E`) working well. Everything here is
+xemu only (slots 10 and 11); nothing new ran on red.
+
+**Mario Tennis** (`build-host/mtshot.sh`: a test build with every
+`mt-learn*.log`, scenario `build-host/scen/mt`: START, START, A through the
+menus, then A to serve and hit; `LEARN=n` keeps the log as round n):
+
+| round | what changed | result |
+|---|---|---|
+| 6 (start) | - | `[OS] stall: no graphics task at all`: thread 1 idles at priority 0, nothing else started |
+| 7-8 | the second osStartThread named (`osStartThread__2`) | threads 0, 17-19, 4, 6, 3 start; audio (n_aspMain) |
+| 13-14 | osVirtualToPhysical named (Camelot's has the probe inside); the refill skips the IPL3's leftovers at 0x80000000; Camelot's D-cache routines named | 45 frames, then a stall in a load |
+| 18 | (the learn loop's stall stop was ending runs during loads; long runs: `STOP`, `SECS`) | intro (the blimp, a rally), the title at 30 fps, 1207 frames |
+| 19 | input (the scenario) | Main Menu and Play Mode at 30 fps |
+| 20-23 | versions of captured code, plausible starts, KUSEG guard reset, run-out functions interpreted, the KUSEG entry mapped before it runs (`docs/decisions.md`) | Character Select, a match (Mario v Luigi) |
+| 24-25 | static callers in versions interpreted | to the match each run, no crash; the match ~12.6 fps in xemu (display lists 55-58 ms a frame: xemu's GPU, judge on red), one 15 s frame as the match loads |
+
+The learn logs (`build-host/mt-learn*.log`, never committed) hold the
+game's captured code; `build-host/mt-aside/` holds the rounds left out
+(19 with its KUSEG captures, 20, 21's originals).
+
+**The s9 compile failures** (`N64RX_J_LATER`): all six now build
+(`build-host/sweep/s10j`); in xemu CyberTiger presents frames (1012-1058 in
+30 s), Mario Golf 70-125 then stops (the Camelot engine: next, with the
+Tennis fixes and its own learning rounds, `build-host/gameshot.sh mg`),
+Clayfighter SC and Fighting Force no frames, A Bug's Life and Toy Story 2
+read their ROM through KSEG1 (the cartridge window, `docs/decisions.md`;
+A Bug's Life reads its data in place from ROM addresses, 1 MB and more:
+a page window cannot hold that, and it bugchecked (0xA) when pages were
+reused; it needs the whole ROM visible at 0xB0000000, open).
+
+**Acclaim's loaders** (All-Star Baseball 2000, Jeremy McGrath; the s9
+"No function at 80000400" class): their osMapTLB stack arguments sit at
+0x80400000, past 4 MB, and the runtime read garbage there (the code at
+0x00100000 mapped onto 0x1C0BB000). Those builds now get 8 MB
+(`romonly._wants_8mb`, `N64RX_STACK_8MB`); not yet run.
+
+**Host tests:** every `tools/xbox/test_*.py` passes (`test_interp` and
+`test_mmio` got stubs for the new symbols), `test_analyze` against the six
+decomp pairs: 0 failures. `test_compat`: 13 rows (Mario Tennis added,
+Experimental).
+
+**Later the same night (xemu):**
+
+- **Mario Tennis**: the attract demo (no input) crashed at frame 1207 in
+  every run: the framebuffer probe (Pokémon Snap's photo check) took its
+  32x32 capture of the frame, 128 strip copies a frame into a 32-wide
+  image, and wrote its marks a row past it into the archive handle beside
+  it. The probe now takes only targets up to 16 wide and regions of two
+  rows or more (`XGFX_PROBE_MAXW`, `XGFX_PROBE_ROWS`), clips to the copy
+  rectangle and the scissor, and rasterises only a triangle's bounding box
+  (`XGFX_PROBE_CLIP`): the demo runs (3101 frames, 110 s), and the match is
+  25-26 fps in xemu (display lists 58 ms -> 19 ms).
+- **Castlevania: Legacy of Darkness** (`ND4E`, the maintainer's request:
+  "see if we can get that game working"): every boot ended differently
+  until the AI_LEN clamp and the five other fixes in `docs/decisions.md`
+  ("Castlevania: Legacy of Darkness from its ROM alone"); now four boots at
+  once run the same: intro, title, Game Start, the new-game opening, and
+  Foggy Lake with Cornell, the HUD and the pause menu (3 learning rounds,
+  `build-host/gameshot.sh cvlod`, scenario `build-host/scen/cvlod`).
+- **A Bug's Life** reads its whole ROM through KSEG1: mapped there now (no
+  bugcheck, no fault); it stalls before its first frame (thread 4 in an
+  interpreted loop at 0x8006F0A0: open).
+- **Regression sweep** (`build-host/regress.sh`, 70 s each, no input):
+  Pilotwings 64, Super Mario 64, Smash Bros., Mario Kart 64, Ocarina of
+  Time, Mario Party, Pokémon Snap, GoldenEye, Banjo-Kazooie, Kirby 64 all
+  present frames with no crash; Majora's Mask crashed at frame 104: the
+  tail-call change, fixed (a `jr` to where `ra` points is a return; 1251
+  frames, no crash).
+- **Set 15** (`build-host/hwbuild15.sh`, `deploy-set14.sh`'s successor
+  `deploy-set15.sh`): set 14's games at HEAD plus Mario Tennis (`vmt1`,
+  `N64Recomp-X-MT`, `4E5247BD`) and Castlevania: Legacy of Darkness (`vcv1`,
+  `N64Recomp-X-CV2`, `4E522C29`).
+
+**Set 15 staged** (`/c/xemu/hw/stage-*`, built at the working tree after
+these changes; red was off, nothing deployed: `bash build-host/deploy-set15.sh`
+when it is on): vsnap9 `3d86890969d0`, vzel17 `da3dbcb1186b`, vge9
+`4c0b3432e51e`, vjfg5 `c9a4f555569e`, vssb11 `ccaee183d9e5`, vmk14
+`99e557677b9c`, vsm14 `b05a94114a26`, vmp14 `dcd31f981075`, vmm13
+`142d1e3ab0fb`, vbk16 `b3067a106858`, vk2 `20cfebf6facb`, vmt1
+`ffc95659d1c6`, vcv1 `0db24b0ebfea`. The release XBEs of vmt1 and vcv1 boot
+in xemu (1564 and 1700 frames in 45 s); `[MEM] boot` free 53240 / 53592 KB,
+after nv2a 14028 / 14124 KB, `[CLOCK] cpu 733 MHz` (xemu).
+
+**Not verified:** anything on red; Mario Tennis's sound in a match; the
+cartridge window on any game that reaches frames; the 8 MB rule on
+Acclaim's games.
+
+
+### Acclaim's KUSEG games, and xemu's slow memory (2026-10-19, later; xemu only)
+
+**All-Star Baseball 2000 (`NBEE`)**, from the ROM alone plus 26 learning
+rounds: Acclaim's loader maps KUSEG 0x00100000 onto physical 0, inflates
+the game there and jumps in; the game has its own libultra and pages more
+code in through 4 KB TLB entries from its fault thread. It now shows its
+legal screens, the title ("Expansion Pak detected"), Main Setup,
+Controllers and the line-up screen at ~20-22 fps in xemu, and plays a game
+(batting, pitches; ~22 fps). It froze when a game loaded: its audio
+thread, woken only by OS_EVENT_AI, got the event only from inside osAi*
+calls and made ~6 frames a second; the sound events its game thread
+posted overflowed the player's queue, the player's own tick was dropped
+and the audio thread spun on the empty queue (found with a test-build dump
+of the queue, `-DXRC_DIAG_EVTQ`). The AI event now comes per buffer and
+every retrace. The stadium's sky and grass drew black: drawn under
+`G_RM_OPA_SURF` with a combiner alpha of 0, which the renderer blended
+(FORCE_BL alone turned blending on); a one-cycle blender that never reads
+the frame now draws opaque (`XGFX_BLEND_MEM`, `docs/decisions.md`).
+
+What it took (`docs/decisions.md` "All-Star Baseball 2000: a game linked
+in KUSEG"): libultra's globals found in KUSEG and used through the TLB;
+osStartThread lets a faulted thread go (its pager); the guard rechecks only
+the KUSEG entries a TLB write or DMA reaches; AI_STATUS busy/full from the
+virtual DAC (it filled the FIFO forever); captured code asks the console
+for its jump tables' and callees' pages (`want.txt`); a gap function no
+longer starts on a data word before a prologue; a replaced libultra
+function is never also "interpreted"; the Controller Pak is found (AUTO
+answers as both paks).
+
+**xemu's slow memory.** In xemu, reads of physical 0x03631000 to about
+0x03880000 (where an 8 MB window's low half lands) ran ~100 times slower
+than the rest already at boot, and slower later (`-DXRC_MEMBENCH`: 8-16 ms
+per 64 KB against 50 us). All-Star Baseball's audio tasks took 12 ms there
+and its game thread never ran; Majora's Mask was slow at boot there.
+Test builds now place an 8 MB window under 48 MB physical
+(`xhw_sys.c`, `-DXHW_RDRAM_HIGHEST`); release builds keep the top, as the
+console's memory is uniform. The cause inside xemu is not known. A 4 MB
+window stays at the top (Mario Kart 64 and Banjo-Kazooie read past their
+4 MB into what the low place left unmapped: crashes, fixed).
+
+**Jeremy McGrath Supercross 2000 (`NCOE`):** the same loader; 9 learning
+rounds. Its own PI manager waits for the PI interrupt after each raw DMA
+(the runtime's raw starts now post it, `-DXRC_PI_RAW_EVENT`); it then
+draws 5 frames and crashes: its game objects are cooperative processes
+switched by its own routines (`0x0025E9D0` saves a context, `0x0025E94C`
+loads one and jumps, `0x0025E8E8` yields, `0x0025E8C0`/`0x0025E8D4` save
+and restore the main stack), Mario Party's setjmp/longjmp in another
+shape. Recompiled, a switch returns into the wrong host frame (s0 came
+back as 0x474500B1). Needs the strands (`strand.c`) taught this shape,
+including the return to main. Open.
+
+Regression (xemu, slots 11-14, test builds with all of the above): Super
+Mario 64, Pilotwings 64, Super Smash Bros., Mario Kart 64, Ocarina of Time,
+Majora's Mask (1178 frames, was 104 before the jr-to-ra fix), Pokémon Snap,
+Mario Party, GoldenEye, Banjo-Kazooie, Mario Tennis, Kirby 64 all present
+frames with no crash (Mario Party and Smash Bros. rechecked after the
+int-mask lock was switched off: 1551 and 2964 frames in 60 s, as before). Host tests pass; test_analyze 0 failures.
+[MEM]/[CLOCK]: xemu only, nothing new on the console.
+
+
+### Relocated overlays recompiled; more Acclaim games (2026-10-19, later; xemu only)
+
+**The Zelda engine's overlays** (`docs/decisions.md` "Overlays the game
+relocates itself, recompiled"; `analyze/zovl.py`): found from the ROM
+alone (Ocarina of Time 468, every link address the decomp's; Majora's
+Mask 612), recompiled as relocatable sections, mapped by a hook at the
+game's relocation routine (`ovl.c xrc_ovl_relocate`). Only the overlays
+a learning run reported (`reloc` lines) are recompiled: all of them made
+Ocarina's image 17 MB. In xemu with one learning round: Ocarina 3137
+frames in 120 s (15 overlays, 938 functions) against 1950, through the
+title, file select, the opening narration, Ganondorf's nightmare and the
+Deku Tree calling Navi in 200 s; Majora's Mask 2040 frames in 85 s (45
+overlays) against 1887 in 105 s. A first version stalled Ocarina in
+Link's house: a smaller overlay loaded over part of a bigger one left the
+rest of the old one mapped, and an overlay not yet learnt cleared nothing;
+now each relocation clears the range its header gives and unmaps every
+overlay that overlapped it, whole. Not verified: the console; frame
+pacing at scene loads measured on the console (the reason for this).
+Open: the learnt RAM captures of relocated code from earlier rounds stay
+in the build beside the sections (harmless: the relocation clears them).
+
+**More Acclaim games** (the same loader at 0x80300000): All-Star Baseball
+2001 (14 rounds) and '99 (6 rounds) play a game; South Park: Chef's Luv
+Shack (9 rounds) reaches Who's Playing and its menus (its logo draws
+wrong); a lower RDRAM place first put its KUSEG aliases on the heap
+(test builds now use under 48 MB physical: 0x02800000); its
+exception code's `__osRunningThread` now comes from beside
+`__osFaultedThread` (its getters named another word, `saves.py
+consistent_threads`). Jeremy McGrath Supercross 2000 still needs its
+process switcher.
+
+**The library sweep s10** runs in the background on slot 14
+(`build-host/sweep/s10`); its table goes into `docs/analyzer.md` when it
+ends.
+
+
+### Pokémon Snap's camera lock, narrowed (2026-10-19, late; xemu only)
+
+With the decomp as the key (`app_level/pokemon_detect.c`, `sys/sched.c`):
+the detector is enabled with 7 regions a frame (`NumPokemons`), the probe
+answers every copy (`[GFX] probe copy N: n of 64 pixels drawn since the
+last`), `scPostProcessFunc` (0x80048890) is set to
+`PokemonDetector_PostProcessImage` once the course loads and stays set,
+and that function is entered (`-DXRC_TRACE_COUNT=func_803589D0_4F8DE0`).
+Yet `PokemonDetector_HasPokemonInFocus` (0x803AE758) stays 0 and its
+message queue (0x803AEF48) stays full. Next: the compare in
+`FindPokemonInFocus` (regions `i - 1` against `i`, 32 of 64 differing):
+whether the regions the probe wrote are the ones it reads after its
+`osInvalDCache` (the runtime's cache invalidation may hand the RDP's
+picture back over them: `f3d_fb_inval`), and why the queue is never
+drained (its `osRecvMesg` NOBLOCK). New diagnostics: `-DXRC_PEEK_EVERY`,
+`-DXRC_PI_LOG_ALL`, `-DXRC_TRACE_COUNT` (`docs/testing.md`).

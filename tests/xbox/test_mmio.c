@@ -47,6 +47,13 @@ int xu_fault_wait(uint32_t vaddr, int store) { (void)vaddr; (void)store; return 
 uint32_t xu_self_sp(void) { return 0; }
 void xhw_crash_set_fixup(int (*fn)(uint32_t host, int write)) { (void)fn; }
 int xrc_kseg1_heal(uint32_t host) { (void)host; return 0; }
+void xrc_guard_kuseg(void) {}                                        /* guard.c */
+void xrc_guard_kuseg_range(uint32_t a, uint32_t b) { (void)a, (void)b; }  /* guard.c */
+uint32_t xrc_ovl_reloc_vram(uint32_t v) { return v; }                     /* ovl.c */
+uint32_t xrc_ipl3_vec[4];
+uint32_t xhw_rom_size(void) { return 0; }
+int xhw_rom_cart_map(uint32_t va) { (void)va; return 0; }
+uint32_t xu_rom_read(uint32_t off, void* dst, uint32_t n) { (void)off; (void)dst; (void)n; return 1; }
 void xrc_learn_kuseg(uint32_t va, int aliased) { (void)va, (void)aliased; }
 
 void xu_post_event(int e) { s_ev |= 1u << e; }
@@ -61,6 +68,7 @@ void xrc_audio_task(uint32_t task) { s_aud = task; }
 #define ARG(i) ((uint32_t)ctx->r##i)
 void osAiSetNextBuffer_recomp(uint8_t* rdram, recomp_context* ctx) { (void)rdram, s_ai[0] = ARG(4), s_ai[1] = ARG(5); }
 void osAiGetLength_recomp(uint8_t* rdram, recomp_context* ctx) { (void)rdram, ctx->r2 = 0x100; }
+void osAiGetStatus_recomp(uint8_t* rdram, recomp_context* ctx) { (void)rdram, ctx->r2 = 0; }
 void osAiSetFrequency_recomp(uint8_t* rdram, recomp_context* ctx) { (void)rdram, s_rate = ARG(4); }
 void osViSwapBuffer_recomp(uint8_t* rdram, recomp_context* ctx) { (void)rdram, s_fb = ARG(4); }
 void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) { (void)rdram, s_si[0] = ARG(4), s_si[1] = ARG(5); }

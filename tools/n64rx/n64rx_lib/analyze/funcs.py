@@ -21,6 +21,10 @@ MAX_FUNC = 0x10000          # a function larger than this is a walk gone wrong
 INTRA_J = 0x2000            # a j this close and not onto a known start stays in the function
 WALK_LATER = os.environ.get('N64RX_J_LATER', '1') != '0'   # a far j decided after the walk (kill switch)
 
+KUSEG_TABLES = os.environ.get('N64RX_KUSEG_TABLES', '1') != '0'
+GAP_DATA = os.environ.get('N64RX_GAP_DATA', '1') != '0'
+DATA_OPS = {0x30, 0x32, 0x34, 0x36, 0x38, 0x3A, 0x3C, 0x3E}   # ll lwc2 lld ldc2 sc swc2 scd sdc2
+
 
 @dataclass
 class Segment:
@@ -43,6 +47,7 @@ class Func:
     jtables: list = field(default_factory=list)  # (jr pc, table vram, entries)
     how: str = 'call'                   # call | entry | gap | pointer
     bad: str = ''                       # why the walk is suspect ('' = clean)
+    table_want: int = 0                 # a jr's table address whose bytes no segment holds (captured code)
 
 
 class Image:
@@ -213,7 +218,7 @@ def _table(img, insns, i, fstart):
     return None
 
 
-def _table_linear(img, fstart, pc):
+def _table_linear(img, fstart, pc, addr_only=False):
     """A jump table whose base was set up away from the jr (GCC hoists the
     lui/addiu out of a loop and adds the scaled index into another register):
     the lw before the jr, the addu that formed its address, and the lui/addiu
@@ -250,11 +255,15 @@ def _table_linear(img, fstart, pc):
     table = None
     for x in (d.rs, d.rt):
         b = const(x, d.pc)
-        if b is not None and 0x80000000 <= b < 0x80800000:
+        # (a KUSEG base for code linked in KUSEG: All-Star Baseball 2000's at 0x00100000; N64RX_KUSEG_TABLES=0: not)
+        if b is not None and (0x80000000 <= b < 0x80800000 or KUSEG_TABLES and fstart < 0x80000000
+                              and 0x10000 <= b < 0x80000000 and abs(b - fstart) < 0x1000000):
             table = (b + lw.simm) & 0xFFFFFFFF
             break
     if table is None:
         return None
+    if addr_only:
+        return table
     count = None
     v = pc - 4
     while v >= max(fstart, pc - 4 * 48):
@@ -347,6 +356,9 @@ def walk(img, start, starts):
                         todo.extend(tab[1])
                     else:
                         f.bad = f.bad or f'jr ${ins.rs} at {pc:08X} without a table'
+                        t = _table_linear(img, start, pc, addr_only=True)
+                        if t and img.word(t) is None and not f.table_want:
+                            f.table_want = t   # its bytes in RDRAM no capture holds (romonly.py: want.txt)
                     break
                 if ins.is_jalr:
                     pc = nxt + 4
@@ -495,6 +507,13 @@ def _gaps(img, seg, funcs):
         for a, b in pairs:
             pc = funcs[a].end if a is not None else seg.vram
             while pc < b and img.word(pc) == 0:
+                pc += 4
+            # a data word before a prologue (All-Star Baseball 2000's 0xC000108F, an `ll`, ahead of addiu
+            # sp at 0x00112C30): no compiler starts a function with ll/sc or COP2/3 loads and stores, so the
+            # function is the prologue's (N64RX_GAP_DATA=0: as before)
+            w0, w1 = img.word(pc), img.word(pc + 4)
+            if (GAP_DATA and pc + 4 < b and w0 is not None and w1 is not None and (w0 >> 26) in DATA_OPS
+                    and w1 >> 16 == 0x27BD and w1 & 0x8000):
                 pc += 4
             if pc >= b:
                 continue

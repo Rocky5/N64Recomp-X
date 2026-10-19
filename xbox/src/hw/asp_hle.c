@@ -132,6 +132,16 @@
 
 #include "asp_hle.h"
 
+#ifndef ASP_HLE_LOW_GUARD
+#ifdef XBOX   /* N64Recomp-X's console build: below 0x1000 are the vectors and maybe the game's code */
+#define ASP_HLE_LOW_GUARD 0x1000u
+#else
+#define ASP_HLE_LOW_GUARD 0u        /* the host tests' RDRAM images use small addresses */
+#endif
+#endif
+#ifndef ASP_HLE_NULL_SAVE
+#define ASP_HLE_NULL_SAVE 0        /* 1: a SAVEBUFF to address word 0 writes RDRAM 0, as before */
+#endif
 #ifndef ASP_HLE_SEGMENTS
 #define ASP_HLE_SEGMENTS 1          /* 0: address words go to the callback unresolved */
 #endif
@@ -266,9 +276,23 @@ static void rd_load(uint32_t a, void* dst, uint32_t n)
 #endif
 }
 
+static uint32_t s_cur_w0, s_cur_w1, s_cur_i;   /* the command running (diagnosis) */
+static const uint32_t* s_cur_list;
+static void low_store(uint32_t a)
+{
+    unsigned k;
+    if ((a & 0x1FFFFFFFu) >= 0x1000u) return;
+    if (s_stats.low_n++) return;
+    s_stats.low_w0 = s_cur_w0, s_stats.low_w1 = s_cur_w1, s_stats.low_addr = a;
+    s_stats.low_task = s_stats.tasks, s_stats.low_index = s_cur_i;
+    for (k = 0; k < 12; k++) s_stats.low_prev[k] = s_cur_list && s_cur_i * 2 >= 12 - k ? s_cur_list[s_cur_i * 2 - 12 + k] : 0;
+}
+
 static void rd_store(uint32_t a, const void* src, uint32_t n)
 {
-    uint8_t* p = rdram_at(a);
+    uint8_t* p;
+    low_store(a);
+    p = rdram_at(a);
     if (!p) return;
     xfer(p, (const uint8_t*)src, n);
 #if ASP_HLE_WORDSWAP
@@ -917,6 +941,7 @@ static void cmd_polef(uint32_t flags, int16_t gain, uint32_t inb, uint32_t outb,
 static void exec(uint32_t w0, uint32_t w1)
 {
     uint32_t op = w0 >> 24, flags = (w0 >> 16) & 0xFF;
+    s_cur_w0 = w0, s_cur_w1 = w1;
     s_stats.cmds[op < 16 ? op : 32]++;
     switch (op) {
     case A_SPNOOP:
@@ -946,6 +971,18 @@ static void exec(uint32_t w0, uint32_t w1)
         uint32_t n = cap_dmem(align_up(T.count, 8));
         uint8_t* p;
         if (!n) break;
+        /* DIVERGES: a save to address word 0 (Castlevania: Legacy of Darkness ends
+         * some lists with 06000000 00000000) is dropped; run as written it put the
+         * output buffer over RDRAM 0.., the game's own code at 0x80000400 (a call
+         * there found zeros). -DASP_HLE_NULL_SAVE=1: written, as before */
+        if (!ASP_HLE_NULL_SAVE && w1 == 0) break;
+        low_store(resolve(w1));
+        /* DIVERGES: nor below ASP_HLE_LOW_GUARD (Castlevania's saves to 0x280 of up to
+         * 4 KB reached its code at 0x80000864; a buffer pointer it reads while another
+         * thread changes it, as far as found). -DASP_HLE_LOW_GUARD=0: written */
+#if ASP_HLE_LOW_GUARD
+        if ((resolve(w1) & 0x1FFFFFFFu) < ASP_HLE_LOW_GUARD) break;
+#endif
         p = rdram_at(resolve(w1));
         if (p) dmem_to_rd(p, T.out & ~7u, n);
         break;
@@ -1008,7 +1045,29 @@ void asp_hle_run(const uint32_t* cmds, uint32_t n_cmds, asp_addr_fn addr, void* 
     s_stats.tasks++;
     switch (s_uc.abi) {
     case ASP_ABI_AUDIO:
-        for (i = 0; i < n_cmds; i++) exec(cmds[2 * i], cmds[2 * i + 1]);
+        s_cur_list = cmds;
+#if defined(XBOX) && defined(XHW_TEST_BUILD) && XHW_TEST_BUILD && defined(ASP_HLE_OPTIME)
+        {   /* diagnosis (-DASP_HLE_OPTIME): the time each command kind takes, every 256 tasks */
+            static uint64_t s_ns[17];
+            static uint32_t s_n[17];
+            uint64_t xhw_time_ns(void);
+            void xhw_logf(const char* fmt, ...);
+            for (i = 0; i < n_cmds; i++) {
+                uint32_t op = cmds[2 * i] >> 24;
+                uint64_t t0 = xhw_time_ns();
+                s_cur_i = i, exec(cmds[2 * i], cmds[2 * i + 1]);
+                s_ns[op < 16 ? op : 16] += xhw_time_ns() - t0, s_n[op < 16 ? op : 16]++;
+            }
+            if ((s_stats.tasks & 255) == 0) {
+                unsigned k;
+                for (k = 0; k < 17; k++)
+                    if (s_n[k]) xhw_logf("[ASPT] op %u: %u commands, %u us", k, (unsigned)s_n[k], (unsigned)(s_ns[k] / 1000));
+                memset(s_ns, 0, sizeof s_ns), memset(s_n, 0, sizeof s_n);
+            }
+        }
+#else
+        for (i = 0; i < n_cmds; i++) s_cur_i = i, exec(cmds[2 * i], cmds[2 * i + 1]);
+#endif
         break;
     case ASP_ABI_NEAD:
         for (i = 0; i < n_cmds; i++) exec_nead(cmds[2 * i], cmds[2 * i + 1]);

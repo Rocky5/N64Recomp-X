@@ -45,6 +45,11 @@ static inline uint32_t xu_phys(uint32_t v) {
     }
     return v & 0x1FFFFFFFu;
 }
+/* v reaches RDRAM: KSEG0/1, or a KUSEG address the game's TLB maps now (a
+ * game's own libultra globals linked in KUSEG, Acclaim's at 0x00100000:
+ * unmapped, before its TLB entry is written, xu_phys's mask would land on
+ * the wrong physical page) */
+static inline int xu_mapped(uint32_t v) { return (int32_t)v < 0 || xrc_tlb_to_phys(v) != ~0u; }
 static inline uint8_t* xu_host(uint32_t v) { return xrc_rdram_host + (xu_phys(v) & (xrc_rdram_size - 1)); }
 static inline uint16_t rd16(uint32_t v) { return *(uint16_t*)(xrc_rdram_host + ((xu_phys(v) ^ 2) & (xrc_rdram_size - 1))); }
 static inline void wr16(uint32_t v, uint16_t x) { *(uint16_t*)(xrc_rdram_host + ((xu_phys(v) ^ 2) & (xrc_rdram_size - 1))) = x; }

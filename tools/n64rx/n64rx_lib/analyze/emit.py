@@ -15,6 +15,12 @@ import re
 from . import Analysis
 from .features import features
 
+# kill switch: N64RX_XJAL_INTERP=0 leaves a function with a jal into another's body recompiled
+XJAL = os.environ.get('N64RX_XJAL_INTERP', '1') != '0'
+# captured code's jump tables in KUSEG pages, and its callees in pages, no capture holds: asked for
+# (N64RX_KUSEG_WANT=0: not)
+KUSEG_WANT = os.environ.get('N64RX_KUSEG_WANT', '1') != '0'
+
 
 def recomp_lists(root):
     """the recompiler's reimplemented and ignored names, read from its source at the pin"""
@@ -93,7 +99,9 @@ def targets(a: Analysis, funcs, bv, k, vs):
     return out
 
 
-def reachable(a: Analysis, nm, replaced):
+def reachable(a: Analysis, nm, replaced, extra_roots=()):
+    """`extra_roots`: functions reached by other means (relocatable overlays: through pointers in
+    their own data once the game relocates them), whose callees are live too"""
     funcs = a.all_funcs()
     bv = a.by_vram(funcs)
     prev = a.img.focus
@@ -102,7 +110,7 @@ def reachable(a: Analysis, nm, replaced):
         a.img.focus = a.seg_of(x) if x >> 32 else None
         feats[x] = features(a.img, f)
     a.img.focus = prev
-    roots = {a.entry, a.main} | data_pointers(a)
+    roots = {a.entry, a.main} | data_pointers(a) | set(extra_roots)
     seen, todo = set(), [r for r in roots if r in funcs]
     while todo:
         x = todo.pop()
@@ -179,6 +187,10 @@ def write_syms(a: Analysis, nm, path):
         for x in sorted(fs):
             lines.append(f'    {{ name = "{nm[a.key(seg, x, ovl)]}", vram = 0x{x:08X}, size = 0x{_size(a, seg, fs[x], fs):X} }},')
         lines += [']', '']
+        if getattr(seg, 'relocs', None):   # a relocatable overlay (zovl.py): N64Recomp reads RELOC_HI16/LO16 for these
+            lines += ['relocs = [']
+            lines += [f'    {{ vram = 0x{v:08X}, target_vram = 0x{t:08X}, type = "{ty}" }},' for v, t, ty in seg.relocs]
+            lines += [']', '']
     pathlib.Path(path).write_text('\n'.join(lines), encoding='utf-8', newline='\n')
 
 
@@ -253,6 +265,21 @@ def cross_funcs(a: Analysis, live, nm, replaced):
                     t = ins.branch_target
                 elif ins.is_j:
                     t = ins.target
+                elif ins.op == 3 and XJAL:
+                    # a jal into another function's body: N64Recomp makes the target a
+                    # static function running to the next symbol, whose branches past it
+                    # are labels it lacks (Mario Tennis's captured overlays, pages of two
+                    # scenes at one vram). N64RX_XJAL_INTERP=0: as before
+                    t = ins.target
+                    k = bisect.bisect_right(starts, t) - 1
+                    inside = k >= 0 and spans[k][0] < t < spans[k][1]
+                    # or, in code captured from RDRAM, to no function at all: one version's
+                    # call where that version has no start (learn._plausible kept another's out)
+                    loose = seg.name.startswith('code_') and not (k >= 0 and spans[k][0] == t)
+                    if seg.has(t) and (inside or loose):
+                        out[kx] = nm[kx]
+                        break
+                    continue
                 else:
                     continue
                 if f.start <= t < end:
@@ -430,6 +457,12 @@ def recomp_hazards(a: Analysis, live, nm, replaced):
                 ins = Ins(w, f.start + 4 * i)
                 if ins.is_jal and not seg.has(ins.target) and ins.target not in starts:
                     why = f'jal {ins.target:08X}: no function there'
+                    t = ins.target
+                    if (KUSEG_WANT and seg.name.startswith('code_') and (t < 0x80000000) == (f.start < 0x80000000)
+                            and (0x10000 <= t < 0x80000000 or 0x80000400 <= t < 0x80800000) and abs(t - f.start) <= 0x100000):
+                        # captured code calling code no capture holds yet (decompressed with it, never run so far):
+                        # the callee's page, for the next round to find the function there
+                        want = (t & ~0xFFF, (t & ~0xFFF) + 0x1000)
                     break
                 if ins.is_jal and seg.name.startswith('code_') and seg.has(ins.target) and ins.target not in starts:
                     # into captured code where no function starts: another overlay's function at that address
@@ -461,6 +494,12 @@ def recomp_hazards(a: Analysis, live, nm, replaced):
                             want = (lo, hi)
                         elif f.start < 0x80000000 and 0x80000000 <= t < 0x80800000:
                             want = (t & ~0xFFF, (t + 4 + 0xFFF) & ~0xFFF)   # TLB-mapped code, its table in KSEG0: that page
+                        elif (KUSEG_WANT and seg.name.startswith('code_') and 0x10000 <= t < 0x80000000
+                              and f.start < 0x80000000 and abs(t - f.start) <= 0x100000):
+                            # code captured at KUSEG with its table in KUSEG too (All-Star Baseball 2000's game,
+                            # decompressed to 0x00100000, its rodata pages never run): the table's page and the
+                            # next, a segment of their own the patched recompiler reads it from
+                            want = (t & ~0xFFF, (t & ~0xFFF) + 0x2000)
                         break
             if why:
                 out[x] = (nm[x], why, want)

@@ -257,6 +257,16 @@ entered (they run what is in RAM), then its functions. A function of the
 overlay that was there before then misses and goes to the safety net.
 `[OVL]` lines log the switches. Kill switch `-DXRC_OVERLAYS=0`.
 
+Overlays the game relocates itself (the Zelda engine: n64rx's
+`analyze/zovl.py` makes each one a relocatable section at its link
+address) are mapped by `xrc_ovl_relocate`, called from a hook at the
+start of the game's relocation routine: the section's functions are
+entered where the game loaded it, `section_addresses` points its
+RELOC_HI16/LO16 there, and whatever the table mapped in that range (an
+overlay that lived there, whole) is cleared first. The console logs
+`reloc <vram> <ram> <len>` for the next build (`-DXRC_RELOC_OVL=0`: not
+mapped).
+
 HAL's object manager (Snap) runs object threads with osStopThread(NULL) /
 osStartThread each frame and recreates them on the same OSThread: thread.c
 waits a stopped thread on its event, restarts a recreated one at its new

@@ -66,14 +66,17 @@ ULTRA(osEPiStartDma) {
 }
 
 /* osEPiRawStartDma, __osEPiRawStartDma(handle, direction, devAddr, dramAddr, size) */
+void xu_pi_raw_event(void);   /* pi.c: the PI interrupt's event after a raw start */
 ULTRA(osEPiRawStartDma) {
     (void)rdram;
     epi_dma(handle_addr(ARG(0), ARG(2)), ARG(3), ARG(4), ARG(1) != 0);
+    xu_pi_raw_event();
     RET(0);
 }
 ULTRA(__osEPiRawStartDma) {
     (void)rdram;
     epi_dma(handle_addr(ARG(0), ARG(2)), ARG(3), ARG(4), ARG(1) != 0);
+    xu_pi_raw_event();
     RET(0);
 }
 

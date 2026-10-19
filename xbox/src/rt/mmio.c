@@ -38,6 +38,7 @@
 #include "rt.h"
 #include "xhw.h"
 #include "ultra/ultra.h"
+#include "xrom.h"
 
 #ifndef XRC_MMIO
 #define XRC_MMIO 1
@@ -45,6 +46,7 @@
 
 ULTRA(osAiSetNextBuffer);
 ULTRA(osAiGetLength);
+ULTRA(osAiGetStatus);
 ULTRA(osAiSetFrequency);
 ULTRA(osViSwapBuffer);
 ULTRA(__osSiRawStartDma);
@@ -106,6 +108,81 @@ void xrc_mmio_init(void) {
      * Snap; mem.c's shadow pages did it before the model) */
     R(0x04000000u) = 0xFFFFFFFFu, R(0x04001000u) = 6103;
     idle();
+}
+
+/* The cartridge through KSEG1 for recompiled code: a game that reads its
+ * ROM with plain loads at 0xB0000000 + offset (A Bug's Life and Toy Story 2,
+ * Traveller's Tales' engine; the PI bus answered them on the N64) faults at
+ * host P + 0xB0xxxxxx, where nothing is (and through KSEG0 at 0x90000000:
+ * Castlevania: Legacy of Darkness reads 0x90000866). The crash guard's fixup (tlb.c)
+ * comes here. A ROM held whole in RAM is mapped there whole, read only, on
+ * the first such fault (xhw_rom_cart_map: its image put in RDRAM's word
+ * order; A Bug's Life reads its data in place, megabytes of it). Otherwise
+ * (the page cache) a page of our own, filled from the ROM in RDRAM's word order,
+ * is aliased at the faulting page and the load runs again; CART_PAGES of
+ * them (1 MB) at most, kept for good (a page is never unmapped: a
+ * not-present PTE in our own tables that a game touches is a bugcheck 0xA,
+ * xhw_alias.c). Past the ROM's end the bus answers with the address (each
+ * word its low 16 bits, twice): those pages hold one of 16 patterns, so 16
+ * shared pages back any number of them (A Bug's Life reads 0xB0C00000 to
+ * 0xBC5Bxxxx of its 12 MB ROM). DIVERGES: a store to the ROM lands in the
+ * page (the bus dropped it). Kill switch: -DXRC_CART_WINDOW=0 (such a read
+ * is a crash, as before). */
+#ifndef XRC_CART_WINDOW
+#define XRC_CART_WINDOW 1
+#endif
+#define CART_PAGES 256
+static uint32_t* cart_fill(uint32_t va, uint32_t* mem, const uint8_t* src) {
+    unsigned i;
+    if (!mem && !(mem = (uint32_t*)xhw_alias_page(va))) return NULL;
+    for (i = 0; i < 1024; i++)   /* big-endian bytes to native words, as RDRAM holds them */
+        mem[i] = (uint32_t)src[4 * i] << 24 | (uint32_t)src[4 * i + 1] << 16 | (uint32_t)src[4 * i + 2] << 8 | src[4 * i + 3];
+    return mem;
+}
+int xrc_cart_fault(uint32_t host);
+int xrc_cart_fault(uint32_t host) {
+#if XRC_MMIO && XRC_CART_WINDOW
+    static uint32_t* s_bus[16];   /* the open-bus pages, by (offset >> 12) & 15 */
+    static unsigned s_pages, s_logged;
+    static volatile long s_busy;
+    static uint8_t s_buf[4096];
+    uint32_t v = host - (uint32_t)(uintptr_t)xrc_rdram, off = (v & 0x1FFFFFFFu) - 0x10000000u, va, i;
+    int ok = 0;
+    if (off >= 0x0FC00000u) return 0;
+    off &= ~0xFFFu;
+    va = host & ~0xFFFu;
+    while (__sync_lock_test_and_set(&s_busy, 1)) xhw_sleep_ms(0);
+    /* a resident ROM: the whole image there at once (xhw_rom.c), the page window below otherwise */
+    if (off < xhw_rom_size() && xhw_rom_cart_map((uint32_t)(uintptr_t)xrc_rdram + (v & 0xE0000000u) + 0x10000000u)) {
+        __sync_lock_release(&s_busy);
+        return 1;
+    }
+    if (off >= xhw_rom_size()) {
+        uint32_t** bus = &s_bus[(off >> 12) & 15];
+        if (*bus) {
+            ok = xhw_alias_map(va, (uint32_t)(uintptr_t)*bus & 0x7FFFFFFFu, 4096);
+        } else {
+            for (i = 0; i < 4096; i += 4) {
+                uint32_t w = (off + i) & 0xFFFFu;
+                s_buf[i] = (uint8_t)(w >> 8), s_buf[i + 1] = (uint8_t)w, s_buf[i + 2] = (uint8_t)(w >> 8), s_buf[i + 3] = (uint8_t)w;
+            }
+            ok = (*bus = cart_fill(va, NULL, s_buf)) != NULL;
+        }
+    } else if (s_pages < CART_PAGES && !xu_rom_read(off, s_buf, sizeof s_buf)) {
+        ok = cart_fill(va, NULL, s_buf) != NULL;
+        if (ok && (s_pages++ < 4 || !(s_pages & 63)))
+            xhw_logf("[MMIO] cartridge page %08x read through KSEG1: ROM %06x mapped there (%u)", (unsigned)(v & ~0xFFFu),
+                     (unsigned)off, s_pages);
+    } else if (s_pages >= CART_PAGES && !s_logged++) {
+        xhw_logf("[MMIO] cartridge window full (%u pages): a read of ROM %06x through KSEG1 faults", (unsigned)CART_PAGES,
+                 (unsigned)off);
+    }
+    __sync_lock_release(&s_busy);
+    return ok;
+#else
+    (void)host;
+    return 0;
+#endif
 }
 
 /* the VI thread, each retrace: the status words back for recompiled pollers */
@@ -197,7 +274,9 @@ uint32_t xrc_mmio_read(uint32_t vaddr) {
         return v;
     case 0x04400010u: return R(a) = vi_line();
     case 0x04500004u: return R(a) = call(osAiGetLength_recomp, 0, 0);
-    case 0x0450000Cu: return R(a) = call(osAiGetLength_recomp, 0, 0) ? 0x40000000u : 0;   /* AI_STATUS: busy */
+    case 0x0450000Cu:   /* AI_STATUS: busy, and full with a buffer queued (ultra/ai.c) */
+        v = call(osAiGetStatus_recomp, 0, 0);
+        return R(a) = v ? v : call(osAiGetLength_recomp, 0, 0) ? 0x40000000u : 0;
     }
     return R(a);
 }

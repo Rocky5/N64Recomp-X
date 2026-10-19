@@ -17,9 +17,14 @@ common behind osInitialize) the rule covers both shapes."""
 import os
 
 from .features import features
+from .mips import Ins
 
 # kill switch: N64RX_MESG_NODIV=0 keeps the queue rule to IDO's divide
 MESG_NODIV = os.environ.get('N64RX_MESG_NODIV', '1') != '0'
+# kill switch: N64RX_ULTRA_TWINS=0 names only the first of two copies a rule fits (Mario Tennis: osStartThread)
+TWINS = os.environ.get('N64RX_ULTRA_TWINS', '1') != '0'
+# kill switch: N64RX_KSEG_PROBE=0 names a tlbp function with the KSEG0 mask __osProbeTLB, as before
+KSEG_PROBE = os.environ.get('N64RX_KSEG_PROBE', '1') != '0'
 
 AI, PI, SI, SP, VI, MI, DP = 0x04500000, 0x04600000, 0x04800000, 0x04040000, 0x04400000, 0x04300000, 0x04100000
 
@@ -32,6 +37,7 @@ class Namer:
         self.name = {}      # addr -> name
         self.addr = {}      # name -> addr
         self.why = {}       # addr -> rule
+        self.twins = {}     # addr -> name: a second copy of a named function (romonly.py: <name>__2)
         self.callers = {}
         for a, ft in self.f.items():
             for c in ft.calls:
@@ -45,9 +51,14 @@ class Namer:
         self.changed = True
 
     def one(self, cands, name, why):
-        cands = [c for c in set(cands) if c not in self.name]
+        cands = [c for c in set(cands) if c not in self.name and c not in self.twins]
         if len(cands) == 1 and name not in self.addr:
             self.set(cands[0], name, why)
+
+    def twin(self, a, name, why):
+        """a fits the rule that named `name` at another address: the game's second copy of it"""
+        if TWINS and a not in self.name and a not in self.twins and self.addr.get(name, a) != a:
+            self.twins[a] = (name, why + ' (a second copy)')
 
     def has(self, name):
         return name in self.addr
@@ -77,6 +88,24 @@ class Namer:
 
     def arg_r(self, a, n, off):
         return any(k[0] == n and k[1] == off and 'r' in v for k, v in self.f[a].arg.items())
+
+
+def _kseg_mask(img, a, size):
+    """arg0's low 29 bits returned (`sll t, a0, 3; srl v0, t, 3`, or an `and`
+    with 0x1FFFFFFF): the KSEG0/KSEG1 path of osVirtualToPhysical"""
+    shl = set()
+    for pc in range(a, a + size, 4):
+        w = img.word(pc)
+        if w is None:
+            break
+        i = Ins(w, pc)
+        if i.op == 0 and i.funct == 0 and i.rt == 4 and i.sa == 3 and i.rd:
+            shl.add(i.rd)
+        elif i.op == 0 and i.funct == 2 and i.rt in shl and i.sa == 3 and i.rd == 2:
+            return True
+        elif i.op == 15 and i.imm == 0x1FFF:   # lui 0x1FFF (then ori 0xFFFF and an and)
+            return True
+    return False
 
 
 def _anchors(N):
@@ -111,12 +140,19 @@ def _anchors(N):
                 N.one([a], 'osWritebackDCacheAll', 'index writeback-invalidate over the whole D-cache')
             elif ft.cache == {1, 25}:
                 N.one([a], 'osWritebackDCache', 'hit writeback over a range (index over all when large)')
+            elif ft.cache == {5, 25} and not ft.args_used:   # Camelot's: each line's tag loaded, then hit writeback
+                N.one([a], 'osWritebackDCacheAll', 'index load tag and hit writeback over the whole D-cache')
+            elif ft.cache == {5, 25} or ft.cache == {25} and ft.args_used == {0, 1}:
+                N.one([a], 'osWritebackDCache', 'hit writeback over a range (tag loads over all when large)')
             elif 17 in ft.cache or 21 in ft.cache:
                 N.one([a], 'osInvalDCache', 'hit invalidate D-cache over a range')
             elif 16 in ft.cache:
                 N.one([a], 'osInvalICache', 'hit invalidate I-cache over a range')
         if 'tlbp' in ft.special and 'tlbwi' not in ft.special:
-            N.one([a], '__osProbeTLB', 'tlbp')
+            if KSEG_PROBE and _kseg_mask(N.img, a, sz):   # Camelot's: osVirtualToPhysical with the probe inside
+                N.one([a], 'osVirtualToPhysical', 'masks KSEG0/KSEG1 addresses to 29 bits, tlbp for the rest')
+            else:
+                N.one([a], '__osProbeTLB', 'tlbp')
         # the TLB writers: osMapTLB(index, pm, vaddr, even, odd, asid) takes
         # everything from its arguments, osUnmapTLB(index) only the index,
         # osUnmapTLBAll loops over every entry, osMapTLBRdb maps a fixed one
@@ -215,7 +251,10 @@ def _hardware(N):
             one([a], '__osSiDeviceBusy', 'reads SI_STATUS')
         if N.hw(a, VI) and sum(1 for k in ft.hw if k & 0xFFFF0000 == VI and 'w' in ft.hw[k]) >= 8:
             one([a], '__osViSwapContext', 'writes most VI registers')
-        if ft.leaf and N.only_hw(a, (PI, 0x10)) and N.arg_w(a, 1, 0):
+        # two arguments: Acclaim's loaders have a copy loop of the same shape with a third, the size
+        # (All-Star Baseball 2000: named this, it read one word of the game's code; N64RX_PIREAD_ARGS=0)
+        if ft.leaf and N.only_hw(a, (PI, 0x10)) and N.arg_w(a, 1, 0) and \
+                (2 not in ft.args_used or os.environ.get('N64RX_PIREAD_ARGS', '1') == '0'):
             one([a], 'osPiRawReadIo', 'polls PI_STATUS, stores the word to *arg1')
     for name, (c, why) in cands.items():
         N.one(sorted(c), name, why)
@@ -277,6 +316,8 @@ def _structure(N):
         if ft.args_used == {0} and N.arg_r(a, 0, 8) and N.arg_w(a, 0, 16) and eay and eay in ft.calls and \
                 sum(1 for c in ft.calls if c not in (di, ri, eay)) >= 2:
             N.one([a], 'osStartThread', 'reads the thread\'s queue (+8), sets its state (+16), dispatches')
+            # Mario Tennis links two: one with the `__osRunningThread == NULL` dispatch, one without
+            N.twin(a, 'osStartThread', 'reads the thread\'s queue (+8), sets its state (+16), dispatches')
     st = N.a_('osStartThread')
     # osDestroyThread(t): dequeues it and, when it is the running one, dispatches the next (the eret)
     disp = [a for a, ft in f.items() if 'eret' in ft.special and a not in N.name]

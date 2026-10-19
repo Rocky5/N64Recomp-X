@@ -67,6 +67,8 @@ unsigned xu_vi_rows(void) {
 #define XRC_PAL_50HZ 1
 #endif
 
+void xu_ai_tick(void);   /* ai.c */
+
 static void vi_thread(void* arg) {
     unsigned vbl = 0;
     (void)arg;
@@ -84,7 +86,12 @@ static void vi_thread(void* arg) {
         xrc_video_vi(s_retrace);   /* the video-mode prompt: A, or the timeout (../video.c) */
         xrc_gfx_vi(s_retrace);     /* a frame that waited too long for its swap (../gfx.c) */
 #ifdef XRC_PEEK
-        if (s_retrace % 30 == 0) {   /* diagnosis: -DXRC_PEEK=<N64 address>, 32 bytes twice a second */
+#ifndef XRC_PEEK_EVERY
+#define XRC_PEEK_EVERY 30   /* retraces between peeks; with 1, only when the first word changes */
+#endif
+        static uint32_t s_peek_last = 0xFFFFFFFFu;
+        if (s_retrace % XRC_PEEK_EVERY == 0 && (XRC_PEEK_EVERY > 1 || rd32((uint32_t)(XRC_PEEK)) != s_peek_last)) {   /* diagnosis: -DXRC_PEEK=<N64 address>, 32 bytes twice a second */
+            s_peek_last = rd32((uint32_t)(XRC_PEEK));
             uint32_t a = (uint32_t)(XRC_PEEK);
             xhw_logf("[PEEK] %08x: %08x %08x %08x %08x %08x %08x %08x %08x", (unsigned)a, (unsigned)rd32(a),
                      (unsigned)rd32(a + 4), (unsigned)rd32(a + 8), (unsigned)rd32(a + 12), (unsigned)rd32(a + 16),
@@ -102,7 +109,9 @@ static void vi_thread(void* arg) {
             if (!XRC_VI_RESERVE || valid + 1 + XRC_VI_RESERVE <= count) xu_send(mq, s_msg, 0, 0);
         }
         xu_post_event(OS_EVENT_VI);
+        xu_ai_tick();    /* the DAC's buffers end on their own: OS_EVENT_AI (ai.c) */
         xrc_mmio_vi();   /* the register pages' status words, for recompiled pollers (../mmio.c) */
+        xrc_guard_retrace();   /* versioned captured code checked again (../guard.c) */
         xhw_combo_vi_look(s_retrace);
         if (XHW_TEST_BUILD) {   /* no graphics task for a second: say once what everyone waits on */
             static unsigned s_seen, s_still;

@@ -37,6 +37,20 @@ TIERS = {
     ('NK4P', 0): (EXPERIMENTAL, 'Kirby 64 - The Crystal Shards (E)', (
         'Not run on a real Xbox yet; in the xemu emulator it plays its intro and tutorial.',
         'One HUD icon is garbled.')),
+    ('NM8E', 0): (EXPERIMENTAL, 'Mario Tennis (US)', (
+        'Not run on a real Xbox yet; in the xemu emulator it plays its intro, menus and a match.',
+        'Slow in matches while the build learns the game (more learning rounds, then a console test).')),
+    ('ND4E', 0): (EXPERIMENTAL, 'Castlevania - Legacy of Darkness (US)', (
+        'Not run on a real Xbox yet; in the xemu emulator it plays its intro, menus and the first stage.',)),
+    ('NBEE', 0): (EXPERIMENTAL, 'All-Star Baseball 2000 (US)', (
+        'Not run on a real Xbox yet; in the xemu emulator it plays its menus and a game.',)),
+    ('NASE', 0): (EXPERIMENTAL, 'All-Star Baseball 2001 (US)', (
+        'Not run on a real Xbox yet; in the xemu emulator it plays its menus and a game.',)),
+    ('NBSE', 0): (EXPERIMENTAL, "All-Star Baseball '99 (US)", (
+        'Not run on a real Xbox yet; in the xemu emulator it plays its menus and a game.',)),
+    ('NCYE', 0): (EXPERIMENTAL, "South Park: Chef's Luv Shack (US)", (
+        'Not run on a real Xbox yet; in the xemu emulator it reaches its player select and menus.',
+        'Its logo draws wrong: the background and letters of the title.')),
 }
 
 MEANING = {

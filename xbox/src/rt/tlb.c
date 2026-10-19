@@ -84,7 +84,10 @@ static void alias(Ent* e, unsigned idx) {
         if (ok) e->host[k] = host, e->bytes[k] = sz;
         if (XRC_TLB && host && va < 0x80000000u) xrc_learn_kuseg(va, ok);
         if (va >= 0xC0000000u) xrc_learn_kuseg(va, 0);         /* n64rx: XRC_HIGH_TLB on the next build */
-        if (s_logged < 24) {
+#ifndef XRC_TLB_LOG
+#define XRC_TLB_LOG 24   /* diagnosis: how many mappings are logged */
+#endif
+        if (s_logged < XRC_TLB_LOG) {
             s_logged++;
             xhw_logf("[TLB] %u: %08x-%08x -> %08x%s", idx, (unsigned)va, (unsigned)(va + sz - 1), (unsigned)pa,
                      ok ? "" : va >= 0xC0000000u ? (XRC_HIGH_TLB ? " (KSEG2/3: translated, XRC_HIGH_TLB)"
@@ -99,6 +102,14 @@ static int s_any_valid;
 
 void xrc_tlb_write(unsigned idx, uint32_t mask, uint32_t hi, uint32_t lo0, uint32_t lo1) {
     Ent* e = &s_ent[idx & (NENT - 1)];
+    uint32_t span = e->mask + 0x2000u, va = e->hi & ~(span - 1);
+    if (XHW_TEST_BUILD) {   /* diagnosis: how often a game rewrites its TLB (each one remaps host pages) */
+        static unsigned s_writes;
+        s_writes++;
+        if (s_writes >= 64 && (s_writes & (s_writes - 1)) == 0)
+            xhw_logf("[TLB] %u entries written (index %u: %08x)", s_writes, idx, (unsigned)hi);
+    }
+    if ((e->lo[0] | e->lo[1]) & LO_V) xrc_guard_kuseg_range(va, va + span);   /* what it mapped before */
     unalias(e);
     e->mask = mask & 0x01FFE000u;
     e->hi = hi;
@@ -106,6 +117,8 @@ void xrc_tlb_write(unsigned idx, uint32_t mask, uint32_t hi, uint32_t lo0, uint3
     e->lo[1] = lo1;
     alias(e, idx & (NENT - 1));
     if ((lo0 | lo1) & LO_V) s_any_valid = 1;   /* xrc_tlb_to_phys looks only once anything was mapped */
+    span = e->mask + 0x2000u, va = e->hi & ~(span - 1);
+    xrc_guard_kuseg_range(va, va + span);   /* code captured at a mapped address checked again (guard.c) */
 }
 
 void xrc_tlb_read(unsigned idx, uint32_t* mask, uint32_t* hi, uint32_t* lo0, uint32_t* lo1) {
@@ -155,6 +168,7 @@ uint32_t xrc_tlb_to_phys(uint32_t vaddr) {
 #define XRC_TLB_MISS 1
 #endif
 int xrc_interp_refill(uint32_t vaddr, int store);   /* interp.c */
+int xrc_cart_fault(uint32_t host);                  /* mmio.c */
 int xu_fault_wait(uint32_t vaddr, int store);       /* ultra/thread.c */
 
 /* the entry that maps vaddr, valid, and aliased on the host: 1 */
@@ -232,6 +246,8 @@ uint32_t xrc_high_addr(uint32_t a) {
 
 static int fixup(uint32_t host, int write) {
     uint32_t v = host - (uint32_t)(uintptr_t)xrc_rdram;
+    if ((v >= 0xB0000000u && v < 0xBFC00000u) || (v >= 0x90000000u && v < 0x9FC00000u))
+        return xrc_cart_fault(host);   /* the ROM through KSEG1 or KSEG0 (mmio.c) */
     if (v >= 0xA0000000u && v < 0xC0000000u) return xrc_kseg1_heal(host);   /* a lost alias page (mem.c) */
     if (v >= 0x80000000u) return 0;   /* KSEG0 is always there: a real crash */
     if (!(XRC_TLB && XRC_TLB_MISS)) return 0;

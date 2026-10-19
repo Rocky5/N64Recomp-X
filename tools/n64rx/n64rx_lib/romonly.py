@@ -51,15 +51,22 @@ def make(rom, bdir, base=None, learnt=None):
     ids, _N = libultra.identify(a.img, {k: f for k, f in a.all_funcs().items() if k < 1 << 32})
     ids.pop(a.entry, None)   # the entry code is the game's own, whatever it looks like (South Park's clears the TLB)
     ids.pop(a.main, None)    # and so is main (Conker's and GoldenEye's set up the TLB, osMapTLBRdb's shape)
+    ovl_keys, reloc_hooks = _reloc_overlays(a, learnt)   # overlays the game relocates itself (analyze/zovl.py)
     lists = emit.recomp_lists(ROOT)
     replaced = lists['reimplemented_funcs'] | lists['ignored_funcs']
     # code captured from RDRAM (learn.py) carries the game's own libultra, a second copy beside the boot
     # loader's (Rare's games): named on its own, a name the loader's copy has becomes <name>__2, left out of
     # the recompile and given a body that calls the runtime's (gen/xrc_alias.c, pipeline.py)
     aliases = {}
+    # a second copy a rule fits beside the one it named (Mario Tennis's two osStartThreads): <name>__2 too
+    have = _runtime_ultra()
+    for k, (n, why) in sorted(_N.twins.items()):
+        if k not in ids and k not in (a.entry, a.main) and n in have and f'{n}__2' not in aliases:
+            ids[k] = (f'{n}__2', why)
+            aliases[f'{n}__2'] = n
+    replaced = replaced | set(aliases)
     code_keys = {k for seg in a.img.segments if seg.name.startswith(('code_', 'tlb_')) for k in a.funcs.get(seg.name, {})}
     if code_keys:
-        have = _runtime_ultra()
         ids2, _N2 = libultra.identify(a.img, {k: f for k, f in a.all_funcs().items() if k in code_keys})
         taken = {n for n, _w in ids.values()}
         for k, (n, why) in ids2.items():
@@ -83,7 +90,7 @@ def make(rom, bdir, base=None, learnt=None):
                 aliases[name] = 'xrc_' + name[4:]
         replaced = replaced | set(aliases)
     nm = emit.names(a, ids)
-    live = emit.reachable(a, nm, replaced)
+    live = emit.reachable(a, nm, replaced, ovl_keys)   # (overlays: through the pointers in their own data, relocated)
     pdir = pathlib.Path(bdir) / 'pack'
     pdir.mkdir(parents=True, exist_ok=True)
     if learnt:
@@ -100,6 +107,15 @@ def make(rom, bdir, base=None, learnt=None):
     # register other than ra, a jump through a register with no table): the
     # runtime's interpreter runs it (xbox/src/rt/interp.c)
     interp = {x: nm[x] for x, f in a.all_funcs().items() if x in live and x != a.entry and f.bad.startswith('jr $')}
+    # code captured from RDRAM a page at a time, with pages between not captured (Mario Tennis's KUSEG
+    # 0x50000000, 0x50002000, 0x50005000): a function whose walk runs out of its segment was recompiled
+    # cut short and returned mid-way; the interpreter reads on in RDRAM. N64RX_RUNOUT_INTERP=0: as before
+    if os.environ.get('N64RX_RUNOUT_INTERP', '1') != '0':
+        cap = {k for seg in a.img.segments if seg.name.startswith('code_')
+               for k in (a.key(seg, x) for x in a.funcs.get(seg.name, {}))}
+        interp.update({x: nm[x] for x, f in a.all_funcs().items()
+                       if x in live and x in cap and x != a.entry and f.bad.startswith('runs out of the segment')
+                       and nm[x] not in replaced and nm[x] not in ignored})   # (a replaced one has the runtime's body)
     # code that reaches the RCP's registers through KSEG1: interpreted, onto
     # the runtime's register model (N64RX_MMIO_INTERP=0: recompiled, as before)
     if os.environ.get('N64RX_MMIO_INTERP', '1') != '0':
@@ -128,7 +144,16 @@ def make(rom, bdir, base=None, learnt=None):
         # the blocks from the code to the table (learn.c xrc_learn_want), for the next --learn round
         (pdir / 'hazards.txt').write_text(''.join(f'{n} 0x{x & 0xFFFFFFFF:08X} {why}\n' for x, (n, why, _w) in sorted(hz.items())),
                                           encoding='utf-8')   # every one, with why (the notes show six)
-        (pdir / 'want.txt').write_text(''.join(f'{n} 0x{w[0]:08X} 0x{w[1]:08X}\n' for n, _why, w in hz.values() if w),
+        wants = [(n, w) for n, _why, w in hz.values() if w]
+        # captured code with a jr whose table's bytes no capture holds (funcs.py table_want): interpreted
+        # above; the table's page and the next, for the next round to resolve it
+        for seg in a.img.segments:
+            if seg.name.startswith('code_'):
+                for x, f in a.funcs.get(seg.name, {}).items():
+                    t = getattr(f, 'table_want', 0)
+                    if t and x in interp and x in live and (0x10000 <= t < 0x80000000 or 0x80000000 <= t < 0x80800000):
+                        wants.append((interp[x], (t & ~0xFFF, (t & ~0xFFF) + 0x2000)))
+        (pdir / 'want.txt').write_text(''.join(f'{n} 0x{w[0]:08X} 0x{w[1]:08X}\n' for n, w in dict(wants).items()),
                                        encoding='utf-8')
     # code that reads $ra as a value (Jet Force Gemini's call-site resolver): each jal to it in
     # recompiled code sets ctx->r31 first (an N64Recomp hook), and an interpreted one starts with that ra
@@ -156,6 +181,10 @@ def make(rom, bdir, base=None, learnt=None):
     for func, site, ret in hooks:
         cfg += ['[[patches.hook]]', f'func = "{func}"', f'before_vram = 0x{site:08X}',
                 f'text = "ctx->r31 = (gpr)(int32_t)0x{ret:08X}u;"', '']
+    for x in reloc_hooks:   # the game's relocation routine: the runtime maps the overlay where it lands (ovl.c)
+        if x in nm and nm[x] not in ignored:
+            cfg += ['[[patches.hook]]', f'func = "{nm[x]}"', f'before_vram = 0x{x:08X}',
+                    'text = "xrc_ovl_relocate((uint32_t)ctx->r4, (uint32_t)ctx->r5, (uint32_t)ctx->r6);"', '']
     (pdir / 'recomp.toml').write_text('\n'.join(cfg), encoding='utf-8', newline='\n')
     (pathlib.Path(bdir) / 'analysis.txt').write_text(emit.report(a, ids, live, nm, replaced), encoding='utf-8')
     uses_eep = any(n in ('osEepromProbe', 'osEepromRead', 'osEepromLongRead') for n, _w in ids.values())
@@ -178,6 +207,26 @@ def _wants_8mb(a):
     0x0080): it needs or uses the Expansion Pak (Donkey Kong 64 shows its
     "Expansion Pak" screen on 4 MB). Every function the analysis found."""
     from .analyze.mips import Ins, words
+    # the entry's stack, set by lui/ori sp, with the arguments it passes at sp + 0x10, past 4 MB: Acclaim's
+    # boot loaders (All-Star Baseball, South Park, Jeremy McGrath...) put sp at 0x803FFFF0 and their
+    # osMapTLB's fifth argument at 0x80400000; on 4 MB the runtime read it from past RDRAM's end and
+    # mapped the game's code at 0x00100000 onto garbage. N64RX_STACK_8MB=0: as before
+    if os.environ.get('N64RX_STACK_8MB', '1') != '0':
+        seg = next((s for s in a.img.segments if s.has(a.entry)), None)
+        if seg is not None:
+            sp = None
+            for w in words(a.img.rom, seg.rom + (a.entry - seg.vram), 48):
+                ins = Ins(w, 0)
+                if ins.op == 15 and ins.rt == 29:
+                    sp = ins.imm << 16
+                elif ins.op == 13 and ins.rt == 29 and ins.rs == 29 and sp is not None:
+                    sp |= ins.imm
+                elif ins.op == 9 and ins.rt == 29 and ins.rs == 29 and sp is not None:
+                    sp = (sp + ins.simm) & 0xFFFFFFFF
+                elif ins.op == 43 and ins.rs == 29 and sp is not None and 0x80000000 <= sp < 0x80800000 and                         ((sp + ins.simm) & 0x1FFFFFFF) >= 0x400000:   # sw through sp past 4 MB
+                    return True
+                elif ins.op in (2, 3) or (ins.op == 0 and ins.funct in (8, 9)):   # the first call or jump ends it
+                    break
     for seg in a.img.segments:
         for f in a.funcs.get(seg.name, {}).values():
             ws = words(a.img.rom, seg.rom + (f.start - seg.vram), (f.end - f.start) // 4)
@@ -190,6 +239,48 @@ def _wants_8mb(a):
                         any(n.op == 15 and n.imm == 0x0080 for n in near):
                     return True
     return False
+
+
+def _reloc_overlays(a, learnt):
+    """the overlays the game relocates itself (analyze/zovl.py) as relocatable segments of the
+    analysis, each at its link address with its text's relocations; returns (their function keys,
+    the game's relocation routine(s) to hook). The routine is found by what it does: three arguments,
+    a loop over 32-bit entries that masks 0x3F000000 and tells R_MIPS_32/26/HI16/LO16 apart by
+    0x02/0x04/0x05/0x06 << 24, and skips an address with 0x0F000000 set (a segment address).
+    Without the routine nothing is added: the overlays stay the safety net's, as before.
+    Which overlays: the ones a learning run saw the game relocate (`reloc` lines; the hook is there
+    from the first build so the console reports them); all 468 of Ocarina of Time doubled its image
+    (9 MB -> 17 MB of a 64 MB console). N64RX_RELOC_OVL=all: every one; 0: none, no hook."""
+    from .analyze import zovl, funcs as F
+    from .analyze.features import features
+    if not zovl.ENABLE:
+        return set(), []
+    ranges = [(s.rom, s.rom + s.size) for s in a.img.segments if not s.name.startswith(('code_', 'tlb_'))]
+    ovls = zovl.find(a.img.rom, ranges)
+    if not ovls:
+        return set(), []
+    want = {0x0F000000, 0x02000000, 0x04000000, 0x05000000, 0x06000000}
+    hooks = [x for x, f in a.all_funcs().items() if x < 1 << 32 and want <= features(a.img, f).consts]
+    if not hooks:
+        a.notes.append(f'{len(ovls)} overlays the game relocates itself, but no relocation routine found: left to the '
+                       'safety net')
+        return set(), []
+    seen = learnt.reloc if learnt else set()
+    take = ovls if os.environ.get('N64RX_RELOC_OVL') == 'all' else [o for o in ovls if o.vram in seen]
+    keys = set()
+    nfuncs = 0
+    for o in take:
+        seg = F.Segment(f'ovl_{o.vram:08X}', o.vrom, o.vram, o.text + o.data + o.rodata, o.vram + o.text)
+        seg.relocs = o.code_relocs
+        a.img.segments.append(seg)
+        roots = sorted({o.vram} | set(o.pointers) | {t for _v, t, ty in o.code_relocs if ty == 'R_MIPS_26' and t < o.vram + o.text})
+        a.funcs[seg.name] = F.discover(a.img, seg, roots)
+        keys |= set(a.funcs[seg.name])
+        nfuncs += len(a.funcs[seg.name])
+    a.notes.append(f'{len(ovls)} overlays the game relocates itself (its loader at {", ".join(f"{x:08X}" for x in hooks)}); '
+                   f'{len(take)} a learning run saw loaded: {nfuncs} functions, relocatable sections at their link '
+                   f'addresses (N64RX_RELOC_OVL=all: every one; 0: the safety net runs them)')
+    return keys, hooks
 
 
 def _setjmp_longjmp(a):

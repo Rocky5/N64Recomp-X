@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from .analyze import funcs as F
 
 RDRAM8 = re.compile(r'^(?:.*\[LEARN\]\s+)?rdram\s+8\s*$')
+KUSEG_MULTI = re.compile(r'^(?:.*\[LEARN\]\s+)?kuseg_versions\s+([0-9A-Fa-f]+)\s*$')
+RELOC = re.compile(r'^(?:.*\[LEARN\]\s+)?reloc\s+([0-9A-Fa-f]+)(?:\s+([0-9A-Fa-f]+)\s+([0-9A-Fa-f]+))?\s*$')   # an overlay the game relocated (zovl.py): its link vram, where, how long
 LINE = re.compile(r'^(?:.*\[LEARN\]\s+)?(func|dma|kuseg)\s+([0-9A-Fa-fx]+)\s+([0-9A-Fa-fx]+)(?:\s+(?:from\s+)?([0-9A-Fa-fx]+))?\s*$')
 
 
@@ -34,9 +36,22 @@ class Learnt:
     kuseg: dict = field(default_factory=dict)   # 1 MB KUSEG regions the TLB mapped -> 1 if the host could not alias one
     rdram_mb: int = 0   # 8: the TLB mapped physical memory past 4 MB (the Expansion Pak's; rt/tlb.c)
     high: set = field(default_factory=set)      # 1 MB KSEG2/3 regions the TLB mapped (the host never can: XRC_HIGH_TLB)
+    alts: dict = field(default_factory=dict)    # page vram -> other code seen there, most often first (_choose)
+    seen: dict = field(default_factory=dict)    # page vram -> {bytes: [times, first, page record]}
+    kuseg_multi: set = field(default_factory=set)   # TLB-mapped pages that held other code at other times
+    reloc: set = field(default_factory=set)         # link addresses of overlays the game relocated (zovl.py)
+    reloc_at: set = field(default_factory=set)      # (ram, length) where it relocated them
 
     def __bool__(self):
-        return bool(self.funcs or self.dmas or self.code or self.kuseg or self.high or self.rdram_mb)
+        return bool(self.funcs or self.dmas or self.code or self.kuseg or self.high or self.rdram_mb or self.reloc)
+
+
+# kill switches: N64RX_LEARN_MAJORITY=0 keeps the first capture of a page (as before); N64RX_CODE_VERSIONS=0
+# keeps one version of captured code where the game loads several at one address (Mario Tennis's scenes)
+MAJORITY = os.environ.get('N64RX_LEARN_MAJORITY', '1') != '0'
+VERSIONS = os.environ.get('N64RX_CODE_VERSIONS', '1') != '0'
+ALT_MIN = 256    # words of 1024 a page's other version differs in to count as other code (not data beside it)
+ALT_MAX = 3      # versions kept beside the chosen one
 
 
 def _code_records(data, out):
@@ -47,8 +62,34 @@ def _code_records(data, out):
         n = int.from_bytes(data[i + 4:i + 8], 'big')
         if not n or i + 8 + n > len(data):
             break
-        out.code.setdefault(v, bytes(data[i + 8:i + 8 + n]))
+        b = bytes(data[i + 8:i + 8 + n])
+        if MAJORITY and not (v & 0xFFF) and not (n & 0xFFF):   # pages: every version counted (_choose)
+            for off in range(0, n, 0x1000):
+                e = out.seen.setdefault(v + off, {}).setdefault(b[off:off + 0x1000], [0, len(out.seen), n == 0x1000])
+                e[0] += 1
+        else:
+            out.code.setdefault(v, b)
         i += 8 + n
+
+
+def _choose(out):
+    """each captured page's bytes: a page record over a block's (a page is saved when code in it first runs,
+    a block could hold parts not loaded yet), then the version seen most often, then the first seen (one
+    round can catch a page mid-load: Mario Tennis's 0x80042000 in round 1 against six later rounds). The
+    other page versions that differ in ALT_MIN words or more are kept (alts): the game loads other code
+    there at other times"""
+    for v, vs in out.seen.items():
+        order = sorted(vs.items(), key=lambda kv: (-kv[1][2], -kv[1][0], kv[1][1]))
+        best = order[0][0]
+        out.code[v] = best
+        alt = []
+        for b, (_n, _first, page) in order[1:]:
+            if not page or len(alt) >= ALT_MAX:
+                continue
+            if sum(1 for k in range(0, 0x1000, 4) if b[k:k + 4] != best[k:k + 4]) >= ALT_MIN and                     all(sum(1 for k in range(0, 0x1000, 4) if b[k:k + 4] != c[k:k + 4]) >= ALT_MIN for c in alt):
+                alt.append(b)
+        if alt and VERSIONS:
+            out.alts[v] = alt
 
 
 def _code_from_log(text, out):
@@ -81,6 +122,16 @@ def read(paths):
         text = p.read_text(encoding='utf-8', errors='replace')
         _code_from_log(text, out)
         for line in text.splitlines():
+            m = KUSEG_MULTI.match(line.strip())
+            if m:
+                out.kuseg_multi.add(int(m.group(1), 16) & ~0xFFF)
+                continue
+            m = RELOC.match(line.strip())
+            if m:
+                out.reloc.add(int(m.group(1), 16))
+                if m.group(2):
+                    out.reloc_at.add((int(m.group(2), 16), int(m.group(3), 16)))
+                continue
             if RDRAM8.match(line.strip()):
                 out.rdram_mb = 8
                 continue
@@ -99,7 +150,33 @@ def read(paths):
                 d = (x, (y & 0x1FFFFFFF) | 0x80000000, int(z, 16))
                 if d not in out.dmas:
                     out.dmas.append(d)
+    _choose(out)
+    _drop_kuseg_multi(out)
     return out
+
+
+# kill switch: N64RX_KUSEG_MULTI=0 keeps a TLB-mapped page that held other code at other times
+KUSEG_MULTI_DROP = os.environ.get('N64RX_KUSEG_MULTI', '1') != '0'
+
+
+def _drop_kuseg_multi(out):
+    """a page the game maps through its TLB that held other code at other times (the console said so, or
+    two captures differ: Castlevania: Legacy of Darkness pages each actor's code in at 0x0F000000) is left to
+    the safety net, its functions too: one actor's bytes recompiled ran for every actor there (a call through
+    a NULL pointer). ROM-backed pages are found from the ROM (_rom_backed) and are not captures"""
+    if not KUSEG_MULTI_DROP:
+        return
+    # a page that differs in a quarter of its words or more (alts): the console's own flag alone also
+    # fires on a page whose data changes beside its code (Acclaim's 0x00100000 is RDRAM 0, the vectors)
+    multi = {p for p in out.alts if p < 0x80000000}
+    if not multi:
+        return
+    regions = {p & ~0xFFFFF for p in multi}   # the whole 1 MB region: an overlay spans several pages
+    for p in [p for p in out.code if p < 0x80000000 and (p & ~0xFFFFF) in regions]:
+        out.code.pop(p, None)
+        out.alts.pop(p, None)
+    for x in [x for x in out.funcs if x < 0x80000000 and (x & ~0xFFFFF) in regions]:
+        del out.funcs[x]
 
 
 def write(learnt, path):
@@ -127,9 +204,10 @@ def apply(a, learnt, rom_len):
     segment. Returns the notes for the report."""
     notes = []
     todo = {}
-    runs = _code_runs(learnt.code)
+    runs = _code_runs(_without_relocated(learnt, notes))
     runs = _rom_backed(a, runs, rom_len, notes)
     _table_sources(a, runs, notes)   # before the walks: they read jump tables there
+    runs, spans = _version_spans(runs, learnt.alts)
     for x in sorted(learnt.funcs):
         d = next((d for d in reversed(learnt.dmas) if d[1] <= x < d[1] + d[2]), None)
         # where overlays share the address, the one the newest DMA put there
@@ -168,12 +246,73 @@ def apply(a, learnt, rom_len):
             continue
         captured = name.startswith('code_')   # one overlay's bytes: calls into it are weak (funcs.discover)
         roots = [x for x, f in have.items() if f.how != 'gap' and (f.how == 'entry' or not captured)] + new
-        a.funcs[name] = F.discover(a.img, seg, roots, weak_calls=captured)
+        # a start learnt where the game loads other code at other times (Mario Tennis's scenes) may be
+        # another version's: a root only where these bytes look like one starts, else weak
+        weak = [x for x in new if not _plausible(a.img.rom, seg.rom + x - seg.vram)] if captured and STARTS else []
+        a.funcs[name] = F.discover(a.img, seg, roots, weak=weak, weak_calls=captured)
         notes.append(f'{name}: {len(new)} learnt functions ({", ".join(f"{x:08X}" for x in new[:8])}'
                      f'{"..." if len(new) > 8 else ""}), {len(a.funcs[name])} functions now')
+    _versions(a, learnt, runs, spans, notes)
     _cross_roots(a, notes)
     a.notes += notes
     return notes
+
+
+# kill switch: N64RX_LEARN_STARTS=0 makes every learnt start in captured code a root (as before)
+STARTS = os.environ.get('N64RX_LEARN_STARTS', '1') != '0'
+
+
+def _plausible(data, off):
+    """whether a function can start at `off` of these bytes: a frame opened there (addiu sp, sp, -n), or the
+    code before it ends one (jr ra or a j with its delay slot, then any padding)"""
+    def w(o):
+        return int.from_bytes(data[o:o + 4], 'big') if 0 <= o and o + 4 <= len(data) else None
+    x = w(off)
+    if not x:
+        return False
+    if x >> 16 == 0x27BD and x & 0x8000:
+        return True
+    o = off - 4
+    while o >= 0 and w(o) == 0:   # padding, or the nop in the delay slot
+        o -= 4
+    if o < 0:
+        return True
+    return any(y is not None and (y == 0x03E00008 or y >> 26 == 2) for y in (w(o), w(o - 4)))
+
+
+def _version_spans(runs, alts):
+    """the runs holding pages with other code at other times (alts): each becomes overlays (_versions),
+    whole, so no function is cut at a span's edge; runs without such pages (a game's libultra) keep plain
+    keys and names"""
+    spans = [(blk, blk + len(data)) for blk, data in sorted(runs.items())
+             if any(p in alts for p in range(blk, blk + len(data), 0x1000))]
+    return runs, spans
+
+
+def _versions(a, learnt, runs, spans, notes):
+    """each other version of a span's code its own segment at the same vram (an overlay, keyed by the ROM
+    offset it is appended at, as Pokemon Snap's levels are): pages with no other version keep the chosen
+    bytes. Found from the chosen version's starts and the learnt functions there, all weak (another
+    version's starts). The runtime's guard runs the version whose bytes RDRAM holds (rt/guard.c)"""
+    for lo, hi in spans:
+        seg0 = next((s for s in a.img.segments if s.name == f'code_{lo:08X}'), None)
+        if seg0 is None:
+            continue
+        base = runs[lo]
+        cands = sorted(set(a.funcs.get(seg0.name, {})) | {x for x in learnt.funcs if lo <= x < hi})
+        for j in range(1, ALT_MAX + 1):
+            data = b''.join(learnt.alts[p][j - 1] if len(learnt.alts.get(p, ())) >= j else base[p - lo:p - lo + 0x1000]
+                            for p in range(lo, hi, 0x1000))
+            if data == base:
+                break
+            off = (len(a.img.rom) + 0xF) & ~0xF
+            a.img.rom = bytes(a.img.rom) + bytes(off - len(a.img.rom)) + data
+            seg = F.Segment(f'code_{lo:08X}_v{j}', off, lo, len(data))
+            a.img.segments.append(seg)
+            roots = [x for x in cands if _plausible(data, x - lo)]   # this version's starts, not another's
+            a.funcs[seg.name] = F.discover(a.img, seg, roots, weak=roots, weak_calls=True)
+            notes.append(f'{seg.name}: another version of the code at {lo:08X} ({len(data):#x} bytes, captured at other '
+                         f'times: the game loads other code there), {len(a.funcs[seg.name])} functions, at {off:#x}')
 
 
 def _rom_backed(a, runs, rom_len, notes):
@@ -279,6 +418,37 @@ def _table_sources(a, runs, notes):
         a.img.table_sources = a.table_sources
 
 
+def _without_relocated(learnt, notes):
+    """the captured code less the pages wholly inside a place the game relocated an overlay to
+    (`reloc` lines): that was the overlay's code, which the build now recompiles from the ROM as a
+    relocatable section (analyze/zovl.py); kept, it was a second copy at one address, and Ocarina of
+    Time's image the bigger for it. N64RX_RELOC_CAPTURES=1 keeps them"""
+    if not learnt.reloc_at or os.environ.get('N64RX_RELOC_CAPTURES', '0') == '1':
+        return learnt.code
+    spans = sorted(learnt.reloc_at)
+    out, dropped = {}, 0
+    for v, b in learnt.code.items():
+        keep = bytearray()
+        start = None
+        for off in range(0, len(b), 0x1000):
+            p = (v + off) & 0x1FFFFFFF
+            inside = any(r & 0x1FFFFFFF <= p and p + 0x1000 <= (r & 0x1FFFFFFF) + n for r, n in spans) and v >= 0x80000000
+            if inside:
+                dropped += 1
+                if start is not None:
+                    out[start] = bytes(keep)
+                    keep, start = bytearray(), None
+                continue
+            if start is None:
+                start = v + off
+            keep += b[off:off + 0x1000]
+        if start is not None and keep:
+            out[start] = bytes(keep)
+    if dropped:
+        notes.append(f'{dropped} captured pages left out: where the game relocated an overlay this build recompiles')
+    return out
+
+
 def _code_runs(code):
     """captured blocks that follow each other in RDRAM, joined: one segment
     each, so a function crossing a page boundary is whole. Records overlap
@@ -351,9 +521,11 @@ def extend_live(a, live, starts, nm, replaced):
     todo = [k for x in starts for k in bv.get(x, ())]   # an overlay address: each overlay's function
     # code captured from RDRAM is the game's own, reached mostly through pointers the analysis
     # cannot follow: every function found in it is live
+    ovl = a.overlays()
     for seg in a.img.segments:
         if seg.name.startswith(('code_', 'tlb_')):   # tlb_: the same code, found in the ROM (_rom_backed)
-            todo += [k for k in a.funcs.get(seg.name, {}) if k in funcs]
+            # keyed as all_funcs keys them (an overlay's with its ROM offset: the versions, _versions)
+            todo += [a.key(seg, k, ovl) for k in a.funcs.get(seg.name, {}) if a.key(seg, k, ovl) in funcs]
     before = len(live)
     while todo:
         x = todo.pop()

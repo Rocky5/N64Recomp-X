@@ -111,7 +111,15 @@ machine and stays in their build folder.
    function interpreted because its jump table is in RDRAM no capture holds
    asks for it: its interpreter stub calls `xrc_learn_want` the first time
    it runs (`want.txt`), and the console saves the blocks from the code to
-   the table. The register width is decided on what N64Recomp reads (the
+   the table. Code captured at KUSEG asks the same way for a table in a
+   KUSEG page (its page and the next: the patched recompiler reads a table
+   from another segment), for a jr's table whose bytes no segment holds,
+   and for the page of a callee no capture holds yet (All-Star Baseball
+   2000's game, linked at 0x00100000: its audio synthesis ran interpreted
+   until its tables came; `N64RX_KUSEG_WANT`, `N64RX_KUSEG_TABLES`). Its
+   globals are read in the same 16 MB as the code, so libultra's getters
+   and `__osRunningThread` are found there too (`N64RX_KUSEG_GLOBALS`).
+   The register width is decided on what N64Recomp reads (the
    ROM plus the captured code): Banjo-Kazooie's `bkmemcpy64` copies with
    `ld`/`sd`, and on 32-bit registers every `bk_realloc` lost half of each
    doubleword (the heap block found reused under its spawnable-actor list).
@@ -139,6 +147,26 @@ machine and stays in their build folder.
    `guard.c`). Call targets inside captured code are weak starts: other
    code jals into whichever overlay is loaded there at the time
    (`funcs.discover weak_calls`).
+
+5. **Several versions at one address** (Camelot's Mario Tennis, 2026-10-19;
+   `docs/decisions.md` "Mario Tennis from its ROM alone"): a game that
+   inflates each scene's code to the same RAM (Mario Tennis: 0x800E2000 to
+   0x8012A000 holds the intro, the menus, the match) was captured a page at
+   a time in different scenes. Every capture of a page is counted
+   (`learn._choose`): the bytes seen most often win (a page record over a
+   64 KB block's), and other versions that differ in a quarter of their
+   words or more are kept; a run of pages with such versions becomes one
+   overlay per version at that vram (`code_<vram>_v<n>`, appended to the
+   learnt ROM, keyed by that offset like Pokémon Snap's levels). A learnt
+   start is a root in a version only where its bytes look like a start
+   (`_plausible`: a frame opened, or `jr ra` / `j` and its delay slot just
+   before). The runtime's guard runs the version RDRAM holds (`guard.c`),
+   checks versioned entries again each retrace, and checks captured code at
+   TLB-mapped addresses again after every TLB write. Captured functions that
+   run out of their segment (KUSEG pages captured with gaps) and callers of
+   a static N64Recomp made inside captured code are interpreted. Mario
+   Tennis (xemu, the ROM alone + 24 learning rounds, rounds 19 on with
+   input): intro, title, main menu, play mode, character select, a match.
 
 `N64RX_WITHHOLD=<vram>,...` (a test switch) takes functions out of the
 analysis as if it had missed them; a function the learn file names is never
@@ -170,6 +198,18 @@ Interpreted code reaches the runtime's libultra by address:
 `gen/xrc_interp.c` carries `xrc_ultra_table` (each `ULTRA(name)` of
 `xbox/src/rt` at the address the symbol file gives that name), entered in
 the function table before the recompiled sections.
+
+6. **Overlays the game relocates itself** (the Zelda engine, 2026-10-19;
+   `analyze/zovl.py`): a file of the inflated image's DMA table that ends
+   in a relocation section (text, data, rodata and bss sizes, then
+   R_MIPS_32/26/HI16/LO16 entries), linked at the address the game's own
+   overlay tables pair with its vrom range, becomes a relocatable section
+   at that address with its text's relocations; the game's relocation
+   routine (found by its constants) is hooked and the runtime maps the
+   section wherever it is loaded (`ovl.c xrc_ovl_relocate`). The console
+   logs `reloc <vram>` for each overlay a run relocated and the next build
+   recompiles those (`N64RX_RELOC_OVL=all`: every one). Ocarina of Time:
+   468 overlays, all link addresses as the decomp's; Majora's Mask: 612.
 
 ## How well it does (checked against decomps)
 

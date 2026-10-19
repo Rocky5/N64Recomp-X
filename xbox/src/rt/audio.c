@@ -81,7 +81,41 @@ static void audio_up(void) {
     xhw_logf("[AUDIO] output %s at %u Hz", s_on ? "on" : "OFF (silent)", (unsigned)s_rate);
 }
 
+/* A game may run more than one audio microcode (Castlevania: Legacy of
+ * Darkness: its lists for another one, read as aspMain's, saved buffers to
+ * RDRAM 0x280 and wrote over its own code at 0x80000400). Each task's
+ * microcode data is looked up here; a new one is identified as the first
+ * was, up to four kept (ABI and resampler table each). -DXRC_AUDIO_MULTI_UC=0:
+ * the first task's microcode for every task, as before */
+#ifndef XRC_AUDIO_MULTI_UC
+#define XRC_AUDIO_MULTI_UC 1
+#endif
+static struct { uint32_t data; asp_ucode_t uc; uint32_t lut_off; int lut_ok, silent; } s_ucs[4];
+static unsigned s_nucs;
+static uint32_t s_cur_data;
+
 /* the first task: which ABI its microcode speaks, and its resampler table */
+static void identify(uint32_t task);
+static void switch_ucode(uint32_t task) {
+    uint32_t data = rd32(task + TK_UCODE_DATA), lut_off;
+    unsigned i;
+    uint8_t be[512];
+    if (!XRC_AUDIO_MULTI_UC || data == s_cur_data) return;
+    for (i = 0; i < s_nucs && s_ucs[i].data != data; i++) {}
+    if (i == s_nucs) {   /* a new one: identified as the first task's was */
+        identify(task);
+        return;
+    }
+    s_cur_data = data;
+    s_silent = s_ucs[i].silent;
+    asp_hle_set_ucode(&s_ucs[i].uc);
+    lut_off = s_ucs[i].lut_off;
+    if (s_ucs[i].lut_ok && xrc_host(data + lut_off, sizeof be)) {
+        for (i = 0; i < sizeof be; i++) be[i] = rd8(data + lut_off + i);
+        asp_hle_set_resample_lut_be(be);
+    }
+}
+
 static void identify(uint32_t task) {
     uint32_t data = rd32(task + TK_UCODE_DATA), size = rd32(task + TK_UCODE_DATA_SIZE), lut_off = 0, i, n;
     uint8_t head[0x80];
@@ -98,15 +132,22 @@ static void identify(uint32_t task) {
              (unsigned)fnv_words(rd32(task + TK_UCODE), rd32(task + TK_UCODE_SIZE) ? rd32(task + TK_UCODE_SIZE) : 0x1000u),
              (unsigned)data, (unsigned)size, asp_hle_abi_name(uc.abi), (unsigned)uc.entries,
              (unsigned)(uc.abi == ASP_ABI_NAUDIO ? 0 : 0x10), (unsigned)uc.present, (unsigned)uc.flags);
+    s_cur_data = data;
+    s_silent = uc.abi == ASP_ABI_UNKNOWN;
     if (uc.abi == ASP_ABI_UNKNOWN) {
-        s_silent = 1;
         xhw_logf("[AUDIO] unknown audio microcode: its tasks are skipped, the output is silence");
-        return;
+        lut_ok = 0;
+    } else {
+        asp_hle_set_ucode(&uc);
+        lut_ok = find_lut(task, &lut_off);
+        if (lut_ok) xhw_logf("[AUDIO] RSP audio HLE: resampler table at data+%03x", (unsigned)lut_off);
+        else xhw_logf("[AUDIO] RSP audio HLE: no resampler table in the microcode data (linear fallback)");
     }
-    asp_hle_set_ucode(&uc);
-    lut_ok = find_lut(task, &lut_off);
-    if (lut_ok) xhw_logf("[AUDIO] RSP audio HLE: resampler table at data+%03x", (unsigned)lut_off);
-    else xhw_logf("[AUDIO] RSP audio HLE: no resampler table in the microcode data (linear fallback)");
+    if (s_nucs < 4) {
+        s_ucs[s_nucs].data = data, s_ucs[s_nucs].uc = uc, s_ucs[s_nucs].lut_off = lut_off;
+        s_ucs[s_nucs].lut_ok = lut_ok, s_ucs[s_nucs].silent = s_silent;
+        s_nucs++;
+    }
 }
 
 void xrc_audio_task(uint32_t task) {
@@ -114,9 +155,39 @@ void xrc_audio_task(uint32_t task) {
     const uint32_t* cmds;
     uint64_t t0, us;
     s_tasks++;
+#ifdef XRC_MEMBENCH   /* diagnosis: how fast RDRAM reads at a few physical offsets, once, at task 200 */
+    if (s_tasks == 2 || s_tasks == 200) {
+        static const uint32_t offs[] = {0x000000, 0x080000, 0x100000, 0x200000, 0x300000, 0x380000, 0x3C0000, 0x3F0000, 0x400000, 0x700000};
+        unsigned k;
+        for (k = 0; k < sizeof offs / sizeof offs[0]; k++) {
+            volatile uint32_t* p = (volatile uint32_t*)xrc_host(0x80000000u | offs[k], 0x10000);
+            uint32_t sum = 0, j;
+            uint64_t t0 = xhw_time_us();
+            if (!p) continue;
+            for (j = 0; j < 0x10000 / 4; j++) sum += p[j];
+            {
+                void xhw_page_info(uint32_t va, uint32_t* pde, uint32_t* pte);
+                uint32_t pde, pte;
+                xhw_page_info((uint32_t)(uintptr_t)p, &pde, &pte);
+            if (offs[k] < 0x100000 && xrc_tlb_to_phys(0x00100000u + offs[k]) == offs[k]) {   /* the same frames through a KUSEG alias */
+                volatile uint32_t* q = (volatile uint32_t*)(xrc_rdram + 0x00100000u + offs[k]);
+                uint32_t s2 = 0, j2;
+                uint64_t t1 = xhw_time_us();
+                for (j2 = 0; j2 < 0x10000 / 4; j2++) s2 += q[j2];
+                xhw_logf("[MEMB]   through KUSEG %08x at %p: %u us (%08x)", (unsigned)(0x00100000u + offs[k]), (void*)q,
+                         (unsigned)(xhw_time_us() - t1), (unsigned)s2);
+            }
+                xhw_logf("[MEMB] task %u phys %06x at %p: 64 KB in %u us (%08x) pde %08x pte %08x", s_tasks,
+                         (unsigned)offs[k], (void*)p, (unsigned)(xhw_time_us() - t0), (unsigned)sum, (unsigned)pde,
+                         (unsigned)pte);
+            }
+        }
+    }
+#endif
     if (!XRC_AUDIO) return;
     audio_up();
     if (!s_id) identify(task);
+    else switch_ucode(task);
     if (s_silent) return;
     cmds = (const uint32_t*)xrc_host(list, bytes);
     if (!cmds) {
@@ -125,6 +196,16 @@ void xrc_audio_task(uint32_t task) {
             xhw_logf("[AUDIO] task %u: list %08x (%u bytes) outside RDRAM: skipped", s_tasks, (unsigned)list, (unsigned)bytes);
         return;
     }
+#ifdef XRC_AUDIO_DUMP   /* diagnosis: -DXRC_AUDIO_DUMP=<task>, that task's commands */
+    if (s_tasks + 1 == (unsigned)(XRC_AUDIO_DUMP)) {
+        uint32_t k;
+        xhw_logf("[ACMD] task %u: %u bytes of commands", s_tasks + 1, (unsigned)bytes);
+        for (k = 0; k + 1 < bytes / 4u && k < 2400; k += 8)
+            xhw_logf("[ACMD] %08x %08x  %08x %08x  %08x %08x  %08x %08x", (unsigned)cmds[k], (unsigned)cmds[k + 1],
+                     (unsigned)cmds[k + 2], (unsigned)cmds[k + 3], (unsigned)cmds[k + 4], (unsigned)cmds[k + 5],
+                     (unsigned)cmds[k + 6], (unsigned)cmds[k + 7]);
+    }
+#endif
     t0 = xhw_time_us();
     asp_hle_run(cmds, bytes / 8u, asp_addr, NULL);
     us = xhw_time_us() - t0;
@@ -141,6 +222,13 @@ void xrc_audio_task(uint32_t task) {
                  s_tasks, (unsigned)(s_task_us / (s_tasks_iv ? s_tasks_iv : 1)), s_buffers, (unsigned)s_frames_in,
                  (unsigned)s_frames_dropped, (unsigned)(xhw_audio_skipped() / 2u), s_peak, (unsigned)xu_ai_underruns(),
                  (unsigned)st->bad_addr, (unsigned)st->cmds[32]);
+        if (st->low_n)
+            xhw_logf("[AUDIO] %u stores below RDRAM 0x1000: the first by %08x %08x at %08x, task %u command %u after "
+                     "%08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
+                     (unsigned)st->low_n, (unsigned)st->low_w0, (unsigned)st->low_w1, (unsigned)st->low_addr,
+                     (unsigned)st->low_task, (unsigned)st->low_index, st->low_prev[0], st->low_prev[1], st->low_prev[2],
+                     st->low_prev[3], st->low_prev[4], st->low_prev[5], st->low_prev[6], st->low_prev[7],
+                     st->low_prev[8], st->low_prev[9], st->low_prev[10], st->low_prev[11]);
         s_task_us = 0;
         s_tasks_iv = 0;
         s_peak = 0;

@@ -218,15 +218,68 @@ static uint32_t s_size;
 
 const xrom_info* xhw_rom_info(void) { return &s_info; }
 uint32_t xhw_rom_size(void) { return s_size; }
-const uint8_t* xhw_rom_resident(void) { return s_resident; }
+static volatile LONG s_readers, s_swapping;   /* readers against the one swap to native order */
+static int s_native;   /* the resident image holds RDRAM's word order (xhw_rom_cart_map) */
+
+const uint8_t* xhw_rom_resident(void) { return s_native ? NULL : s_resident; }
 
 int xhw_rom_read(uint32_t off, uint32_t n, xrom_sink sink, void* user) {
     if (s_resident) {
         if (off >= s_size || n > s_size - off) return 0;
-        if (n) sink(user, 0, s_resident + off, n);
+        for (;;) {   /* never mid-swap */
+            InterlockedIncrement(&s_readers);
+            if (!s_swapping) break;
+            InterlockedDecrement(&s_readers);
+            while (s_swapping) xhw_sleep_ms(0);
+        }
+        if (n && !s_native) {
+            sink(user, 0, s_resident + off, n);
+        } else if (n) {   /* native order: big-endian bytes again, a piece at a time */
+            uint8_t tmp[2048];
+            uint32_t at, k, len;
+            for (at = 0; at < n; at += len) {
+                len = n - at < sizeof tmp ? n - at : (uint32_t)sizeof tmp;
+                for (k = 0; k < len; k++) tmp[k] = s_resident[(off + at + k) ^ 3u];
+                sink(user, at, tmp, len);
+            }
+        }
+        InterlockedDecrement(&s_readers);
         return 1;
     }
     return s_size ? xhw_romcache_read(off, n, sink, user) : 0;
+}
+
+/* DIVERGES: a store to the cartridge through KSEG1 faults (read-only pages;
+ * the bus dropped it). Kill switch: -DXRC_CART_WHOLE=0 (never: the runtime's
+ * page window, mmio.c, serves such reads as before). */
+#ifndef XRC_CART_WHOLE
+#define XRC_CART_WHOLE 1
+#endif
+int xhw_rom_cart_map(uint32_t va) {
+    static uint32_t s_va[2];
+    static int s_done[2];   /* per base (KSEG1's, KSEG0's): 1 mapped, -1 not possible */
+    uint32_t o, i, *w;
+    int b;
+    for (b = 0; b < 2 && s_va[b] && s_va[b] != va; b++) {}
+    if (b == 2) return 0;
+    if (s_va[b]) return s_done[b] > 0;
+    s_va[b] = va, s_done[b] = -1;
+    if (!XRC_CART_WHOLE || !s_resident || (s_size & 0xFFFu) || ((uintptr_t)s_resident & 0xFFFu)) return 0;
+    if (!s_native) {
+        s_swapping = 1;
+        while (s_readers) xhw_sleep_ms(0);
+        w = (uint32_t*)(uintptr_t)s_resident;
+        for (i = 0; i < s_size / 4; i++) w[i] = __builtin_bswap32(w[i]);
+        s_native = 1;
+        s_swapping = 0;
+    }
+    for (o = 0; o < s_size; o += 4096)
+        if (!xhw_alias_map_ro(va + o, (uint32_t)MmGetPhysicalAddress((void*)(uintptr_t)(s_resident + o)) & 0xFFFFF000u, 4096))
+            break;
+    xhw_logf("[ROM] the cartridge through KSEG1: %u of %u KB of the image mapped at %08x", (unsigned)(o >> 10),
+             (unsigned)(s_size >> 10), (unsigned)va);
+    s_done[b] = o == s_size ? 1 : -1;
+    return s_done[b] > 0;
 }
 
 uint32_t xhw_rom_pin(uint32_t off, uint32_t len) { return s_resident || !s_size ? 0 : xhw_romcache_pin(off, len); }
@@ -541,8 +594,10 @@ const uint8_t* xhw_rom_load_verified(const xrom_target* target, xrom_info* out) 
         if (out) *out = *info;
         return NULL;
     }
-    buf = (uint8_t*)malloc(size);
+    /* page-aligned (4 KB more): xhw_rom_cart_map maps its pages at the cartridge's addresses */
+    buf = (uint8_t*)malloc(size + 0x1000u);
     if (!buf) xhw_fatal("Out of memory", "Can't allocate the ROM's buffer.");
+    buf = (uint8_t*)(((uintptr_t)buf + 0xFFFu) & ~(uintptr_t)0xFFFu);
     xhw_commit(buf, size);
     snprintf(stage, sizeof stage, s_inside ? "Reading the ROM from this XBE (%u MB)" : "Reading the ROM (%u MB)",
              (unsigned)((size + (1u << 20) - 1) >> 20));

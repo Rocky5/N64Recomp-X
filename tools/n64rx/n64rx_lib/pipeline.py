@@ -170,14 +170,40 @@ def _ignore_dead(pack, ainfo, refused, prog):
         from .analyze.mips import Ins, words
         a = ainfo['analysis']
         callers = set()
-        for seg in a.img.segments:
-            for x, f in a.funcs.get(seg.name, {}).items():
-                if x not in ainfo['live'] or x not in ainfo['names']:
+        ovl = a.overlays()
+        targets = set(statics)
+        # a static can be reached from another static (made for a tail j: Mario Tennis's captured
+        # versions): the code outside every function that jal's or j's a target is a static too, whose
+        # start (the nearest call target at or before it) is followed back to a real caller
+        for _round in range(6):
+            new_t = set()
+            for seg in a.img.segments:
+                fs = a.funcs.get(seg.name, {})
+                spans = sorted((f.start, f.end) for f in fs.values())
+                for x0, f in fs.items():
+                    x = a.key(seg, x0, ovl)   # an overlay's (a captured version's) functions by their full key
+                    if x not in ainfo['live'] or x not in ainfo['names']:
+                        continue
+                    ws = words(a.img.rom, seg.rom + (f.start - seg.vram), (f.end - f.start) // 4)
+                    if any((Ins(w, f.start + 4 * i).is_jal or Ins(w, f.start + 4 * i).is_j) and
+                           Ins(w, f.start + 4 * i).target in targets for i, w in enumerate(ws)):
+                        callers.add(ainfo['names'][x])
+                if not any(seg.has(t) for t in targets):
                     continue
-                ws = words(a.img.rom, seg.rom + (f.start - seg.vram), (f.end - f.start) // 4)
-                if any(Ins(w, f.start + 4 * i).is_jal and Ins(w, f.start + 4 * i).target in statics
-                       for i, w in enumerate(ws)):
-                    callers.add(ainfo['names'][x])
+                ws = words(a.img.rom, seg.rom, seg.size // 4)
+                calls = sorted({Ins(w, seg.vram + 4 * i).target for i, w in enumerate(ws)
+                                if Ins(w, seg.vram + 4 * i).is_jal or Ins(w, seg.vram + 4 * i).is_j} & set(range(seg.vram, seg.vram + seg.size, 4)))
+                for i, w in enumerate(ws):
+                    pc = seg.vram + 4 * i
+                    ins = Ins(w, pc)
+                    if not (ins.is_jal or ins.is_j) or ins.target not in targets or                             any(lo <= pc < hi for lo, hi in spans):
+                        continue
+                    starts = [c for c in calls if c <= pc and c not in fs]
+                    if starts and starts[-1] not in targets:
+                        new_t.add(starts[-1])
+            if not new_t:
+                break
+            targets |= new_t
         refused = [n for n in refused if not re.fullmatch(r'static_\d+_[0-9A-F]{8}', n)] + sorted(callers)
         if not callers:
             return False
@@ -219,9 +245,12 @@ def write_guard(pack, gen, data):
     of the bytes it was recompiled from goes to gen/xrc_guard.c (a page's
     would change with the data beside the code: Banjo-Kazooie's core code
     shares its first page with data), and each function is wrapped to check
-    its state first. N64RX_GUARD=0: no wrappers. Returns the number wrapped."""
+    its state first. Several versions of a function at one vram (learn.py's
+    code_<vram>_v<n> overlays: the scenes Mario Tennis loads there) are
+    entries side by side with their bodies, so the guard runs the one whose
+    bytes RDRAM holds. N64RX_GUARD=0: no wrappers. Returns the number wrapped."""
     import tomllib
-    entries = {}
+    entries = {}   # name -> (vram, size, hash)
     if os.environ.get('N64RX_GUARD', '1') != '0':
         syms = tomllib.loads(_syms_path(pack).read_text(encoding='utf-8'))
         for sec in syms.get('section', []):
@@ -230,11 +259,12 @@ def write_guard(pack, gen, data):
             v0, r0 = sec['vram'], sec['rom']
             for f in sec.get('functions', []):
                 v, n = f['vram'], max(f.get('size', 4), 4)
-                if v not in entries:
-                    entries[v] = (f['name'], n, _fnv(data[r0 + v - v0:r0 + v - v0 + n]))
-    order = sorted(entries)
-    index = {entries[v][0]: (i, v) for i, v in enumerate(order)}
-    wrapped = 0
+                if f['name'] not in entries:
+                    entries[f['name']] = (v, n, _fnv(data[r0 + v - v0:r0 + v - v0 + n]))
+    names = sorted(entries, key=lambda nm: (entries[nm][0], nm))
+    order = [entries[nm][0] for nm in names]
+    index = {nm: (i, entries[nm][0]) for i, nm in enumerate(names)}
+    wrapped, bodies = 0, set()
     for f in sorted(gen.glob('funcs_*.c')):
         text = f.read_text(encoding='utf-8')
         hit = [m for m in GUARD_DEF.finditer(text) if m.group(1) in index]
@@ -249,26 +279,35 @@ def write_guard(pack, gen, data):
                 out.append('extern volatile unsigned char xrc_guard_state[];\n'
                            'void xrc_guard_miss(uint8_t* rdram, recomp_context* ctx, uint32_t vram, unsigned i, '
                            'recomp_func_t* body);\n')
-            out.append(f'static void {name}__g(uint8_t* rdram, recomp_context* ctx);\n'
+            out.append(f'void {name}__g(uint8_t* rdram, recomp_context* ctx);\n'
                        f'RECOMP_FUNC void {name}(uint8_t* rdram, recomp_context* ctx) {{\n'
                        f'    if (xrc_guard_state[{i}] == 1) {name}__g(rdram, ctx);\n'
                        f'    else xrc_guard_miss(rdram, ctx, 0x{v:08X}u, {i}u, {name}__g);\n'
                        f'}}\n'
-                       f'static void {name}__g(uint8_t* rdram, recomp_context* ctx) {{')
+                       f'void {name}__g(uint8_t* rdram, recomp_context* ctx) {{')
             last = m.end()
             wrapped += 1
+            bodies.add(name)
         out.append(text[last:])
         f.write_text(''.join(out), encoding='utf-8', newline='\n')
     n = max(len(order), 1)
     rows = lambda vals: ',\n'.join('    ' + ', '.join(f'0x{x:08X}u' for x in vals[i:i + 8]) for i in range(0, len(vals), 8)) or '    0'
+    # the bodies only where one vram has several versions: the guard's other choices there
+    import collections
+    many = {v for v, c in collections.Counter(order).items() if c > 1}
+    multi = [nm for nm in names if entries[nm][0] in many and nm in bodies]
+    decl = ''.join(f'void {nm}__g(uint8_t* rdram, recomp_context* ctx);\n' for nm in multi)
+    body = ',\n'.join(f'    {nm}__g' if nm in multi else '    0' for nm in names) or '    0'
     (gen / 'xrc_guard.c').write_text(
         '/* generated by n64rx: the captured functions\' hashes as recompiled (xbox/src/rt/guard.c) */\n'
-        '#include <stdint.h>\n'
+        '#include "recomp.h"\n'
         f'const uint32_t xrc_guard_vram[{n}] = {{\n{rows(order)}\n}};\n'
-        f'const uint32_t xrc_guard_size[{n}] = {{\n{rows([entries[v][1] for v in order])}\n}};\n'
-        f'const uint32_t xrc_guard_hash[{n}] = {{\n{rows([entries[v][2] for v in order])}\n}};\n'
+        f'const uint32_t xrc_guard_size[{n}] = {{\n{rows([entries[nm][1] for nm in names])}\n}};\n'
+        f'const uint32_t xrc_guard_hash[{n}] = {{\n{rows([entries[nm][2] for nm in names])}\n}};\n'
         f'const unsigned xrc_guard_count = {len(order)}u;\n'
-        f'volatile unsigned char xrc_guard_state[{n}];\n', encoding='utf-8', newline='\n')
+        f'volatile unsigned char xrc_guard_state[{n}];\n'
+        f'{decl}'
+        f'recomp_func_t* const xrc_guard_body[{n}] = {{\n{body}\n}};\n', encoding='utf-8', newline='\n')
     return wrapped
 
 
@@ -649,8 +688,8 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     flags = ['-DXRC_GPR32=1'] if bits == 32 else []
     flags += saves.cflags(pack, rom.data)   # libultra globals the runtime's saves keep (saves.py)
     recomp_bytes = recomp_rom.read_bytes()
-    flags += saves.running_thread(pack, recomp_bytes)   # __osRunningThread, kept by thread.c
-    flags += saves.faulted_thread(recomp_bytes)         # libultra's fault path, for a TLB miss (tlb.c)
+    flags += saves.consistent_threads(saves.running_thread(pack, recomp_bytes),   # __osRunningThread, kept by thread.c
+                                      saves.faulted_thread(recomp_bytes))          # libultra's fault path (tlb.c)
     flags += saves.os_exception(recomp_bytes)           # the game's exception code, for a TLB miss (interp.c)
     flags += saves.os_runqueue(recomp_bytes)            # its run queue, a sentinel while that code runs
     flags += learnmod.rdram_user(learnt)                 # RDRAM's home when KUSEG lands on the kernel's (mem.c)

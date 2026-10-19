@@ -13,8 +13,26 @@ static void* volatile s_thread[RING];
 static volatile uint32_t s_vram[RING];   /* the interpreter's calls: an address, no name */
 static volatile unsigned s_n;
 
+#ifdef XRC_TRACE_COUNT   /* diagnosis: -DXRC_TRACE_COUNT=func_..., that function's entries (the first 8, then every 100th) */
+#include <string.h>
+#define TC_STR2(x) #x
+#define TC_STR(x) TC_STR2(x)
+static const char* volatile s_match;
+static void count_one(const char* name) {
+    static unsigned s_hits;
+    if (name != s_match) {
+        if (s_match || strcmp(name, TC_STR(XRC_TRACE_COUNT))) return;
+        s_match = name;
+    }
+    s_hits++;
+    if (s_hits <= 8 || s_hits % 100 == 0) xhw_logf("[TRACE] %s entered (%u)", name, s_hits);
+}
+#endif
 void xrc_trace_enter(const char* name) {
     unsigned i = __atomic_fetch_add(&s_n, 1u, __ATOMIC_RELAXED) & (RING - 1);
+#ifdef XRC_TRACE_COUNT
+    count_one(name);
+#endif
     s_name[i] = name;
     s_vram[i] = 0;
     s_thread[i] = xhw_thread_self();

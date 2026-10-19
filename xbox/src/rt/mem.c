@@ -17,6 +17,7 @@
  * The boot block (osTvType, osRomBase, osMemSize ...) and the boot segment
  * copy come with the ROM in M1. */
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "rt.h"
@@ -67,7 +68,12 @@ static void hw_shadow(uint8_t* p, uint32_t bytes) {
 
 int xrc_mem_init(uint32_t mb) {
     uint32_t bytes = mb << 20;
+#ifdef XRC_RDRAM_PAD_MB   /* diagnosis: RDRAM placed this many MB lower in physical memory */
+    uint8_t* p = (uint8_t*)xhw_rdram_alloc(bytes + ((uint32_t)(XRC_RDRAM_PAD_MB) << 20) + (HW_SHADOW ? HW_SHADOW_BYTES : 0));
+    /* (the allocator works down from the top: RDRAM at the bottom of the larger block sits lower) */
+#else
     uint8_t* p = (uint8_t*)xhw_rdram_alloc(bytes + (HW_SHADOW ? HW_SHADOW_BYTES : 0));
+#endif
     if (!p) return 0;
     if (((uintptr_t)p & 0x80000000u) == 0) {   /* not the kernel's 0x80000000 + physical mapping */
         xhw_logf("[MEM] rdram at %08x: not in the physical window", (unsigned)(uintptr_t)p);
@@ -92,6 +98,35 @@ int xrc_mem_init(uint32_t mb) {
     xhw_logf("[RECOMP] window: %u MB, physical %08x, rdram base %08x", (unsigned)mb,
              (unsigned)((uintptr_t)p & 0x7FFFFFFFu), (unsigned)(uintptr_t)xrc_rdram);
     if (HW_SHADOW) hw_shadow(p, bytes);
+#ifdef XRC_MEMBENCH   /* diagnosis: RDRAM's read speed before anything else runs */
+    {
+        uint32_t off, j, sum = 0;
+        for (off = 0; off < bytes; off += off >= 0x200000 && off < 0x300000 ? 0x10000 : 0x100000) {
+            volatile uint32_t* q = (volatile uint32_t*)(p + off);
+            uint64_t t0 = xhw_time_us();
+            for (j = 0; j < 0x10000 / 4; j++) sum += q[j];
+            xhw_logf("[MEMB] boot phys %06x (%08x): 64 KB in %u us", (unsigned)off, (unsigned)(((uintptr_t)p & 0x7FFFFFFFu) + off),
+                     (unsigned)(xhw_time_us() - t0));
+        }
+        {   /* and memory elsewhere: a static block, a heap block */
+            static uint32_t s_blk[0x10000 / 4];
+            uint32_t xhw_phys_of(const void* p);
+            uint32_t* h = (uint32_t*)malloc(0x10000);
+            volatile uint32_t* qs[2] = {s_blk, h};
+            unsigned k;
+            for (k = 0; k < 2; k++) {
+                volatile uint32_t* q = qs[k];
+                uint64_t t0 = xhw_time_us();
+                if (!q) continue;
+                for (j = 0; j < 0x10000 / 4; j++) sum += q[j];
+                xhw_logf("[MEMB] boot %s at %p (physical %08x): 64 KB in %u us", k ? "heap" : "static", (void*)q,
+                         (unsigned)xhw_phys_of((const void*)q), (unsigned)(xhw_time_us() - t0));
+            }
+            free(h);
+        }
+        (void)sum;
+    }
+#endif
 #if XRC_KSEG1
     if (!xhw_alias_map((uint32_t)(uintptr_t)(xrc_rdram + 0xA0000000u), (uint32_t)(uintptr_t)p & 0x7FFFFFFFu, bytes)) {
         /* some page of the range is the kernel's (the console, 8 MB windows at

@@ -78,20 +78,46 @@ typedef struct {
     volatile uint32_t wait;     /* what it sleeps on (a queue address, |1 for "full"), 0 when running */
     uint32_t entry, arg, sp;
     int ints_off;               /* __osDisableInt / cop0 status IE clear: holds one lock level */
+    int mask_off;               /* osSetIntMask(OS_IM_NONE): 1 took that level, 2 found it taken */
     volatile int stopped;       /* in osStopThread, until an osStartThread */
     volatile int fresh;         /* osCreateThread again on this OSThread: start over at the entry */
     volatile int halted;        /* another thread stopped or destroyed it: it stops at its next block */
+    volatile int faulting;      /* stopped in xu_fault_wait, for the game's fault thread */
     volatile int dead;          /* destroyed, or its entry returned: its record (and host thread, once
                                  * stopped) may serve the next new OSThread */
     void* jb[5];                /* thread_body's restart point (__builtin_setjmp) */
     recomp_context* ctx;        /* thread_body's: its sp for interp.c's exception code */
+    volatile unsigned sleeps;   /* times it went to sleep (xu_send's yield) */
 } Thr;
 static Thr s_thr[MAX_THREADS];
 static volatile int s_started;   /* game threads the runtime runs (osStartThread, a dispatch: xu_start_dispatched) */
 static volatile int s_nthr;
 static uint32_t s_tls = 0xFFFFFFFFu;
 
+static int fixed_level(int pri);
+/* Distinct N64 priorities that the fixed map below puts on one level (9 and
+ * 10 on 8, 100 and 110 on 10) ran side by side, where libultra runs the
+ * higher alone (Castlevania: Legacy of Darkness raced: each boot ended
+ * differently). The priorities in use are ranked: each keeps its fixed
+ * level unless one below it took that level, then it moves up one (and
+ * down again from the top, levels 3..14), so each distinct priority gets
+ * its own level while there are at most 12; a game whose priorities do not
+ * collide keeps the fixed map exactly. -DXRC_RANK_LEVELS=0: the fixed map */
+#ifndef XRC_RANK_LEVELS
+#define XRC_RANK_LEVELS 0
+#endif
+#define RANK_MAX 12
+static int s_rank_pri[RANK_MAX], s_rank_lv[RANK_MAX], s_rank_n;
+
 int xu_level_of(int pri) {
+    int i;
+    if (XRC_RANK_LEVELS && pri > 0)
+        for (i = 0; i < s_rank_n; i++)
+            if (s_rank_pri[i] == pri) return s_rank_lv[i];
+    return fixed_level(pri);
+}
+
+static int fixed_level(int pri) {
     /* N64 priorities 0..255 onto levels 2..14, in order (Wings64-X's map,
      * from Pilotwings 64's threads: idle 0, app 10, kernel 12, audio 110,
      * scheduler 127, PI manager 150, render/fault 250, VI manager 254). The
@@ -154,7 +180,7 @@ static Thr* self(void) {
  * priority, as libultra did). Without the address: nothing written. */
 #ifdef XRC_RUNNING_THREAD
 static void running_is(uint32_t t) {
-    if (t) wr32(XRC_RUNNING_THREAD, t);
+    if (t && xu_mapped(XRC_RUNNING_THREAD)) wr32(XRC_RUNNING_THREAD, t);
 }
 static void running_next(const Thr* me) {
     uint32_t best = 0;
@@ -187,6 +213,7 @@ static void wake_all(uint32_t key) {
 static void stop_wait(Thr* me);
 
 static int pri_of(const Thr* d) { return d->t ? (int)(int32_t)rd32(d->t + TH_PRIORITY) : -1; }
+static void rank_update(int extra);
 
 /* another thread already blocked on `key` at this thread's priority or above:
  * libultra hands a message to the first such waiter, not to a thread that
@@ -207,6 +234,7 @@ static void sleep_on(Thr* me, uint32_t key) {
      * thread, waiting for the graphics task it yielded) */
     if (xu_rcp_flush(me) && !waiter_first(me, key)) return;
     me->wait = key;
+    me->sleeps++;
     running_next(me);
     for (i = 0; i < n; i++) xu_unlock();
     if (!me->halted) xhw_event_wait(me->ev, XHW_INFINITE);
@@ -315,6 +343,7 @@ ULTRA(osStartThread) {
     if (!d->kt) {
         pri = (int)(int32_t)rd32(t + TH_PRIORITY);
         wr16(t + TH_STATE, OS_STATE_RUNNABLE);
+        rank_update(pri);
         d->kt = xhw_thread_spawn(thread_body, d, xu_level_of(pri), HOST_STACK);
         if (!d->kt) xrc_fatal_vram("osStartThread: no kernel thread", t, 0);
         s_started++;
@@ -324,6 +353,11 @@ ULTRA(osStartThread) {
         wr16(t + TH_STATE, OS_STATE_RUNNABLE);
         d->stopped = 0;
         xhw_event_signal(d->ev);
+    } else if (XRC_THREAD_RESUME && d->faulting) {
+        /* stopped faulted (xu_fault_wait): a fault thread that lets it go with
+         * osStartThread (All-Star Baseball 2000's pager, beside the flag it
+         * leaves set) makes it runnable, as libultra's does */
+        wr16(t + TH_STATE, OS_STATE_RUNNABLE);
     } else if (d->halted) {   /* stopped by another thread, started again before it reached its block */
         wr16(t + TH_STATE, OS_STATE_RUNNABLE);
         d->halted = 0;
@@ -377,6 +411,7 @@ int xu_start_dispatched(uint32_t t) {
     d->sp = sp;
     pri = (int)(int32_t)rd32(t + TH_PRIORITY);
     wr16(t + TH_STATE, OS_STATE_RUNNABLE);
+    rank_update(pri);
     d->kt = xhw_thread_spawn(thread_body, d, xu_level_of(pri), HOST_STACK);
     xu_unlock();
     if (!d->kt) return 0;
@@ -433,6 +468,54 @@ ULTRA(osDestroyThread) {
     halt_other(t, NULL);
 }
 
+/* the ranking again from the live threads' priorities (and `extra`, one
+ * about to be used), each host thread moved to its level; a thread holding
+ * interrupts off (boosted to 14) is left until it lets go */
+static void rank_update(int extra) {
+    int pri[MAX_THREADS + 1], n = 0, i, j, lv[RANK_MAX], old_n = s_rank_n;
+    if (!XRC_RANK_LEVELS) return;
+    for (i = 0; i < s_nthr; i++)
+        if (s_thr[i].t && !s_thr[i].dead) pri[n++] = pri_of(&s_thr[i]);
+    if (extra > 0) pri[n++] = extra;
+    for (i = 1; i < n; i++)   /* sorted, distinct, > 0 */
+        for (j = i; j > 0 && pri[j - 1] > pri[j]; j--) {
+            int t = pri[j];
+            pri[j] = pri[j - 1], pri[j - 1] = t;
+        }
+    for (i = j = 0; i < n; i++)
+        if (pri[i] > 0 && (!j || pri[j - 1] != pri[i])) pri[j++] = pri[i];
+    n = j;
+    if (n > RANK_MAX) {
+        s_rank_n = 0;   /* too many to keep apart: the fixed map */
+    } else {
+        for (i = 0; i < n; i++) {
+            lv[i] = fixed_level(pri[i]);
+            if (i && lv[i] <= lv[i - 1]) lv[i] = lv[i - 1] + 1;
+        }
+        for (i = n - 1; i >= 0; i--) {
+            if (lv[i] > 14) lv[i] = 14;
+            if (i < n - 1 && lv[i] >= lv[i + 1]) lv[i] = lv[i + 1] - 1;
+            if (lv[i] < 3) lv[i] = 3;
+        }
+        s_rank_n = 0;
+        for (i = 0; i < n; i++) s_rank_pri[i] = pri[i], s_rank_lv[i] = lv[i];
+        s_rank_n = n;
+    }
+    {
+        static int s_said;
+        int moved = 0;
+        for (i = 0; i < n; i++) moved += lv[i] != fixed_level(pri[i]);
+        if (moved && s_said < 8 && (n != old_n || !s_said)) {
+            s_said++;
+            xhw_logf("[OS] thread levels: %d priorities, %d moved off the fixed map to keep them apart", n, moved);
+        }
+    }
+    for (i = 0; i < s_nthr; i++) {
+        Thr* d = &s_thr[i];
+        if (d->t && d->kt && !d->dead && !d->ints_off) xhw_thread_set_level(d->kt, xu_level_of(pri_of(d)));
+    }
+}
+
 ULTRA(osSetThreadPri) {
     uint32_t t = ARG(0);
     int pri = (int)(int32_t)ARG(1);
@@ -440,6 +523,7 @@ ULTRA(osSetThreadPri) {
     (void)rdram;
     if (!d) return;
     if (d->t) wr32(d->t + TH_PRIORITY, (uint32_t)pri);
+    rank_update(0);
     if (d->kt) xhw_thread_set_level(d->kt, xu_level_of(pri));
 }
 
@@ -488,6 +572,38 @@ ULTRA(osCreateMesgQueue) {
     wr32(mq + MQ_MSG, ARG(1));
 }
 
+/* A message that wakes a thread of higher N64 priority switches to it at
+ * once on the N64 (the sender runs again when it blocks). Where the two
+ * share a kernel level (9 and 10, 100 and 110 do: xu_level_of) the sender
+ * kept running beside it; Castlevania: Legacy of Darkness raced that way
+ * (its runs ended differently each boot). The sender yields until the
+ * woken thread sleeps again, at most 20 ms; not with interrupts off (the
+ * woken thread needs the lock). -DXRC_SEND_YIELD=0: as before */
+#ifndef XRC_SEND_YIELD
+#define XRC_SEND_YIELD 0
+#endif
+static void send_yield(uint32_t mq) {
+    Thr* me;
+    int i, n = 0, lv, p;
+    Thr* w[4];
+    unsigned gen[4];
+    uint64_t t0;
+    if (!XRC_SEND_YIELD || s_tls == 0xFFFFFFFFu) return;
+    me = (Thr*)xhw_tls_get(s_tls);
+    if (!me || !me->t || me->ints_off || s_depth > 0) return;   /* the lock held (by anyone): no wait under it */
+    p = pri_of(me);
+    lv = xu_level_of(p);
+    for (i = 0; i < s_nthr && n < 4; i++) {
+        Thr* d = &s_thr[i];
+        if (d != me && d->t && d->kt && d->wait == mq && pri_of(d) > p && xu_level_of(pri_of(d)) == lv)
+            w[n] = d, gen[n] = d->sleeps, n++;
+    }
+    if (!n) return;
+    t0 = xhw_time_us();
+    for (i = 0; i < n; i++)
+        while (w[i]->sleeps == gen[i] && !w[i]->stopped && !w[i]->dead && xhw_time_us() - t0 < 20000u) xhw_yield();
+}
+
 int xu_send(uint32_t mq, uint32_t msg, int block, int jam) {
     Thr* me = block ? self() : NULL;
     int32_t count, valid, first;
@@ -526,6 +642,7 @@ int xu_send(uint32_t mq, uint32_t msg, int block, int jam) {
     wr32(mq + MQ_VALIDCOUNT, (uint32_t)(valid + 1));
     wake_all(mq);
     xu_unlock();
+    send_yield(mq);
     return 0;
 }
 
@@ -748,6 +865,7 @@ int xu_fault_wait(uint32_t vaddr, int store) {
     wr16(t + TH_STATE, OS_STATE_STOPPED);
     wr16(t + TH_FLAGS, 2);   /* OS_FLAG_FAULT */
     me->wait = 1;
+    me->faulting = 1;
     running_next(me);
     post(OS_EVENT_FAULT, 0);
     if (s_faults < 16)
@@ -763,6 +881,7 @@ int xu_fault_wait(uint32_t vaddr, int store) {
     }
     for (i = 0; i < n; i++) xu_lock();
     me->wait = 0;
+    me->faulting = 0;
     if (ms < 10000) runq_pop(t);
     wr16(t + TH_STATE, OS_STATE_RUNNING);
     wr16(t + TH_FLAGS, 0);
@@ -770,6 +889,12 @@ int xu_fault_wait(uint32_t vaddr, int store) {
     xu_unlock();
     if (s_faults < 16) s_faults++, xhw_logf("[OS] fault: thread %d %s after %d ms", (int)(int32_t)rd32(t + TH_ID),
                                             ms < 10000 ? "runnable again" : "never let go", ms);
+    else {   /* how often, and what they cost (a game that pages its code through the TLB) */
+        static unsigned s_more, s_ms;
+        s_more++, s_ms += (unsigned)ms;
+        if ((s_more & (s_more - 1)) == 0)
+            xhw_logf("[OS] fault: %u more, %u ms waited in all (retrace %u)", s_more, s_ms, xu_retrace());
+    }
     return ms < 10000;
 #else
     (void)vaddr, (void)store;
@@ -830,10 +955,31 @@ gpr cop0_status_read(recomp_context* ctx) {
 
 static uint32_t s_int_mask = 0x003FFF01u;   /* OS_IM_ALL */
 
+/* osSetIntMask(mask): a mask that lets no interrupt through (OS_IM_NONE:
+ * libaudio's alEvtqPostEvent and alEvtqNextEvent around their list
+ * updates) is a critical section on the N64, as __osDisableInt's is.
+ * -DXRC_INTMASK_LOCK=1 holds the same lock level until a mask that lets
+ * them through again. Off by default: Mario Party switches its coroutines
+ * (strand.c) under such a mask, a parked strand kept the lock and the game
+ * stopped at its second frame; All-Star Baseball 2000's freeze, the reason
+ * it was tried, was its audio thread starved of AI events (ai.c). */
+#ifndef XRC_INTMASK_LOCK
+#define XRC_INTMASK_LOCK 0
+#endif
 ULTRA(osSetIntMask) {
-    uint32_t old = s_int_mask;
+    uint32_t old = s_int_mask, m = ARG(0);
     (void)rdram;
-    s_int_mask = ARG(0);
+    s_int_mask = m;
+    if (XRC_INTMASK_LOCK) {
+        Thr* me = self();
+        int none = (m & 0x003FFF00u) == 0;
+        if (none && !me->mask_off) {
+            me->mask_off = ints_off(me) ? 1 : 2;
+        } else if (!none && me->mask_off) {
+            if (me->mask_off == 1) ints_on(me);
+            me->mask_off = 0;
+        }
+    }
     RET(old);
 }
 

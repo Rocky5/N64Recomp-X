@@ -36,6 +36,11 @@ ULTRA(osInvalICache) {
 ULTRA(osVirtualToPhysical) {
     uint32_t v = ARG(0), p = v - 0x80000000u < 0x40000000u ? 0xFFFFFFFFu : xrc_tlb_to_phys(v);
     (void)rdram;
+    if (XHW_TEST_BUILD && (p != 0xFFFFFFFFu ? p : v & 0x1FFFFFFFu) < 0x1000u && v >= 0x1000u) {   /* diagnosis */
+        static unsigned s_n;
+        if (s_n++ < 8) xhw_logf("[ULTRA] osVirtualToPhysical(%08x) = %08x (ra %08x)", (unsigned)v,
+                                (unsigned)(p != 0xFFFFFFFFu ? p : v & 0x1FFFFFFFu), (unsigned)ctx->r31);
+    }
     RET(p != 0xFFFFFFFFu ? p : v & 0x1FFFFFFFu);
 }
 

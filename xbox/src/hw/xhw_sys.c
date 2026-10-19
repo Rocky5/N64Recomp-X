@@ -523,8 +523,28 @@ uint32_t xhw_lazy_committed_kb(void) { return 0; }
  * must have it set as N64 KSEG0 addresses did. Below 64 MB (the console is
  * held to 64 MB: xhw_ramlock.c), page-aligned, PAGE_READWRITE (cached, not
  * write-combined: the CPU reads it as much as it writes it). Zeroed. */
+/* RDRAM no higher than XHW_RDRAM_HIGHEST (physical) when that fits, else the
+ * top of the 64 MB as before. xemu reads the physical memory just under the
+ * 8 MB window's usual place (0x03631000 up to ~0x03880000, slower still
+ * later) ~100x slower than the rest: All-Star Baseball 2000's audio took 12
+ * ms a task and its game thread starved there, and Majora's Mask booted
+ * slow. The console's memory is uniform: test builds (xemu) take the low
+ * place by default for an 8 MB window, release builds the top.
+ * -DXHW_RDRAM_HIGHEST=0: the top. */
+#ifndef XHW_RDRAM_HIGHEST
+#if defined(XHW_TEST_BUILD) && XHW_TEST_BUILD
+#define XHW_RDRAM_HIGHEST 0x02FFFFFFu   /* (lower, its KUSEG aliases at P + vaddr met the heap: Chef's Luv Shack) */
+#else
+#define XHW_RDRAM_HIGHEST 0
+#endif
+#endif
 void* xhw_rdram_alloc(uint32_t bytes) {
-    void* p = MmAllocateContiguousMemoryEx(bytes, 0, 0x03FFFFFF, 4096, PAGE_READWRITE);
+    /* (an 8 MB window only: a 4 MB one at the top sits above the slow part, and Mario Kart 64 and
+     * Banjo-Kazooie read past their 4 MB, into what the low place leaves unmapped) */
+    void* p = XHW_RDRAM_HIGHEST && bytes >= (8u << 20)
+                  ? MmAllocateContiguousMemoryEx(bytes, 0, (uint32_t)(XHW_RDRAM_HIGHEST), 4096, PAGE_READWRITE)
+                  : NULL;
+    if (!p) p = MmAllocateContiguousMemoryEx(bytes, 0, 0x03FFFFFF, 4096, PAGE_READWRITE);
     if (!p) {
         xhw_logf("[MEM] rdram: %u KB contiguous not available (%u KB free)", (unsigned)(bytes >> 10),
                  xhw_mem_free_kb());

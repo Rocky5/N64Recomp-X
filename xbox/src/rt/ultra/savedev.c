@@ -234,6 +234,9 @@ int xu_pak_note_copy(const uint8_t* src, int slot, uint8_t* dst) {
 }
 
 /* ---- the pak's address space ---- */
+#ifndef XRC_PAK_BOTH
+#define XRC_PAK_BOTH 1
+#endif
 static int s_kind[4] = {XU_PAK_AUTO, XU_PAK_AUTO, XU_PAK_AUTO, XU_PAK_AUTO};
 static uint8_t s_fs_read[4];   /* AUTO: the game has read the file system */
 static uint8_t s_pulled[4];    /* swapped since the game last asked the status */
@@ -272,9 +275,25 @@ void xu_pak_access(int port, uint16_t addr, uint8_t* data, int write) {
     addr &= (uint16_t)~0x1Fu;
     if (port < 0 || port > 3) return;
     kind = s_kind[port];
-    if (kind == XU_PAK_AUTO && write && addr == 0x8000 && (data[31] == 0xFE || data[31] == 0x80) &&
-        !s_fs_read[port])
+    if (kind == XU_PAK_AUTO && XRC_PAK_BOTH) {
+        /* AUTO answers as both: a Controller Pak below 0x8000, a Rumble Pak
+         * from there (its probe reads 0x80 back, its motor at 0xC000). All-Star
+         * Baseball 2000 probes the motor first and then looks for its saves:
+         * as a Rumble Pak from the probe on (the rule before), it found none.
+         * DIVERGES: no real pak is both. -DXRC_PAK_BOTH=0: the rule before */
+        if (addr >= 0x8000) {
+            if (write) {
+                if (addr >= 0xC000 && addr < 0xD000) xu_pak_rumble(port, data[31] != 0);
+            } else {
+                memset(data, addr < 0x9000 ? 0x80 : 0x00, 32);
+            }
+            return;
+        }
+        kind = XU_PAK_MEMORY;
+    } else if (kind == XU_PAK_AUTO && write && addr == 0x8000 && (data[31] == 0xFE || data[31] == 0x80) &&
+               !s_fs_read[port]) {
         kind = s_kind[port] = XU_PAK_RUMBLE;   /* the motor probe, before any file system read */
+    }
     if (kind == XU_PAK_RUMBLE) {
         if (write) {
             if (addr >= 0xC000 && addr < 0xD000) xu_pak_rumble(port, data[31] != 0);

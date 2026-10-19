@@ -421,6 +421,7 @@ typedef void(recomp_func_t)(uint8_t* rdram, recomp_context* ctx);
 typedef void(recomp_func_ext_t)(uint8_t* rdram, recomp_context* ctx, uintptr_t arg);
 
 recomp_func_t* get_function(int32_t vram);
+void xrc_ovl_relocate(uint32_t ram, uint32_t hdr, uint32_t vram);   /* ovl.c: an overlay the game relocates (n64rx's hook) */
 #define LOOKUP_FUNC(val) get_function((int32_t)(val))
 
 extern int32_t* section_addresses;

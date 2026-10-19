@@ -72,6 +72,19 @@ static uint32_t rom_offset(uint32_t dev) {
 /* ROM -> RDRAM for every DMA entry point (the handle family in extra.c too); 0 = from the ROM */
 uint32_t xu_pi_dma(uint32_t dev, uint32_t dram, uint32_t n) {
     uint32_t i;
+#ifdef XRC_PI_LOG_ALL   /* diagnosis: the first n DMAs, any destination */
+    {
+        static unsigned s_all;
+        if (s_all++ < (unsigned)(XRC_PI_LOG_ALL))
+            xhw_logf("[PI] DMA ROM %06x -> %08x, %x bytes", (unsigned)rom_offset(dev), (unsigned)dram, (unsigned)n);
+    }
+#endif
+    if (XHW_TEST_BUILD && (int32_t)dram >= 0) {   /* diagnosis: a DMA to a TLB-mapped address */
+        static unsigned s_n;
+        if (s_n++ < 40)
+            xhw_logf("[PI] DMA ROM %06x -> %08x (phys %08x..%08x), %x bytes", (unsigned)rom_offset(dev), (unsigned)dram,
+                     (unsigned)xu_phys(dram), (unsigned)xu_phys(dram + n - 1), (unsigned)n);
+    }
     if (xu_rom_to_rdram(rom_offset(dev), dram, n) == 0) {
         xrc_learn_dma(rom_offset(dev), dram, n);   /* learn.c: where code came from */
         xrc_ovl_dma(rom_offset(dev), dram, n);     /* ovl.c: which overlay is loaded there now */
@@ -147,7 +160,10 @@ ULTRA(osPiStartDma) {
 uint32_t xu_pi_word(uint32_t dev);
 uint32_t xu_pi_word(uint32_t dev) {
     uint8_t p[4];
-    if (xu_rom_read(rom_offset(dev) & ~3u, p, 4)) return 0;
+    uint32_t off = rom_offset(dev) & ~3u;
+    if (off >= xhw_rom_size() && off < 0x0FC00000u)   /* past the ROM: the bus answers with the address */
+        return (off & 0xFFFFu) << 16 | (off & 0xFFFFu);
+    if (xu_rom_read(off, p, 4)) return 0;
     return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
 }
 
@@ -187,10 +203,23 @@ ULTRA(__osPiRawWriteIo) {
     RET(0);
 }
 
-/* osPiRawStartDma, __osPiRawStartDma(direction, devAddr, dramAddr, size) */
+/* osPiRawStartDma, __osPiRawStartDma(direction, devAddr, dramAddr, size):
+ * the DMA at once, then the PI interrupt's event, as a register-started
+ * DMA posts it (mmio.c). A game's own PI manager waits for it after each
+ * raw start (Jeremy McGrath Supercross 2000's, beside its custom
+ * osPiStartDma: it waited for good). -DXRC_PI_RAW_EVENT=0: no event, as
+ * before */
+#ifndef XRC_PI_RAW_EVENT
+#define XRC_PI_RAW_EVENT 1
+#endif
+void xu_pi_raw_event(void);
+void xu_pi_raw_event(void) {
+    if (XRC_PI_RAW_EVENT) xu_post_event(OS_EVENT_PI);
+}
 static void raw_dma(recomp_context* ctx) {
     uint32_t dir = ARG(0), dev = ARG(1), dram = ARG(2), n = ARG(3);
     if (dir == 0) xu_pi_dma(dev, dram, n);
+    xu_pi_raw_event();
     RET(0);
 }
 ULTRA(osPiRawStartDma) {

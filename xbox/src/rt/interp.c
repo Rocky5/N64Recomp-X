@@ -54,6 +54,9 @@
 #include "xhw.h"
 
 #define SENTINEL 0x8FFFFFF0u        /* an address no code has */
+#ifndef XRC_TAIL_RA
+#define XRC_TAIL_RA 1               /* a tail call from code run in line goes back to its ra (run) */
+#endif
 #define STEP_LIMIT 2000000000u      /* a routine that never returns: stop and say so (not for the net:
                                        * a thread's entry it runs may loop for good) */
 #define MAX_FRAMES 32               /* in-line calls tracked for the learn log */
@@ -612,6 +615,12 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
     Last* last = last_of();
     St* outer = last->st;
     regs_in(&st, ctx);
+    gpr keep0[10];   /* test builds: the callee-saved registers at entry */
+    {
+        unsigned k;
+        for (k = 0; k < 8; k++) keep0[k] = st.r[16 + k];
+        keep0[8] = st.r[29], keep0[9] = st.r[30];
+    }
     st.fcc = 0, st.learning = learning, st.nframes = 0, st.exc = exc, st.epc_k0 = 0;
     st.r[31] = SX32(ra ? ra : SENTINEL);
     if (learning) st.fr[st.nframes++] = (Frame){entry, SENTINEL, entry, caller};
@@ -676,13 +685,40 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
             }
             continue;
         }
+        /* a jump through a register to where ra points is a return, whatever the register (Majora's
+         * Mask returns with `jr $t9` into code the net runs, which the table knows): never a tail call */
+        if (br.jreg && XRC_TAIL_RA && br.target == (uint32_t)st.r[31] && st.nframes) {
+            if (st.nframes > (learning ? 1 : 0) && br.target == st.fr[st.nframes - 1].ret)
+                frames_report(&st, st.nframes - 1);
+            pc = br.target;
+            continue;
+        }
         if (br.jreg && br.target != entry) {   /* a jump through a register to a function: a tail call */
             recomp_func_t* f = xrc_try_function(br.target);
             if (f) {
+                /* it returns where this code's ra points: the caller of the run, or,
+                 * inside a function interpreted in line (the net's jal into code with
+                 * no function), back into the code that called that one. Leaving the
+                 * whole run there returned to the run's caller with the inner frame's
+                 * sp and saved registers (Castlevania: Legacy of Darkness, sp 0x38 off).
+                 * -DXRC_TAIL_RA=0: the run ends after the call, as before */
+                uint32_t back = (uint32_t)st.r[31];
                 regs_out(&st, ctx);
                 f(rdram, ctx);
                 regs_in(&st, ctx);
-                break;
+                if (!XRC_TAIL_RA || back == SENTINEL || (ra && back == ra) || !st.nframes) break;
+                if (XHW_TEST_BUILD) {   /* diagnosis: where a tail call goes on in line */
+                    static unsigned s_n;
+                    if (s_n++ < 24)
+                        xhw_logf("[INTERP] tail call at %08x to %08x goes on at %08x (frames %d, entry %08x, top frame %08x ret %08x)",
+                                 (unsigned)pc, (unsigned)br.target, (unsigned)back, st.nframes, (unsigned)entry,
+                                 (unsigned)st.fr[st.nframes - 1].entry, (unsigned)st.fr[st.nframes - 1].ret);
+                }
+                st.r[31] = SX32(back);
+                if (st.nframes > (learning ? 1 : 0) && back == st.fr[st.nframes - 1].ret)
+                    frames_report(&st, st.nframes - 1);
+                pc = back;
+                continue;
             }
         }
         if (st.nframes > (learning ? 1 : 0) && br.jreg && br.target == st.fr[st.nframes - 1].ret)
@@ -691,6 +727,21 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
     }
     frames_report(&st, 0);
     if (XHW_TEST_BUILD) hot_note(entry, steps);
+    if (XHW_TEST_BUILD && !exc) {   /* diagnosis: a callee-saved register it did not put back */
+        static unsigned s_bad;
+        static const int keep[] = {16, 17, 18, 19, 20, 21, 22, 23, 29, 30};
+        unsigned k;
+        for (k = 0; k < sizeof keep / sizeof keep[0] && s_bad < 16; k++) {
+            int r = keep[k];
+            gpr before = keep0[k];
+            if ((uint32_t)st.r[r] != (uint32_t)before) {
+                s_bad++;
+                xhw_logf("[INTERP] %08x returned with r%d %08x (was %08x)", (unsigned)entry, r, (unsigned)st.r[r],
+                         (unsigned)before);
+                break;
+            }
+        }
+    }
     regs_out(&st, ctx);
     ctx->r31 = saved_ra;   /* back as the caller had it */
     last->st = outer;      /* an enclosing run's registers, not this frame's gone ones */
@@ -709,11 +760,39 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
  * game's run queue, which the runtime does not keep). One at a time.
  * 0: nothing to run. */
 uint32_t xu_self_sp(void);   /* ultra/thread.c */
+/* 0x80000000 still holds what the IPL3's copy left (boot.c), no handler the
+ * game wrote: Mario Tennis's own osInitialize is the runtime's, so its
+ * vectors are never written, and the IPL3's checksum loop there spun for
+ * ever (a `bal` to itself at 0x800001C4). XRC_REFILL_IPL3=1: run it anyway,
+ * as before */
+#ifndef XRC_REFILL_IPL3
+#define XRC_REFILL_IPL3 0
+#endif
+static int ipl3_vec(uint8_t* rdram) {
+    unsigned j;
+    if (XRC_REFILL_IPL3) return 0;
+    for (j = 0; j < 4; j++)
+        if (fetch(rdram, 0x80000000u + j * 4) != xrc_ipl3_vec[j]) return 0;
+    return 1;
+}
+/* a libultra global n64rx found (-DXRC_RUNNING_THREAD, -DXRC_OS_RUNQUEUE) as
+ * a KSEG0 address: a game's own copy linked in KUSEG (Acclaim's at
+ * 0x00100000) through its TLB, not the host alias, which a refill may be
+ * filling in; 0 while unmapped (left alone) */
+#if defined(XRC_RUNNING_THREAD) || defined(XRC_OS_RUNQUEUE)
+static uint32_t os_global(uint32_t a) {
+    uint32_t p;
+    if ((int32_t)a < 0) return a;
+    p = xrc_tlb_to_phys(a);
+    return p != ~0u ? 0x80000000u | p : 0;
+}
+#endif
+
 int xrc_interp_refill(uint32_t vaddr, int store) {
     static volatile long s_busy;
     uint8_t* rdram = xrc_rdram;
     recomp_context ctx;
-    uint32_t start = fetch(rdram, 0x80000000u) ? 0x80000000u : 0, sp;
+    uint32_t start = fetch(rdram, 0x80000000u) && !ipl3_vec(rdram) ? 0x80000000u : 0, sp;
 #ifdef XRC_OS_EXCEPTION
     if (!start) start = XRC_OS_EXCEPTION;
 #endif
@@ -736,27 +815,34 @@ int xrc_interp_refill(uint32_t vaddr, int store) {
     s_cop0[12] = 0x2000FF03u;                                             /* Status: EXL, interrupts on */
     s_cop0[14] = 0;                                                       /* EPC: not known */
 #ifdef XRC_RUNNING_THREAD
-    running = (uint32_t)MEM_W(0, XRC_RUNNING_THREAD);
+    running = os_global(XRC_RUNNING_THREAD) ? (uint32_t)MEM_W(0, os_global(XRC_RUNNING_THREAD)) : 0;
 #endif
 #ifdef XRC_OS_RUNQUEUE
     /* the game's run queue, which the runtime's threads never fill: a
      * sentinel of priority -1 below the handler's stack meanwhile, so the
      * dispatch after the handler returns to the running thread */
-    runq = (uint32_t)MEM_W(0, XRC_OS_RUNQUEUE);
+    runq = os_global(XRC_OS_RUNQUEUE) ? (uint32_t)MEM_W(0, os_global(XRC_OS_RUNQUEUE)) : 0;
     MEM_W(0, (uint32_t)ctx.r29 - 0x200u) = 0;
     MEM_W(4, (uint32_t)ctx.r29 - 0x200u) = -1;
-    MEM_W(0, XRC_OS_RUNQUEUE) = (int32_t)((uint32_t)ctx.r29 - 0x200u);
+    if (os_global(XRC_OS_RUNQUEUE)) MEM_W(0, os_global(XRC_OS_RUNQUEUE)) = (int32_t)((uint32_t)ctx.r29 - 0x200u);
 #endif
     {
         static unsigned s_n;
         if (s_n++ < 8) xhw_logf("[TLB] miss %08x: the game's exception code from %08x", (unsigned)vaddr, (unsigned)start);
+        if (XHW_TEST_BUILD && s_n == 1) {   /* the vectors the game wrote, for the disassembler */
+            uint32_t a;
+            for (a = 0x80000000u; a < 0x80000400u; a += 32)
+                xhw_logf("[TLB] vec %08x: %08x %08x %08x %08x %08x %08x %08x %08x", (unsigned)a,
+                         (unsigned)MEM_W(0, a), (unsigned)MEM_W(4, a), (unsigned)MEM_W(8, a), (unsigned)MEM_W(12, a),
+                         (unsigned)MEM_W(16, a), (unsigned)MEM_W(20, a), (unsigned)MEM_W(24, a), (unsigned)MEM_W(28, a));
+        }
     }
     run(rdram, &ctx, start, 0, 0, 1, 0);
 #ifdef XRC_RUNNING_THREAD
-    MEM_W(0, XRC_RUNNING_THREAD) = (int32_t)running;
+    if (os_global(XRC_RUNNING_THREAD)) MEM_W(0, os_global(XRC_RUNNING_THREAD)) = (int32_t)running;
 #endif
 #ifdef XRC_OS_RUNQUEUE
-    MEM_W(0, XRC_OS_RUNQUEUE) = (int32_t)runq;
+    if (os_global(XRC_OS_RUNQUEUE)) MEM_W(0, os_global(XRC_OS_RUNQUEUE)) = (int32_t)runq;
 #endif
     __sync_lock_release(&s_busy);
     return 1;
@@ -764,8 +850,53 @@ int xrc_interp_refill(uint32_t vaddr, int store) {
 
 static unsigned s_logged;
 
+/* a routine at a KUSEG address the game pages in through its TLB (Mario
+ * Tennis's module at 0x10000000): mapped first, through the game's own miss
+ * path, before the first fetch, as the safety net's lookup does (learn.c
+ * holds_code); a fault taken in the middle of a fetch ran the game's pager
+ * nested inside this run and its tables came out wrong. -DXRC_INTERP_MAP=0:
+ * as before */
+#ifndef XRC_INTERP_MAP
+#define XRC_INTERP_MAP 1
+#endif
+static void map_entry(uint32_t entry) {
+    if (XRC_INTERP_MAP && (int32_t)entry >= 0x10000 && xrc_tlb_to_phys(entry) == ~0u) (void)xrc_tlb_resolve(entry, 0);
+}
+
+uint32_t xrc_ovl_reloc_vram(uint32_t vram);   /* ovl.c */
 void xrc_interp(uint8_t* rdram, recomp_context* ctx, uint32_t entry) {
+    entry = xrc_ovl_reloc_vram(entry);   /* an overlay routine named by its link address: where it is loaded */
+#ifdef XRC_DIAG_POST   /* diagnosis: libaudio's alEvtqPostEvent(evtq, evt, delta) at this entry: who posts how much */
+    if (entry == (uint32_t)(XRC_DIAG_POST)) {
+        static unsigned s_n, s_at, s_logged;
+        unsigned now = xu_retrace();
+        if (now != s_at) {
+            if (s_n > 16 && s_logged < 40) s_logged++, xhw_logf("[POST] retrace %u: %u events posted", s_at, s_n);
+            s_at = now, s_n = 0;
+        }
+        if (++s_n == 17 && s_logged < 40)
+            xhw_logf("[POST] retrace %u: the 17th to %08x, type %04x delta %d, ra %08x", now, (unsigned)ctx->r4,
+                     (unsigned)((uint32_t)MEM_W(0, (uint32_t)ctx->r5) >> 16), (int)ctx->r6, (unsigned)ctx->r31);
+    }
+#endif
+#ifdef XRC_DIAG_EVTQ   /* diagnosis: libaudio's alEvtqNextEvent(evtq, evt) at this entry, interpreted: its queue, once it spins */
+    if (entry == (uint32_t)(XRC_DIAG_EVTQ)) {
+        static unsigned s_calls, s_at, s_dumped;
+        unsigned now = xu_retrace();
+        if (now != s_at) s_at = now, s_calls = 0;
+        if (++s_calls == 20000 && s_dumped++ < 2) {
+            uint32_t q = (uint32_t)ctx->r4, it = (uint32_t)MEM_W(8, q);
+            int k;
+            xhw_logf("[EVTQ] %08x: free %08x, alloc %08x, count %d", (unsigned)q, (unsigned)MEM_W(0, q), (unsigned)it,
+                     (int)MEM_W(0x10, q));
+            for (k = 0; k < 24 && it; k++, it = (uint32_t)MEM_W(0, it))
+                xhw_logf("[EVTQ]   %08x: next %08x prev %08x delta %d type %04x", (unsigned)it, (unsigned)MEM_W(0, it),
+                         (unsigned)MEM_W(4, it), (int)MEM_W(8, it), (unsigned)((uint32_t)MEM_W(0xC, it) >> 16));
+        }
+    }
+#endif
     if (s_logged < 16) s_logged++, xhw_logf("[INTERP] %08x: hand-written code, interpreted", (unsigned)entry);
+    map_entry(entry);
     run(rdram, ctx, entry, 0, 0, 0, 0);
 }
 
@@ -777,6 +908,7 @@ void xrc_interp(uint8_t* rdram, recomp_context* ctx, uint32_t entry) {
 void xrc_interp_ra(uint8_t* rdram, recomp_context* ctx, uint32_t entry);
 void xrc_interp_ra(uint8_t* rdram, recomp_context* ctx, uint32_t entry) {
     uint32_t ra = (uint32_t)ctx->r31;
+    entry = xrc_ovl_reloc_vram(entry);
     if (s_logged < 16) s_logged++, xhw_logf("[INTERP] %08x: hand-written code that reads ra (%08x), interpreted",
                                             (unsigned)entry, (unsigned)ra);
     run(rdram, ctx, entry, 0, 0, 0, ra >= 0x80000000u && ra != SENTINEL ? ra : 0);

@@ -13,21 +13,55 @@ void xrc_audio_rate(uint32_t hz);
 void xrc_audio_buffer(uint32_t buf, uint32_t bytes);
 
 #define AI_CATCHUP_MAX 4
+/* AI_LEN is what is left of the buffer playing now, never more than that
+ * buffer's own length; the backlog here can hold more (a game that queues
+ * ahead after a hitch). Castlevania: Legacy of Darkness sizes its next frame
+ * as target - length / 4 + 0x100 into a halfword: a length past one buffer
+ * wrapped it, the frame overran its buffer into the next one's header, and
+ * its audio manager read a sample as a pointer. -DXRC_AI_LEN_CLAMP=0: the
+ * whole backlog less the queued buffer, as before */
+#ifndef XRC_AI_LEN_CLAMP
+#define XRC_AI_LEN_CLAMP 1
+#endif
 static uint32_t s_rate = 22050;
-static int32_t s_pending, s_queued;
+static int32_t s_pending, s_queued, s_prev;   /* s_prev: the buffer before the queued one, in samples */
 static uint64_t s_last_us, s_frac;
 static uint32_t s_underruns;
 static uint64_t s_samples;
 
+/* OS_EVENT_AI per buffer, and on every retrace's look: the AI interrupts
+ * when the buffer playing ends and the queued one starts, and again when
+ * that one ends; and on the N64 it comes whether or not the game asks the
+ * AI anything. The event used to come only when the whole backlog ran out,
+ * and only from inside an osAi* call: All-Star Baseball 2000's audio thread
+ * waits on the event alone, made ~6 frames a second, and the sound events
+ * its game thread posted meanwhile overflowed its player's queue (the
+ * player's own tick was lost: a freeze). -DXRC_AI_EVENTS=0: as before */
+#ifndef XRC_AI_EVENTS
+#define XRC_AI_EVENTS 1
+#endif
 static void drain(void) {
     uint64_t now = xhw_time_us(), n;
+    int64_t after;
     if (!s_last_us) s_last_us = now;
     s_frac += (now - s_last_us) * s_rate;
     s_last_us = now;
     n = s_frac / 1000000ull;
     s_frac -= n * 1000000ull;
-    if (s_pending > 0 && (int64_t)s_pending - (int64_t)n <= 0) xu_post_event(OS_EVENT_AI);
+    after = (int64_t)s_pending - (int64_t)n;
+    if (s_pending > 0 && after <= 0) xu_post_event(OS_EVENT_AI);
+    else if (XRC_AI_EVENTS && s_queued > 0 && s_pending > s_queued && after <= s_queued)
+        xu_post_event(OS_EVENT_AI);   /* the buffer playing ended; the queued one plays */
     s_pending -= n > 0x10000000ull ? 0x10000000 : (int32_t)n;
+}
+
+/* vi.c, every retrace: the DAC drains on its own (the interrupt comes unasked) */
+void xu_ai_tick(void);
+void xu_ai_tick(void) {
+    if (!XRC_AI_EVENTS || s_pending <= 0) return;
+    xu_lock();   /* (the DAC's state is the game's audio thread's too) */
+    drain();
+    xu_unlock();
 }
 
 uint32_t xu_ai_underruns(void) { return s_underruns; }
@@ -57,26 +91,53 @@ ULTRA(osAiSetFrequency) {
 ULTRA(osAiSetNextBuffer) {
     uint32_t buf = ARG(0), size = ARG(1);
     (void)rdram;
+    xu_lock();
     drain();
     if (s_pending < -AI_CATCHUP_MAX * 368) {
         if (s_samples) s_underruns++;
         s_pending = 0;
     }
+    s_prev = s_queued;
     s_queued = (int32_t)(size >> 2);
     s_pending += s_queued;
     s_samples += size >> 2;
+    xu_unlock();
     xrc_audio_buffer(buf, size);
     RET(0);
 }
 
 ULTRA(osAiGetLength) {
     (void)rdram;
+    xu_lock();
     drain();
-    if (s_pending <= 0) RET(0);
-    else RET((uint32_t)(s_pending > s_queued ? s_pending - s_queued : s_pending) << 2);
+    if (s_pending <= 0) {
+        RET(0);
+    } else {
+        int32_t playing = s_pending > s_queued ? s_pending - s_queued : s_pending;
+        if (XRC_AI_LEN_CLAMP && s_pending > s_queued && s_prev > 0 && playing > s_prev) playing = s_prev;
+        RET((uint32_t)playing << 2);
+    }
+    xu_unlock();
+}
+
+/* AI_STATUS from the virtual DAC: busy while a buffer plays, FIFO full while
+ * another is queued behind it (the AI holds two). All-Star Baseball 2000
+ * fills the FIFO until it reads full: always 0, it synthesized ~200 frames a
+ * second and starved its game thread. -DXRC_AI_STATUS=0: 0, as before */
+#ifndef XRC_AI_STATUS
+#define XRC_AI_STATUS 1
+#endif
+uint32_t xu_ai_status(void) {
+    uint32_t st;
+    if (!XRC_AI_STATUS) return 0;
+    xu_lock();
+    drain();
+    st = s_pending <= 0 ? 0 : s_pending > s_queued ? 0xC0000000u : 0x40000000u;   /* FULL | BUSY, BUSY */
+    xu_unlock();
+    return st;
 }
 
 ULTRA(osAiGetStatus) {
     (void)rdram;
-    RET(0);
+    RET(xu_ai_status());
 }

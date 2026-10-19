@@ -177,6 +177,9 @@ static void boot_block(const xrom_info* info) {
 #ifndef XRC_IPL3_LEFT
 #define XRC_IPL3_LEFT 1
 #endif
+/* the refill vector's four words as the copy left them: a TLB miss runs
+ * 0x80000000 only once the game wrote its own handler there (interp.c) */
+uint32_t xrc_ipl3_vec[4];
 static uint32_t be32(const uint8_t* p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
 
 static void ipl3_left(void) {
@@ -200,6 +203,7 @@ static void ipl3_left(void) {
             y - x + d > (xrc_game.entrypoint & 0x1FFFFFFFu))
             continue;
         xu_rom_to_rdram(x, 0x80000000u + d, y - x);
+        for (j = 0; j < 4; j++) xrc_ipl3_vec[j] = rd32(0x80000000u + j * 4);
         xhw_logf("[BOOT] IPL3's last part in RDRAM %03x..%03x (DMEM %03x..%03x)", (unsigned)d, (unsigned)(d + y - x),
                  (unsigned)x, (unsigned)y);
         return;

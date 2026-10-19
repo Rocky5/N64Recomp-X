@@ -1541,6 +1541,8 @@ static void tiles_setup(void) {
         s_fb_ap_base = base;
         s_fb_ap_end = end;
     }
+    xhw_logf("[NV2A] tile limits %08x %08x, pitches %x %x", (unsigned)VIDEOREG(NV_PFB_TLIMIT),
+             (unsigned)VIDEOREG(NV_PFB_TLIMIT + 16), (unsigned)VIDEOREG(NV_PFB_TILE + 8), (unsigned)VIDEOREG(NV_PFB_TILE + 16 + 8));
     xhw_logf("[NV2A] tiles: XGFX_TILE %d%s%s, tile 0 %08x, tile 1 %08x zcomp %08x, CPU framebuffer access %s",
              XGFX_TILE, fb_ok ? "" : XGFX_TILE_MISMATCH_OFF ? " (fb pitch differs: tile off)" : " (fb pitch differs: untouched)",
              z_ok ? "" : XGFX_TILE_MISMATCH_OFF ? " (depth pitch differs: tile and zcomp off)" : " (depth pitch differs: untouched)",

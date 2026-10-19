@@ -49,6 +49,12 @@ Rules:
 | Experimental | Majora's Mask (US) | `NZSE` 1.0 | `vmm9`: crashes at boot | the crash (a fix staged in `vmm12`) |
 | Experimental | Jet Force Gemini (US) | `NJFE` 1.0 | `vjfg1`: Rare logo, a broken menu, slow, silent | Rare's own GBI and audio microcode |
 | Experimental | Kirby 64 - The Crystal Shards (E) | `NK4P` 1.0 | not run on a console | first run (`vk1` staged); in xemu: intro, the tutorial rooms; one HUD icon garbled |
+| Experimental | Mario Tennis (US) | `NM8E` 1.0 | not run on a console | first run; in xemu: intro, title, menus, character select, a match (the ROM alone + learning rounds with input); slow in matches while code is still learnt |
+| Experimental | Castlevania - Legacy of Darkness (US) | `ND4E` 1.0 | not run on a console | first run; in xemu (the ROM alone + 3 learning rounds): intro, title, Game Start, the new-game opening, Foggy Lake with the HUD and the pause menu, ~30 fps |
+| Experimental | All-Star Baseball 2000 (US) | `NBEE` 1.0 | not run on a console | first run; in xemu (the ROM alone + 26 learning rounds): legal screens, title, Main Setup, Controllers, the line-up, a game in the Metrodome (batting, pitches, ~22 fps) |
+| Experimental | All-Star Baseball 2001 (US) | `NASE` 1.0 | not run on a console | first run; in xemu (the ROM alone + 14 learning rounds): menus and a game (batting, ~22 fps) |
+| Experimental | All-Star Baseball '99 (US) | `NBSE` 1.0 | not run on a console | first run; in xemu (the ROM alone + 6 learning rounds): legal screen, Team Select, Controllers, a game (batting) |
+| Experimental | South Park: Chef's Luv Shack (US) | `NCYE` 1.0 | not run on a console | first run; in xemu (the ROM alone + 9 learning rounds): the title, Who's Playing, the menus; its logo draws wrong (the title's green background and red block, the letters) |
 | Experimental | every other game | - | - | `docs/analyzer.md` ranks what stops the library (the sweep) |
 
 ## How a row changes

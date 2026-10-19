@@ -61,6 +61,7 @@ uint32_t xrc_ovl_function_count(void) { return s_nfuncs; }
 static uint32_t* s_sec_base;   /* section -> the table index of its first function */
 static uint8_t* s_ovl;         /* section shares its vram with another */
 static uint8_t* s_active;      /* overlay: the one the table maps now */
+static uint8_t* s_gone;        /* a section another ROM range was loaded over (xrc_ovl_dma) */
 static uint32_t s_novl, s_interp_base;
 
 /* the routines n64rx hands to the interpreter (interp.c, PLAN.md 3.14):
@@ -122,9 +123,10 @@ int xrc_ovl_init(void) {
         section_addresses = (int32_t*)calloc(xrc_game.num_sections, sizeof(int32_t));
     if (!s_funcs || !section_addresses) return 0;
     s_sec_base = (uint32_t*)calloc(xrc_game.num_sections + 1, sizeof *s_sec_base);
-    s_ovl = (uint8_t*)calloc(xrc_game.num_sections + 1, 2);
+    s_ovl = (uint8_t*)calloc(xrc_game.num_sections + 1, 3);
     if (!s_sec_base || !s_ovl) return 0;
     s_active = s_ovl + xrc_game.num_sections + 1;
+    s_gone = s_active + xrc_game.num_sections + 1;
     for (i = 0; i < xrc_ultra_count; i++)   /* first: a recompiled function at the same address wins */
         enter(xrc_ultra_table[i].vram, xrc_ultra_table[i].fn);
     for (i = 0; i < xrc_game.num_sections; i++) {
@@ -225,16 +227,150 @@ static void activate(size_t i) {
                  (unsigned)s->num_funcs);
 }
 
+/* A section alone at its address is an overlay too when the game loads
+ * other ROM there (Castlevania: Legacy of Darkness DMAs each actor's code to
+ * 0x801CAEA0; one actor's was learnt and recompiled, and ran for the others:
+ * a call through NULL). A DMA from another ROM range over a section's
+ * functions unmaps them there (the net runs what RAM holds); the section's
+ * own DMA maps them again. Captured code (past the ROM) has the guard
+ * instead. -DXRC_OVL_FOREIGN=0: as before */
+#ifndef XRC_OVL_FOREIGN
+#define XRC_OVL_FOREIGN 1
+#endif
+uint32_t xhw_rom_size(void);
+static void foreign(uint32_t rom, uint32_t ram, uint32_t size) {
+    size_t i;
+    uint32_t j;
+    static unsigned s_logged;
+    for (i = 0; i < xrc_game.num_sections; i++) {
+        const SectionTableEntry* s = &xrc_game.sections[i];
+        int own;
+        if (s_ovl[i] || !s->size || !s->num_funcs || s->rom_addr >= xhw_rom_size()) continue;
+        if (ram >= s->ram_addr + s->size || s->ram_addr >= ram + size) continue;
+        own = rom < s->rom_addr + s->size && s->rom_addr < rom + size && ram - rom == s->ram_addr - s->rom_addr;
+        if (own) {
+            if (s_gone[i]) {
+                for (j = 0; j < s->num_funcs; j++) set_index(s->ram_addr + s->funcs[j].offset, (uint16_t)(s_sec_base[i] + j));
+                s_gone[i] = 0;
+            }
+            continue;
+        }
+        for (j = 0; j < s->num_funcs; j++) {
+            uint32_t v = s->ram_addr + s->funcs[j].offset;
+            if (v - ram < size) set_index(v, 0);
+        }
+        if (!s_gone[i] && s_logged++ < 16)
+            xhw_logf("[OVL] %08x: ROM %x loaded over the code from ROM %x: its functions there unmapped", (unsigned)ram,
+                     (unsigned)rom, (unsigned)s->rom_addr);
+        s_gone[i] = 1;
+    }
+}
+
+/* ---- overlays the game relocates itself (n64rx analyze/zovl.py) ----
+ * The Zelda engine links each overlay at an address of its own above the
+ * RAM and loads it where its allocator has room; n64rx recompiles each one
+ * as a relocatable section at its link address (its own references read
+ * section_addresses through RELOC_HI16/LO16) and hooks the game's
+ * relocation routine (Overlay_Relocate(ram, header, link vram) in the
+ * decomps): here, before the game patches the bytes, the section is mapped
+ * where it landed and its references pointed there. What the table mapped
+ * in that range before (another overlay that lived there, the safety net's
+ * stubs) is cleared first, and the section's last place is unmapped.
+ * -DXRC_RELOC_OVL=0: nothing mapped (the safety net runs the overlay). */
+#ifndef XRC_RELOC_OVL
+#define XRC_RELOC_OVL 1
+#endif
+static uint32_t* s_reloc_at;   /* section -> where it is mapped now (0: nowhere) */
+void xrc_learn_reloc(uint32_t vram, uint32_t ram, uint32_t len);   /* learn.c */
+static int put_index(uint32_t vram, uint16_t idx) {   /* set_index, making the page */
+    uint16_t** pg = page_ptr(vram, 1);
+    if (!pg) return 0;
+    if (!*pg && !(*pg = (uint16_t*)calloc(PAGE_WORDS, sizeof(uint16_t)))) return 0;
+    (*pg)[SLOT(vram)] = idx;
+    return 1;
+}
+/* section k's functions off the table at the place it was mapped (those
+ * entries that are still its own) */
+static void reloc_unmap(size_t k) {
+    const SectionTableEntry* o = &xrc_game.sections[k];
+    uint32_t j;
+    if (!s_reloc_at[k]) return;
+    for (j = 0; j < o->num_funcs; j++) {
+        uint32_t at = s_reloc_at[k] + o->funcs[j].offset;
+        uint16_t** pg = page_ptr(at, 0);
+        if (pg && *pg && (*pg)[SLOT(at)] == (uint16_t)(s_sec_base[k] + j)) (*pg)[SLOT(at)] = 0;
+    }
+    s_reloc_at[k] = 0;
+}
+
+void xrc_ovl_relocate(uint32_t ram, uint32_t hdr, uint32_t vram) {
+    static unsigned s_logged, s_unknown;
+    size_t i, k;
+    uint32_t j, v, len;
+    const SectionTableEntry* s = NULL;
+    if (!XRC_RELOC_OVL || !s_funcs) return;
+    ram = (ram & 0x1FFFFFFFu) | 0x80000000u;
+    if (!s_reloc_at && !(s_reloc_at = (uint32_t*)calloc(xrc_game.num_sections, sizeof *s_reloc_at))) return;
+    for (i = 0; i < xrc_game.num_sections; i++)
+        if (xrc_game.sections[i].num_relocs && xrc_game.sections[i].ram_addr == vram) break;
+    if (i < xrc_game.num_sections) s = &xrc_game.sections[i];
+    /* the code and data it occupies, from its header in RDRAM (text, data,
+     * rodata sizes): whatever the table mapped there (an overlay that lived
+     * there before, all of it; the safety net's stubs) is not this code */
+    hdr = (hdr & 0x1FFFFFFFu) | 0x80000000u;
+    len = xrc_word(hdr) + xrc_word(hdr + 4) + xrc_word(hdr + 8);
+    if (s && s->size > len) len = s->size;
+    if (len > 0x200000u) len = s ? s->size : 0;
+    xrc_learn_reloc(vram, ram, len);   /* for the next build: the overlays a run used (learn.c) */
+    for (k = 0; k < xrc_game.num_sections; k++)
+        if (s_reloc_at[k] && s_reloc_at[k] < ram + len && ram < s_reloc_at[k] + xrc_game.sections[k].size) reloc_unmap(k);
+    for (v = ram; v < ram + len; v += 4) set_index(v, 0);
+    if (!s) {
+        if (s_unknown++ < 8)
+            xhw_logf("[OVL] relocated to %08x: no section linked at %08x (the safety net runs it)", (unsigned)ram, (unsigned)vram);
+        return;
+    }
+    reloc_unmap(i);   /* its last place */
+    section_addresses[s->index] = (int32_t)ram;
+    for (j = 0; j < s->num_funcs; j++) put_index(ram + s->funcs[j].offset, (uint16_t)(s_sec_base[i] + j));
+    s_reloc_at[i] = ram;
+    if (s_logged++ < 24)
+        xhw_logf("[OVL] %08x: the overlay linked at %08x relocated here (%u functions)", (unsigned)ram, (unsigned)vram,
+                 (unsigned)s->num_funcs);
+}
+
+/* a link address inside a relocatable overlay -> where the game relocated
+ * it now (the interpreter's entry for an overlay routine n64rx left to it:
+ * its stub names the link address); other addresses as they are */
+uint32_t xrc_ovl_reloc_vram(uint32_t vram) {
+    size_t i;
+    if (!XRC_RELOC_OVL || !s_reloc_at || vram < 0x80800000u) return vram;
+    for (i = 0; i < xrc_game.num_sections; i++) {
+        const SectionTableEntry* s = &xrc_game.sections[i];
+        if (s->num_relocs && vram - s->ram_addr < s->size)
+            return s_reloc_at[i] ? s_reloc_at[i] + (vram - s->ram_addr) : vram;
+    }
+    return vram;
+}
+
 void xrc_ovl_dma(uint32_t rom, uint32_t ram, uint32_t size);
 void xrc_ovl_dma(uint32_t rom, uint32_t ram, uint32_t size) {
     size_t i;
-    if (!XRC_OVERLAYS || !s_novl || !size) return;
+    if (!size) return;
     ram = (ram & 0x1FFFFFFFu) | 0x80000000u;
+    if (XRC_OVL_FOREIGN && s_gone) foreign(rom, ram, size);
+    if (!XRC_OVERLAYS || !s_novl) return;
     for (i = 0; i < xrc_game.num_sections; i++) {
         const SectionTableEntry* s = &xrc_game.sections[i];
         if (!s_ovl[i] || s_active[i]) continue;
         /* from inside its ROM range, to where that ROM sits when it is loaded */
         if (rom < s->rom_addr + s->size && s->rom_addr < rom + size && ram - rom == s->ram_addr - s->rom_addr)
             activate(i);
+        else if (XHW_TEST_BUILD && rom < s->rom_addr + s->size && s->rom_addr < rom + size) {
+            static unsigned s_other;   /* diagnosis: its ROM taken somewhere else (a buffer, a copy) */
+            if (s_other++ < 16)
+                xhw_logf("[OVL] ROM %x (%x bytes) to %08x: inside the overlay at %08x (ROM %x), but not to its place",
+                         (unsigned)rom, (unsigned)size, (unsigned)ram, (unsigned)s->ram_addr, (unsigned)s->rom_addr);
+        }
     }
 }

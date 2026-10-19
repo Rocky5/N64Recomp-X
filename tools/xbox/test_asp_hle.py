@@ -53,10 +53,10 @@ BUILDS = [
 ]
 # the console's ISA, 32-bit, with a second compiler (gcc): optional, needs an i686 toolchain
 BUILDS_32 = [
-    ("i686-p3-mmx", ["-O2", "-march=pentium3"], "main"),
-    ("i686-p3-scalar", ["-O2", "-march=pentium3", "-DASP_SCALAR"], "main"),
-    ("i686-p3-ws", ["-O2", "-march=pentium3", "-DASP_HLE_WORDSWAP=1"], "ws"),
-    ("i686-p3-ws-scalar", ["-O2", "-march=pentium3", "-DASP_HLE_WORDSWAP=1", "-DASP_SCALAR"], "ws"),
+    ("i686-p3-mmx", ["-O2", "-march=pentium3", "-DASP_HLE_LOW_GUARD=0"], "main"),
+    ("i686-p3-scalar", ["-O2", "-march=pentium3", "-DASP_SCALAR", "-DASP_HLE_LOW_GUARD=0"], "main"),
+    ("i686-p3-ws", ["-O2", "-march=pentium3", "-DASP_HLE_WORDSWAP=1", "-DASP_HLE_LOW_GUARD=0"], "ws"),
+    ("i686-p3-ws-scalar", ["-O2", "-march=pentium3", "-DASP_HLE_WORDSWAP=1", "-DASP_SCALAR", "-DASP_HLE_LOW_GUARD=0"], "ws"),
 ]
 
 

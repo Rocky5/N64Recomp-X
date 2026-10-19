@@ -75,6 +75,8 @@ typedef struct {
     uint32_t cmds[33];    /* commands by opcode; [32] = unknown or unimplemented opcodes (ignored) */
     uint32_t bad_addr;    /* transfers skipped: the callback returned NULL */
     uint32_t rom_lut;     /* 1: the ROM's resampler table is installed */
+    uint32_t low_n, low_w0, low_w1, low_addr;   /* stores below RDRAM 0x1000 (diagnosis): count, the first */
+    uint32_t low_task, low_index, low_prev[12];  /* its task number, command index, the six commands before */
 } asp_hle_stats_t;
 
 const asp_hle_stats_t* asp_hle_stats(void);

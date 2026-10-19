@@ -878,7 +878,10 @@ build:
         return NULL;
     }
 #ifdef XGFX_TEXLOG   /* debug: -DXGFX_TEXLOG=<n>, the first n textures made (format, size, palette, source) */
-    {
+#ifndef XGFX_TEXLOG_FROM
+#define XGFX_TEXLOG_FROM 0   /* from this frame on */
+#endif
+    if (s_frame_no >= (unsigned)(XGFX_TEXLOG_FROM)) {
         static unsigned s_tl;
         if (s_tl++ < (unsigned)(XGFX_TEXLOG))
             xhw_logf("[TEX] %u: fmt %d siz %d %ux%u line %u pal %u tlut %u (%04x %04x) %s %08x %u bytes dxt %u, px0 %08x",
@@ -1001,12 +1004,32 @@ static void bind_unit(int u, int tidx) {
     s_v_off[u] = t->ult * 0.25f / (float)e->ph;
 }
 
+#ifndef XGFX_BLEND_MEM
+#define XGFX_BLEND_MEM 1
+#endif
 /* N64 render mode -> XgfxState pixel choices (wings64-dc draw_state) */
 static void pixel_state(int depth_override_always) {
     uint32_t rm = R.oml;
     int cycle = (R.omh >> F3D_G_MDSFT_CYCLETYPE) & 3;
     int zb = (R.geom & F3D_G_ZBUFFER) && !depth_override_always;
     s_st.blend = ((rm & F3D_FORCE_BL) && cycle < 2) ? XGFX_BLEND_ALPHA : XGFX_BLEND_OFF;
+    /* a one-cycle blender that never reads the frame (no MEM as P or M in
+     * either cycle's fields: All-Star Baseball 2000's sky and grass, IN * 0 +
+     * IN * 1 under FORCE_BL) writes its input as it is: no blending with the
+     * combiner's alpha, which was 0 there (the sky came out the clear colour).
+     * -DXGFX_BLEND_MEM=0: FORCE_BL alone blends, as before */
+    if (XGFX_BLEND_MEM && s_st.blend == XGFX_BLEND_ALPHA && cycle == 0) {
+        uint32_t p0 = (rm >> 30) & 3, p1 = (rm >> 28) & 3, m0 = (rm >> 22) & 3, m1 = (rm >> 20) & 3;
+        if (p0 != 1 && p1 != 1 && m0 != 1 && m1 != 1) {
+            s_st.blend = XGFX_BLEND_OFF;
+            if (XHW_TEST_BUILD) {   /* which render modes this changes, once each */
+                static uint32_t s_seen[8];
+                unsigned k;
+                for (k = 0; k < 8 && s_seen[k] && s_seen[k] != rm; k++) {}
+                if (k < 8 && !s_seen[k]) s_seen[k] = rm, xhw_logf("[GFX] render mode %08x: FORCE_BL, no MEM read: opaque", (unsigned)rm);
+            }
+        }
+    }
     if ((rm & 3) == 1)   /* G_AC_THRESHOLD: against the blend colour's alpha */
         s_st.alpha_ref = R.blend[3] ? R.blend[3] : 1;
     else if ((rm & F3D_CVG_X_ALPHA) && cycle < 2)
@@ -1212,6 +1235,12 @@ static void overlay_full(XgfxVtx* p, int n) {
  * not) comes out as the RDP's; colours do not exist here. -DXGFX_PROBE=0:
  * the copies draw on the screen, as before (the photo check sees nothing) */
 #define PROBE_MAX 256
+#ifndef XGFX_PROBE_MAXW
+#define XGFX_PROBE_MAXW 16u
+#endif
+#ifndef XGFX_PROBE_ROWS
+#define XGFX_PROBE_ROWS 2
+#endif
 static struct {
     int on, pending, logged;
     uint32_t main;               /* the frame's colour image */
@@ -1233,6 +1262,11 @@ static void probe_reset(void) {
 static void probe_load(uint32_t addr, unsigned x0, unsigned y0, unsigned x1, unsigned y1, unsigned siz) {
     unsigned w = x1 - x0 + 1u, h = y1 - y0 + 1u;
     s_probe.pending = 0;
+    /* a one-row region is a picture copied out a strip at a time (Mario Tennis's 32x32
+     * capture in 69x1 loads), not a test of what was drawn there: the copies stay on the
+     * normal path (the probe made each strip a grid of its own; the match ran at 12 fps
+     * against 30). -DXGFX_PROBE_ROWS=1: probed too */
+    if (h < XGFX_PROBE_ROWS) return;
     if (!R.cimg || R.cimg == R.zimg || (addr & 0x1FFFFFFFu) != (R.cimg & 0x1FFFFFFFu) || siz != 2u || w * h > PROBE_MAX)
         return;
     if (!s_probe.on || (int)x0 != s_probe.x0 || (int)y0 != s_probe.y0 || (int)w != s_probe.w || (int)h != s_probe.h) {
@@ -1256,25 +1290,60 @@ static int probe_cimg(uint32_t c, unsigned w, unsigned siz) {
         s_probe.target = 0;
         return 0;
     }
-    if (s_probe.pending && siz == 2u && w <= 32u) {
+    /* at most 16 wide: Pokemon Snap's photo check copies into 8-wide images; Mario
+     * Tennis captures a 32x32 picture of the frame in strips (128 copies a frame), no
+     * test of what was drawn, and the marks ran a row past its image into the game's
+     * own data (-DXGFX_PROBE_MAXW=32: as before) */
+    if (s_probe.pending && siz == 2u && w <= XGFX_PROBE_MAXW) {
         s_probe.target = c;
         s_probe.tw = w;
+        if (XHW_TEST_BUILD) {   /* diagnosis: the copy targets */
+            static uint32_t s_seen[8];
+            static unsigned s_n;
+            unsigned k;
+            for (k = 0; k < s_n && s_seen[k] != c; k++) {}
+            if (k == s_n && s_n < 8) s_seen[s_n++] = c, xhw_logf("[GFX] probe target %08x, %u wide (frame %u)", (unsigned)c, w, (unsigned)s_frame_no);
+        }
         return 1;
     }
     return 0;
 }
 
 /* a texrect into the copy's target: the grid's numbers into RDRAM */
+#ifndef XGFX_PROBE_CLIP
+#define XGFX_PROBE_CLIP 1
+#endif
 static int probe_copy(uint32_t w0, uint32_t w1) {
     uint16_t xl, yl, xh, yh;
     uint8_t tile;
-    int i, j;
+    int i, j, cw, ch;
     if (!s_probe.target || R.cimg != s_probe.target) return 0;
     f3d_texrect_decode(w0, w1, &xl, &yl, &xh, &yh, &tile);
-    for (j = 0; j < s_probe.h; j++)
-        for (i = 0; i < s_probe.w; i++) {
+    /* no more than the texrect covers: Mario
+     * Tennis's attract demo copies less than the region it loaded, and writing the
+     * whole region at the rect put the marks over its archive handle beside the
+     * target. -DXGFX_PROBE_CLIP=0: the region's size, as before */
+    {
+        int rw = xh >= xl ? ((xh - xl) >> 2) + 1 : 0, rh = yh >= yl ? ((yh - yl) >> 2) + 1 : 0;   /* copy mode: inclusive */
+        cw = XGFX_PROBE_CLIP && rw < s_probe.w ? rw : s_probe.w;
+        ch = XGFX_PROBE_CLIP && rh < s_probe.h ? rh : s_probe.h;
+    }
+    if (XHW_TEST_BUILD) {   /* diagnosis: where the copies land */
+        static unsigned s_n;
+        if (s_n++ < 24)
+            xhw_logf("[GFX] probe copy to %08x: rect %u,%u-%u,%u, region %dx%d, scissor %d,%d-%d,%d (frame %u)",
+                     (unsigned)s_probe.target, xl >> 2, yl >> 2, xh >> 2, yh >> 2, s_probe.w, s_probe.h, (int)s_scissor[0],
+                     (int)s_scissor[1], (int)s_scissor[2], (int)s_scissor[3], (unsigned)s_frame_no);
+    }
+    for (j = 0; j < ch; j++)
+        for (i = 0; i < cw; i++) {
             unsigned dx = (unsigned)(xl >> 2) + (unsigned)i, dy = (unsigned)(yl >> 2) + (unsigned)j;
             if (dx >= s_probe.tw) continue;
+            /* and inside the scissor, as the RDP clips (the attract demo's copy lands past
+             * the target's rows otherwise) */
+            if (XGFX_PROBE_CLIP && ((float)dx < s_scissor[0] || (float)dx >= s_scissor[2] || (float)dy < s_scissor[1] ||
+                                    (float)dy >= s_scissor[3]))
+                continue;
             wr16(XU_K0(s_probe.target + 2u * (dy * s_probe.tw + dx)),
                  (uint16_t)((s_probe.id[j * s_probe.w + i] << 1) | 1u));
         }
@@ -1302,12 +1371,23 @@ static void probe_tri(const XgfxVtx* a, const XgfxVtx* b, const XgfxVtx* c) {
     float area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
     float rx0 = (float)s_probe.x0, ry0 = (float)s_probe.y0, rx1 = rx0 + (float)s_probe.w, ry1 = ry0 + (float)s_probe.h;
     int zb = (R.geom & F3D_G_ZBUFFER) != 0, cmp = zb && (R.oml & F3D_Z_CMP), upd = zb && (R.oml & F3D_Z_UPD), i, j;
+    int i0, i1, j0, j1;
     if (area == 0.0f) return;
     if ((ax < rx0 && bx < rx0 && cx < rx0) || (ax >= rx1 && bx >= rx1 && cx >= rx1) ||
         (ay < ry0 && by < ry0 && cy < ry0) || (ay >= ry1 && by >= ry1 && cy >= ry1))
         return;
-    for (j = 0; j < s_probe.h; j++)
-        for (i = 0; i < s_probe.w; i++) {
+    {   /* only the grid pixels under the triangle's bounding box (the region can be 85x3: every
+         * triangle of a frame scanned all of it cost Mario Tennis's match 40 ms a frame in xemu) */
+        float mnx = ax < bx ? (ax < cx ? ax : cx) : (bx < cx ? bx : cx), mxx = ax > bx ? (ax > cx ? ax : cx) : (bx > cx ? bx : cx);
+        float mny = ay < by ? (ay < cy ? ay : cy) : (by < cy ? by : cy), mxy = ay > by ? (ay > cy ? ay : cy) : (by > cy ? by : cy);
+        i0 = (int)(mnx - rx0 - 1.0f), i1 = (int)(mxx - rx0 + 1.0f), j0 = (int)(mny - ry0 - 1.0f), j1 = (int)(mxy - ry0 + 1.0f);
+        if (i0 < 0) i0 = 0;
+        if (j0 < 0) j0 = 0;
+        if (i1 > s_probe.w - 1) i1 = s_probe.w - 1;
+        if (j1 > s_probe.h - 1) j1 = s_probe.h - 1;
+    }
+    for (j = j0; j <= j1; j++)
+        for (i = i0; i <= i1; i++) {
             float px = rx0 + (float)i + 0.5f, py = ry0 + (float)j + 0.5f;
             float e0 = (bx - px) * (cy - py) - (by - py) * (cx - px);   /* a's weight x area */
             float e1 = (cx - px) * (ay - py) - (cy - py) * (ax - px);

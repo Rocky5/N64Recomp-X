@@ -327,11 +327,14 @@ HILOGAIN), checked against the maintainer's ROMs and the known variants.
 ## Saves (2026-10-16, PLAN.md 3.6)
 
 **Which pak a port holds: AUTO by default** (`savedev.c`). A port answers as
-a Controller Pak until the game writes the Rumble Pak probe (0xFE or 0x80
-to 0x8000) before it ever read the pak's file system; then it is a Rumble
-Pak until a restart. Games that keep saves on the pak and probe for rumble
-later keep their saves (a save matters more than a motor); rumble through
-the replaced osMotor* works whatever the port holds. The BACK menu's Paks
+both: a Controller Pak below 0x8000 (its file system), a Rumble Pak from
+0x8000 up (the probe reads 0x80 back, the motor at 0xC000), so a game that
+probes the motor first still finds its saves (All-Star Baseball 2000 said
+"no Controller Pak found" under the rule before, 2026-10-19,
+`-DXRC_PAK_BOTH=0` restores it: a Controller Pak until the game writes the
+Rumble Pak probe before it ever read the file system, then a Rumble Pak
+until a restart). Rumble through the replaced osMotor* works whatever the
+port holds. The BACK menu's Paks
 page (below) sets it per port: `[portN] pak = auto|controller|rumble|none`.
 
 **One `.mpk` per port** (`<id>.mpk` for port 1, `<id>-2.mpk`..`<id>-4.mpk`),
@@ -946,3 +949,288 @@ ring; osRecvMesg by "writes `first`, reads the fullqueue (+4), not the
 mtqueue (+0)" when its arg1 is spilled to the stack. Features carry a
 function's tail calls (`Feat.tails`). With it Mario Tennis runs on to a
 stall (below, `docs/handoff.md`).
+
+## Mario Tennis from its ROM alone: what the analyser and runtime learnt (2026-10-18/19, xemu)
+
+Camelot's games inflate their code into RDRAM and keep scenes' code at one
+address. Each change below has a kill switch; the default is the good build.
+
+- **A second copy of a libultra function is named too** (`libultra.py`
+  `Namer.twin`, `N64RX_ULTRA_TWINS`). Mario Tennis links osStartThread
+  twice (one with the `__osRunningThread == NULL` dispatch, one without);
+  only the first was named, the game started its main thread through the
+  other on its own run queue, and thread 1 idled at priority 0 with
+  nothing else running. The second becomes `osStartThread__2`, a body
+  that calls the runtime's (`gen/xrc_alias.c`). Other rules skip twins.
+- **osVirtualToPhysical with the probe inside** (`N64RX_KSEG_PROBE`):
+  a `tlbp` function that also returns arg0's low 29 bits for KSEG0/KSEG1
+  is osVirtualToPhysical, not `__osProbeTLB` (whose runtime version, true
+  to libultra's, returns -1 for KSEG0). Mario Tennis mapped 0x02001000
+  onto physical 0 through it.
+- **Camelot's D-cache routines** (index-load-tag then hit-writeback,
+  cache ops 5 and 25) are osWritebackDCacheAll / osWritebackDCache;
+  interpreted before (their `mfc0 TagLo`), 1.5 million instructions a
+  run.
+- **A TLB miss runs 0x80000000 only when the game wrote a handler there**
+  (`interp.c`, `boot.c xrc_ipl3_vec`, `-DXRC_REFILL_IPL3=1` to run it
+  anyway): the runtime's osInitialize never writes the game's vectors, so
+  0x80000000 held the IPL3's leftover code, whose checksum loop ends in a
+  `bal` to itself.
+- **A `jal` into another function's body interprets the caller**
+  (`emit.cross_funcs`, `N64RX_XJAL_INTERP`): N64Recomp makes the target a
+  static function to the next symbol, whose branches past it do not compile.
+- **Several versions of captured code at one address** (`learn.py`
+  `_choose`, `_versions`; `N64RX_LEARN_MAJORITY`, `N64RX_CODE_VERSIONS`):
+  a captured page's bytes are the version seen most often (one round caught
+  0x80042000 mid-load); other versions that differ in a quarter of their
+  words or more are kept, and a run of pages with such versions becomes
+  one overlay per version at the same vram (`code_<vram>_v<n>`, keyed by
+  the ROM offset they are appended at, as Pokémon Snap's levels are).
+  The guard (`guard.c`, `-DXRC_GUARD_VERSIONS`) runs the version whose
+  bytes RDRAM holds: a miss tries the entries beside it at that vram; each
+  version's body is in `xrc_guard_body`. Versioned entries are checked
+  again each retrace (`-DXRC_GUARD_RETRACE`): the CPU writes a scene's
+  code with no DMA the guard sees.
+- **A learnt start is a root only where the bytes look like one starts**
+  (`learn._plausible`, `N64RX_LEARN_STARTS`): a frame opened there, or the
+  code before ending in `jr ra` / `j` and its delay slot. The menu's
+  learnt starts on the intro's bytes at the same address split the intro's
+  functions, and the recompiled intro code wrote a display list through a
+  pointer of 0x80 as the menu loaded.
+- **A captured function whose walk runs out of its segment is
+  interpreted** (`romonly.py`, `N64RX_RUNOUT_INTERP`): pages captured with
+  gaps between them (Mario Tennis's KUSEG 0x50000000, 0x50002000,
+  0x50005000) recompiled it cut short, and it returned mid-way.
+- **Captured code at TLB-mapped addresses is checked again** after every
+  TLB write and every invalidation (`xrc_guard_kuseg`,
+  `-DXRC_GUARD_KUSEG`): the game invalidates by the KSEG0 address and
+  remaps the TLB over other pages.
+- **An interpreted routine at a KUSEG address is mapped before it runs**
+  (`interp.c map_entry`, `-DXRC_INTERP_MAP`), through the game's own miss
+  path, as the safety net's lookup does: Mario Tennis pages its module at
+  0x10000000 in on demand, and a fault in the middle of the interpreter's
+  fetch ran the game's pager nested in that run (its tables came out
+  wrong, a read through 0x10001 in its archive walker).
+
+## The cartridge through KSEG1 for recompiled code (2026-10-19, `mmio.c xrc_cart_fault`, `-DXRC_CART_WINDOW`)
+
+A Bug's Life and Toy Story 2 (Traveller's Tales) read their ROM with plain
+loads at 0xB0000000 + offset; the interpreter had the model for it, the
+recompiled code faulted at host P + 0xB0xxxxxx. The crash guard's fixup
+now maps a page of our own there, filled from the ROM in RDRAM's word
+order, and the load runs again; 64 such pages at most, reused oldest
+first. DIVERGES: a store to the ROM lands in the page until it is reused.
+
+## The whole ROM at the cartridge's KSEG1 addresses (2026-10-19, `xhw_rom_cart_map`, `-DXRC_CART_WHOLE`)
+
+A Bug's Life reads its data in place from ROM addresses (0xB08D180C passed
+as a struct pointer, megabytes of it): the page window (above) filled its
+1 MB and reusing pages bugchecked (a page unmapped in our own tables and
+touched again is a 0xA in the kernel). A ROM held whole in RAM is now
+mapped there whole, read only, on the first such fault: the resident image
+(page-aligned now) is put in RDRAM's word order once, under a guard that
+lets no reader in mid-swap, and `xhw_rom_read` hands out big-endian bytes
+from it as before (a piece at a time); `xhw_rom_resident` returns NULL from
+then on. Past the ROM's end the bus answers with the address (16 shared
+open-bus pages). A ROM in the page cache keeps the page window. DIVERGES:
+a store to the ROM through KSEG1 faults.
+
+## Audio: NULL saves dropped, a microcode per task (2026-10-19, Castlevania: Legacy of Darkness)
+
+A watch on the game's own code at 0x80000864 (found zero when called) named
+the audio HLE: aspMain lists that end `06000000 00000000` (or a save to
+0x280) wrote the output buffer over RDRAM 0..0xA00, where this game's code
+starts (0x80000400). A SAVEBUFF to address word 0 is dropped
+(`ASP_HLE_NULL_SAVE=1`: written, as before); each task's microcode data is
+looked up and a new one identified as the first was, four kept
+(`-DXRC_AUDIO_MULTI_UC=0`: the first task's for all). The saves to 0x280
+come and go between boots: they are a symptom of the thread order below.
+
+## N64 priorities that share a host level, kept apart on request (2026-10-19, `rank_update`, `-DXRC_RANK_LEVELS`, `-DXRC_SEND_YIELD`)
+
+The fixed map (`fixed_level`) puts priorities 1-10 on one level and 13-110
+on one; Castlevania runs threads at 9, 10, 12, 100, 110, 120, 130 and 150,
+and its boots ended differently each time (NULL reads, a callee-saved
+register lost, its scheduler starved): where libultra runs the higher of
+two threads alone, the kernel shared the CPU between them. The priorities
+in use are now ranked each time a thread starts or changes priority: each
+keeps its fixed level unless a lower one took it, then moves up one (and
+back down from 14), so up to 12 distinct priorities get distinct levels; a
+game whose priorities never collide keeps the fixed map exactly. A send
+that wakes a higher-priority thread on the sender's own level also yields
+to it until it sleeps again (20 ms at most; never with interrupts off).
+
+**Both are off by default** (`-DXRC_RANK_LEVELS=1`, `-DXRC_SEND_YIELD=1` to
+use them): the console-proven games have colliding priorities too (Super
+Mario 64, Smash Bros., Mario Kart 64 each moved a level), and Castlevania's
+variance was the AI backlog (below), the same with or without them.
+
+## Castlevania: Legacy of Darkness from its ROM alone: what it took (2026-10-19, xemu)
+
+Every boot ended differently (NULL reads, a pointer read from a sample,
+the game's code wiped) until these; each has a kill switch.
+
+- **AI_LEN is never more than the buffer playing** (`ultra/ai.c`,
+  `-DXRC_AI_LEN_CLAMP`): the backlog can hold more than two buffers when a
+  game queues ahead after a hitch, and osAiGetLength returned all of it but
+  the queued one. The game sizes its next frame as target - length / 4 +
+  0x100 into a halfword: past one buffer it wrapped, the frame overran its
+  buffer into the next buffer's header, and its audio manager read a sample
+  there as a pointer. This was the root of the variance.
+- **No audio save below RDRAM 0x1000** on the console build (`asp_hle.c`
+  `ASP_HLE_LOW_GUARD`; host tests keep 0) nor to address word 0: with the
+  overrun the lists saved to 0x280 and 0, over the exception vectors and
+  the game's own code at 0x80000400.
+- **A ROM range loaded over a section that is alone at its address unmaps
+  its functions there** (`ovl.c foreign`, `-DXRC_OVL_FOREIGN`): the game
+  DMAs each actor's code to 0x801CAEA0 and 0x802E3B70; the one learnt and
+  recompiled ran for every actor (a call through NULL). The section's own
+  DMA maps them again; captured code keeps the guard.
+- **TLB-mapped pages that hold other code at other times are left to the
+  safety net** (`learn.c` `kuseg_versions` lines, `learn._drop_kuseg_multi`,
+  `N64RX_KUSEG_MULTI`): it pages each actor in at 0x0E000000 / 0x0F000000;
+  the whole 1 MB region is dropped once one page in it is seen changed.
+- **A tail call from code run in line returns to its `ra`** (`interp.c`,
+  `-DXRC_TAIL_RA`), not out of the whole run (which handed the run's caller
+  an inner frame's sp and saved registers); and a jump through any register
+  to where `ra` points is a return, never a tail call (Majora's Mask
+  returns with `jr $t9` into code the net runs: the table knew that
+  address, it was called and then run again, a NULL write at frame 104).
+- **The cartridge through KSEG0 too** (0x90000000: it reads 0x90000866),
+  the same window as KSEG1's.
+
+## The framebuffer probe, narrowed (2026-10-19, `f3d_interp.c`, `XGFX_PROBE_MAXW`, `XGFX_PROBE_ROWS`, `XGFX_PROBE_CLIP`)
+
+The probe (Pokémon Snap's photo check: small copies of the frame being
+drawn answered from a software grid) also caught Mario Tennis capturing a
+32x32 picture of its frame in strips: 128 copies a frame from 61x3 and
+85x3 regions into a 32-wide image. Its marks went a row past that image
+into the game's archive handle (the attract demo crashed at frame 1207,
+every time), and every triangle of a frame scanned the whole region (the
+match ran at 12 fps in xemu). The probe now takes copy targets up to 16
+wide and regions of two rows or more, writes only what the copy rectangle
+covers and the scissor allows, and rasterises a triangle over its bounding
+box alone: the demo runs, the match is 25-26 fps in xemu, and Snap's 8x8
+case (the host test) is unchanged.
+
+## All-Star Baseball 2000: a game linked in KUSEG (2026-10-19)
+
+Acclaim's loader (at 0x80300000) maps KUSEG 0x00100000 onto physical 0
+with a 1 MB TLB entry, inflates the game there and jumps in; the game
+carries its own libultra and pages more code in through 4 KB TLB entries
+from its own fault thread. What it took, each with its switch:
+
+- **libultra's globals in KUSEG** (`features.py`, `saves.py`,
+  `N64RX_KUSEG_GLOBALS`): a function linked in KUSEG has its globals in
+  the same 16 MB, so the getters (`osGetThreadPri`), `__osRunningThread`,
+  `__osFaultedThread` and `__osRunQueue` are found at 0x0012xxxx; the
+  runtime reads and writes them through the game's TLB, and leaves them
+  alone while unmapped (`interp.c os_global`, `ultra.h xu_mapped`).
+- **osStartThread lets a faulted thread go** (`thread.c`, under
+  `XRC_THREAD_RESUME`): the game's pager maps the page, leaves the fault
+  flag set and calls osStartThread; libultra's makes the thread runnable,
+  and now so does the runtime's.
+- **The guard checks KUSEG entries by what changed** (`guard.c`,
+  `-DXRC_GUARD_KUSEG_EXACT`): a TLB write unverifies the entries in the
+  virtual ranges it unmapped and mapped, a DMA or an invalidation those
+  over its physical pages; before, every one unverified every KUSEG
+  function, the whole game here.
+- **AI_STATUS from the virtual DAC** (`ai.c`, `-DXRC_AI_STATUS`): busy
+  while a buffer plays, full with another queued. The game fills the FIFO
+  until it reads full; always 0, it synthesised ~200 frames a second.
+- **OS_EVENT_AI per buffer, unasked** (`ai.c`, `vi.c`, `-DXRC_AI_EVENTS`):
+  the event comes when the buffer playing ends (the queued one starts) as
+  well as when all of them have, and the VI thread looks every retrace, as
+  the interrupt comes whether or not the game asks the AI anything. Its
+  audio thread waits on that event alone: it made ~6 frames a second, the
+  sound events its game thread posted meanwhile overflowed the player's
+  queue (libaudio drops a post with no free item: the player's own tick
+  went) and the audio thread spun on the empty queue when a game loaded.
+  Now it plays (batting, pitches) at ~22 fps in xemu. Castlevania's audio
+  counts are the same with the switch off.
+- **osSetIntMask(OS_IM_NONE) as a critical section was tried and is off**
+  (`thread.c`, `-DXRC_INTMASK_LOCK=1`): holding the lock like
+  `__osDisableInt` stopped Mario Party at its second frame (it switches
+  coroutines under that mask and a parked strand kept the lock).
+- **Captured code asks for its tables and callees** (`emit.py`,
+  `funcs.py`, `romonly.py`, `N64RX_KUSEG_WANT`, `N64RX_KUSEG_TABLES`): a
+  jump table in a KUSEG page no capture holds, a jr whose table bytes no
+  segment holds, and a jal into such a page each name the page(s) in
+  `want.txt`; the function's interpreter stub saves them the first time it
+  runs (`learn.c xrc_learn_want`), and the next round recompiles it. The
+  linear table finder takes a KUSEG base for code linked there. Its audio
+  synthesis ran in the interpreter before.
+- **Test builds put RDRAM low in physical memory** (`xhw_sys.c`,
+  `-DXHW_RDRAM_HIGHEST`, default 0x02FFFFFF in test builds, the top in
+  release builds): xemu reads physical 0x03631000 to ~0x03880000 (the
+  usual place of an 8 MB window's low half) about 100 times slower than
+  the rest, already at boot and slower later (`-DXRC_MEMBENCH` measures
+  it). The game's audio tasks took 12 ms there instead of 0.3 ms and its
+  game thread never got the CPU; Majora's Mask was slow at boot there too.
+  xemu only: the console's memory is uniform, so release builds keep the
+  top. The cause inside xemu is not known.
+
+## A one-cycle blender that never reads the frame draws opaque (2026-10-19, `f3d_interp.c`, `XGFX_BLEND_MEM`)
+
+FORCE_BL alone turned NV2A alpha blending on, with the combiner's alpha.
+The RDP blends with the frame only where the blender formula reads it
+(MEM as its P or M input); `G_RM_OPA_SURF` (0x0F0A4000: IN * 0 + IN * 1)
+writes its input as it is. All-Star Baseball 2000 draws its sky and
+grass that way with a combiner alpha of 0: they came out the clear colour.
+In one-cycle mode, with no MEM in either cycle's P or M fields, the draw
+is now opaque (alpha compare as before). The mode is common (Super Mario
+64, Pilotwings 64, Smash Bros., Mario Kart 64, Ocarina of Time, Majora's
+Mask, GoldenEye, Mario Tennis and Kirby 64 log it); A/B shots of the three
+Gold games differ only in timing. Test builds log each render mode it
+changes once. `-DXGFX_BLEND_MEM=0`: FORCE_BL blends, as before.
+
+## Overlays the game relocates itself, recompiled (2026-10-19, `analyze/zovl.py`, `romonly.py`, `ovl.c`)
+
+The Zelda engine links each overlay (an actor, a game state, the pause
+screens, the player) at an address of its own above the RAM and loads it
+where its allocator has room, then patches it in RDRAM from the relocation
+table at the file's end (Overlay_Relocate). That code ran in the safety
+net, interpreted: Ocarina of Time's scene-load hitches, the next big item
+for its pacing. Now, from the ROM alone:
+
+- **Found by what they are** (`zovl.py`): in the inflated image's DMA
+  table, a file whose last word leads back to a five-word header (text,
+  data, rodata, bss, relocation count) right after its rodata, with valid
+  relocations (section, R_MIPS_32/26/HI16/LO16, offset in range); its link
+  address from the game's overlay tables in the code ((vrom start, vrom
+  end) then (vram start, vram end) spanning the file plus bss). Ocarina of
+  Time: 468 overlays, every link address the decomp's (only the data-only
+  `ovl_map_mark_data` has none); Majora's Mask: 612.
+- **Recompiled as relocatable sections** at the link address, with the
+  text's relocations in the symbol file (HI16 paired with the LO16 that
+  reads its register, as the game pairs them; sorted, as N64Recomp walks
+  them with the instructions): its own references read `section_addresses`
+  through RELOC_HI16/LO16. Jump tables switch on the index and need no
+  relocation. The functions their data points at are roots; their callees
+  in the code are live.
+- **Mapped where the game puts them** (`ovl.c xrc_ovl_relocate`): a hook
+  at the start of the game's relocation routine (found by its constants:
+  0x0F000000 and 0x02/04/05/06 << 24; Majora's Mask has two) maps the
+  section at the address it is relocated to, clears what the table had
+  there, unmaps its last place and points `section_addresses` there. An
+  overlay routine left to the interpreter is entered where it is loaded.
+- **Only the ones a run used** (`learn.c` `reloc` lines, `learn.py`):
+  every one doubled Ocarina's image (9 MB -> 17 MB of a 64 MB console);
+  the hook is there from the first build so the console reports the
+  overlays it relocated, and the next build recompiles those.
+  `N64RX_RELOC_OVL=all` takes every one, `0` none (no hook, the safety
+  net as before); `-DXRC_RELOC_OVL=0` maps nothing at run time. The
+  `reloc` line also says where the overlay landed and how long it is; the
+  pages the safety net captured inside such a place were that overlay's
+  code and are left out of the next build (`learn._without_relocated`,
+  `N64RX_RELOC_CAPTURES=1` keeps them).
+- **A relocation clears the place whole**: the range its header gives,
+  and every overlay that overlapped it, all of that one's functions (a
+  first version left the rest of a bigger overlay mapped under a smaller
+  one, and an overlay not yet learnt cleared nothing: Ocarina stalled in
+  Link's house running a stale overlay's code).
+
+Result (xemu, `scen/ootgame`, 120 s): Ocarina of Time presented 3137
+frames with 15 learnt overlays recompiled (938 functions) against 1950
+before; Majora's Mask 2040 in 85 s with 45 (1578 functions) against 1887
+in 105 s. Image 11.9 MB and 11.2 MB.

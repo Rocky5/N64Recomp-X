@@ -87,6 +87,7 @@ void* xhw_rdram_alloc(uint32_t bytes);
 int xhw_alias_map(uint32_t va, uint32_t pa, uint32_t bytes);
 int xhw_alias_hold(uint32_t va, uint32_t bytes);   /* hold a user-space range for later aliasing (4 MB regions) */
 void xhw_alias_unmap(uint32_t va, uint32_t bytes);
+int xhw_alias_map_ro(uint32_t va, uint32_t pa, uint32_t bytes);   /* read only, never unmapped */
 void xhw_alias_why(uint32_t va, uint32_t* pde, uint32_t* pte);   /* the PDE/PTE that hold va */
 /* Page watch (xhw_alias.c, framebuffer readback): arm (1) clears the
  * accessed bits of the whole pages inside [va, va + bytes) of the low-64 MB

@@ -226,6 +226,8 @@ static uint8_t s_captured[(8u << 20) / 0x1000u];   /* KSEG0 pages saved */
 #define VPAGE 0x1000u
 #define MAX_VPAGES 2048
 static uint32_t s_vpages[MAX_VPAGES];
+static uint32_t s_vhash[MAX_VPAGES];   /* each captured KUSEG page's bytes, hashed */
+static unsigned char s_vmulti[MAX_VPAGES];
 static unsigned s_nvpages;
 
 static void save(uint32_t base, uint32_t size, uint32_t (*word)(uint32_t)) {
@@ -265,9 +267,23 @@ static void capture_locked(uint32_t vram) {
     if ((int32_t)vram >= 0) {   /* KUSEG: through the TLB, a page at a time */
         uint32_t vp = vram & ~(VPAGE - 1);
         if (xrc_tlb_to_phys(vp) == ~0u || xrc_tlb_to_phys(vp + VPAGE - 4) == ~0u) return;
+        uint32_t h = 0x811C9DC5u, k;
+        for (k = 0; k < VPAGE; k += 4) h = (h ^ word_mapped(vp + k)) * 0x01000193u;
         for (i = 0; i < s_nvpages; i++)
-            if (s_vpages[i] == vp) return;
+            if (s_vpages[i] == vp) {
+                /* the same virtual page holding other code now (Castlevania: Legacy of Darkness
+                 * pages each actor's code in at 0x0F000000): written down once, so n64rx leaves
+                 * the page to this net instead of recompiling one actor's bytes for all */
+                if (s_vhash[i] != h && !s_vmulti[i]) {
+                    char line[48];
+                    s_vmulti[i] = 1;
+                    snprintf(line, sizeof line, "kuseg_versions %08x", (unsigned)vp);
+                    emit(line);
+                }
+                return;
+            }
         if (s_nvpages == MAX_VPAGES) return;
+        s_vhash[s_nvpages] = h;
         s_vpages[s_nvpages++] = vp;
         save(vp, VPAGE, word_mapped);
         return;
@@ -281,6 +297,25 @@ static void capture_locked(uint32_t vram) {
     if (blk >= sizeof s_captured || s_captured[blk]) return;
     s_captured[blk] = 1;
     save(0x80000000u | (phys & ~(VPAGE - 1)), VPAGE, word_kseg0);
+}
+
+/* an overlay the game relocated (ovl.c xrc_ovl_relocate: the Zelda engine's
+ * Overlay_Relocate), once per link address: n64rx recompiles the ones a run
+ * used as relocatable sections (analyze/zovl.py), not all of them */
+void xrc_learn_reloc(uint32_t vram, uint32_t ram, uint32_t len);
+void xrc_learn_reloc(uint32_t vram, uint32_t ram, uint32_t len) {
+    static uint32_t s_seen[1024];
+    static unsigned s_n;
+    char line[48];
+    unsigned i;
+    for (i = 0; i < s_n; i++)
+        if (s_seen[i] == vram) return;
+    if (s_n == 1024) return;
+    s_seen[s_n++] = vram;
+    /* (where it landed and how long: pages the net captured there were this overlay's code, which the
+     * next build recompiles from the ROM instead) */
+    snprintf(line, sizeof line, "reloc %08x %08x %x", (unsigned)vram, (unsigned)ram, (unsigned)len);
+    emit(line);
 }
 
 /* the KUSEG regions the TLB maps, once per 1 MB, and whether the host could
@@ -317,6 +352,9 @@ void xrc_learn_recapture(uint32_t vram) {
     s_done[s_n++] = vp;
     while (__sync_lock_test_and_set(&s_busy, 1)) xhw_sleep_ms(0);
     if ((int32_t)vp >= 0) {
+        char line[48];
+        snprintf(line, sizeof line, "kuseg_versions %08x", (unsigned)vp);   /* other code at a mapped page */
+        emit(line);
         if (xrc_tlb_to_phys(vp) != ~0u && xrc_tlb_to_phys(vp + VPAGE - 4) != ~0u) save(vp, VPAGE, word_mapped);
     } else if ((vp & 0x1FFFFFFFu) < xrc_rdram_size) {
         save(0x80000000u | (vp & 0x1FFFFFFFu), VPAGE, word_kseg0);
@@ -436,7 +474,13 @@ recomp_func_t* xrc_learn_lookup(uint32_t vram, uintptr_t host_caller);
 recomp_func_t* xrc_learn_lookup(uint32_t vram, uintptr_t host_caller) {
     recomp_func_t* f = NULL;
     Learnt* e;
-    if (!XRC_SAFETY_NET || !holds_code(vram)) return NULL;
+    if (!XRC_SAFETY_NET) return NULL;
+    if (!holds_code(vram)) {
+        if (XHW_TEST_BUILD && vram >= 0x80000000u && (vram & 0x1FFFFFFFu) + 8 <= xrc_rdram_size)
+            xhw_logf("[LEARN] %08x: no code there (words %08x %08x)", (unsigned)vram, (unsigned)xrc_word(vram),
+                     (unsigned)xrc_word(vram + 4));
+        return NULL;
+    }
     lock();
     e = add(vram, xrc_ovl_vram_of(host_caller));
     if (e) {

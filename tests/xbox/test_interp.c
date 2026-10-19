@@ -60,6 +60,11 @@ xhw_thread* xhw_thread_self(void) { return (xhw_thread*)0; }
 int xu_fault_wait(uint32_t vaddr, int store) { (void)vaddr; (void)store; return 0; }   /* ultra/thread.c */
 void xhw_crash_set_fixup(int (*fn)(uint32_t host, int write)) { (void)fn; }
 int xrc_kseg1_heal(uint32_t host) { (void)host; return 0; }
+int xrc_cart_fault(uint32_t host) { (void)host; return 0; }          /* mmio.c */
+void xrc_guard_kuseg(void) {}                                        /* guard.c */
+void xrc_guard_kuseg_range(uint32_t a, uint32_t b) { (void)a, (void)b; }  /* guard.c */
+uint32_t xrc_ovl_reloc_vram(uint32_t v) { return v; }                     /* ovl.c */
+uint32_t xrc_ipl3_vec[4];                                            /* boot.c */
 void xrc_learn_kuseg(uint32_t va, int aliased) { (void)va, (void)aliased; }
 void xrc_learn_func(uint32_t vram, uint32_t len, uint32_t caller) {
     if (s_nlearnt < 8) s_learnt[s_nlearnt].vram = vram, s_learnt[s_nlearnt].len = len, s_learnt[s_nlearnt++].caller = caller;

@@ -130,7 +130,12 @@ int xhw_alias_hold(uint32_t va, uint32_t bytes) {
     return range_ok(va, bytes) && reserve(va, bytes);
 }
 
-int xhw_alias_map(uint32_t va, uint32_t pa, uint32_t bytes) {
+static int map_flags(uint32_t va, uint32_t pa, uint32_t bytes, uint32_t flags);
+int xhw_alias_map(uint32_t va, uint32_t pa, uint32_t bytes) { return map_flags(va, pa, bytes, PTE_OURS); }
+/* read only (the ROM through KSEG1, xhw_rom_cart_map): never unmapped, a store there faults */
+int xhw_alias_map_ro(uint32_t va, uint32_t pa, uint32_t bytes) { return map_flags(va, pa, bytes, PTE_OURS & ~PTE_RW); }
+
+static int map_flags(uint32_t va, uint32_t pa, uint32_t bytes, uint32_t flags) {
     uint32_t off, f;
     if (!range_ok(va, bytes) || (pa & 0xFFFu) || !reserve(va, bytes)) return 0;
     for (off = 0; off < bytes; off += 4096)
@@ -149,7 +154,7 @@ int xhw_alias_map(uint32_t va, uint32_t pa, uint32_t bytes) {
             }
             s_saved[s_nsaved].va = v, s_saved[s_nsaved].pte = *pte, s_nsaved++;
         }
-        *pte = (pa + off) | PTE_OURS;
+        *pte = (pa + off) | flags;
         invlpg(v);
     }
     irq_restore(f);
@@ -237,3 +242,12 @@ void* xhw_alias_page(uint32_t va) {
     }
     return p;
 }
+
+/* diagnosis: va's page directory entry and, under a page table, its PTE (0 there for a large page) */
+void xhw_page_info(uint32_t va, uint32_t* pde, uint32_t* pte) {
+    *pde = *pde_of(va);
+    *pte = (*pde & PTE_P) && !(*pde & PDE_PS) ? *pte_of(va) : 0;
+}
+
+/* diagnosis: the physical address behind a host pointer */
+uint32_t xhw_phys_of(const void* p) { return (uint32_t)MmGetPhysicalAddress((PVOID)p); }

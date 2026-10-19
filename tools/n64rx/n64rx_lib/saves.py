@@ -9,6 +9,7 @@ _osContNumControllers), which only the real osContInit sets, to
 MAXCONTROLLERS (4). Left at zero, osPfsIsPlug sees no pak in any port. The
 address is found in the game's osContInit: the byte store of the constant 4
 to a lui-based address. A rule about libultra's code, not about one game."""
+import os
 import pathlib
 import tomllib
 
@@ -68,6 +69,16 @@ def cflags(pack, rom_data: bytes):
     return []
 
 
+# libultra's globals linked in KUSEG beside the game's own copy (Acclaim's All-Star Baseball runs at
+# 0x00100000 through a TLB entry; the runtime reads and writes them through the game's TLB, ultra.h):
+# taken as well as KSEG0 ones. N64RX_KUSEG_GLOBALS=0: KSEG0 only, as before
+KUSEG_GLOBALS = os.environ.get('N64RX_KUSEG_GLOBALS', '1') != '0'
+
+
+def _ram(addr):
+    return 0x80000000 <= addr < 0x80800000 or KUSEG_GLOBALS and 0x10000 <= addr < 0x80000000
+
+
 def running_thread(pack, rom_data: bytes):
     """-DXRC_RUNNING_THREAD=<addr>: libultra's __osRunningThread, from the
     thread getters (osGetThreadId / osGetThreadPri, or the game's own
@@ -84,9 +95,27 @@ def running_thread(pack, rom_data: bytes):
                 if w >> 26 == 15 and n >> 26 == 35 and (n >> 21) & 31 == (w >> 16) & 31:   # lui r, hi; lw x, lo(r)
                     lo = n & 0xFFFF
                     addr = ((w & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF
-                    if 0x80000000 <= addr < 0x80800000:
+                    if _ram(addr):
                         return [f'-DXRC_RUNNING_THREAD=0x{addr:08X}u']
     return []
+
+
+def consistent_threads(running, faulted):
+    """the two flag lists, __osRunningThread put beside __osFaultedThread
+    when both were found and disagree: libultra lays out __osRunQueue,
+    __osActiveQueue, __osRunningThread, __osFaultedThread in that order, and
+    the fault path (the game's __osException) is the copy the runtime runs
+    on a TLB miss. South Park: Chef's Luv Shack's getters read 0x800D9548,
+    its exception code 0x800C0420: the runtime kept the first, the
+    exception code saved the context through NULL. N64RX_THREADS_TOGETHER=0:
+    each as found"""
+    if os.environ.get('N64RX_THREADS_TOGETHER', '1') == '0' or not running or not faulted:
+        return running + faulted
+    f = int(faulted[0].split('=')[1].rstrip('u'), 16)
+    r = int(running[0].split('=')[1].rstrip('u'), 16)
+    if r != f - 4:
+        running = [f'-DXRC_RUNNING_THREAD=0x{f - 4:08X}u']
+    return running + faulted
 
 
 def faulted_thread(rom_data: bytes):
@@ -106,7 +135,7 @@ def faulted_thread(rom_data: bytes):
             if w0 >> 16 == 0x3C01 and w1 >> 16 == 0xAC3A and w6 == 0x400A4000 and w7 >> 16 == 0xAF4A:
                 lo = w1 & 0xFFFF
                 addr = ((w0 & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF
-                if 0x80000000 <= addr < 0x80800000:
+                if _ram(addr):
                     found = (addr, w7 & 0xFFFF)
         i = rom_data.find(key, i + 4)
     if not found:
@@ -158,7 +187,7 @@ def os_runqueue(rom_data: bytes):
                     and w[4] >> 26 == 0 and w[4] & 63 == 42):
                 lo = w[2] & 0xFFFF
                 addr = ((w[1] & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF
-                if 0x80000000 <= addr < 0x80800000:
+                if _ram(addr):
                     found = addr
         i += 4
     return [f'-DXRC_OS_RUNQUEUE=0x{found:08X}u'] if found else []

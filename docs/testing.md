@@ -341,6 +341,26 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `N64RX_XBRANCH_INTERP=0` (env, n64rx) | 1 | a function with a branch or j into another function's body is recompiled anyway (the compile then fails: "use of undeclared label") instead of interpreted |
 | `-DXRC_THREAD_SP16=0` | 1 | threads start at the sp the game gives instead of 16 bytes below it, as libultra does |
 | `-DXRC_WATCH=<N64 address>` | unset | diagnosis: every write to that word logged with the writer's EIP and the new value (`[WATCH]`, x86 DR0; `xhw_crash.c`). The full KSEG0 address (`0x800F1A10u`), not an offset; armed on every thread started after it (the debug registers are per thread). A "no function at this address" fatal also logs the N64 thread's registers and stack top (`[CRASH] N64 thread`). Only changes are logged (with the time in ms), and `-DXHW_WATCH_IGNORE=<mask>` leaves out changes in those bits only (a flag word that toggles a bit every frame) |
+| `-DXRC_AI_STATUS=0` | 1 | AI_STATUS always 0 (not busy/full from the virtual DAC) |
+| `-DXRC_AI_EVENTS=0` | 1 | OS_EVENT_AI only when the whole backlog ran out, from inside osAi* calls (not per buffer and every retrace) |
+| `-DXRC_INTMASK_LOCK=1` | 0 | osSetIntMask(OS_IM_NONE) holds the runtime's lock like __osDisableInt (stops Mario Party) |
+| `-DXRC_GUARD_KUSEG_EXACT=0` | 1 | every DMA, invalidation and TLB write unverifies every KUSEG guard entry |
+| `-DXRC_PI_RAW_EVENT=0` | 1 | no OS_EVENT_PI after the runtime's raw PI DMA starts |
+| `-DXRC_PAK_BOTH=0` | 1 | AUTO turns Rumble Pak at the motor probe (not both paks at once) |
+| `-DXGFX_BLEND_MEM=0` | 1 | FORCE_BL alone blends, even when the one-cycle blender never reads the frame |
+| `N64RX_KUSEG_GLOBALS=0` / `N64RX_KUSEG_WANT=0` / `N64RX_KUSEG_TABLES=0` / `N64RX_GAP_DATA=0` | 1 | the analyser: KUSEG code's globals, its want-list pages, KUSEG jump-table bases, a data word skipped before a prologue (each off) |
+| `N64RX_RELOC_OVL=all` / `=0` | learnt | the Zelda engine's relocated overlays: every one recompiled / none (no hook; the safety net) |
+| `-DXRC_RELOC_OVL=0` | 1 | the runtime maps no relocated overlay (the safety net runs them) |
+| `N64RX_RELOC_CAPTURES=1` | 0 | captured pages where the game relocated an overlay kept in the build |
+| `N64RX_THREADS_TOGETHER=0` | 1 | __osRunningThread taken as the getters found it even where __osFaultedThread's neighbour differs |
+| `-DXRC_PEEK_EVERY=<n>` | 30 | with `XRC_PEEK`: retraces between peeks; 1: every retrace the first word changes |
+| `-DXRC_PI_LOG_ALL=<n>` | unset | diagnosis: the first n PI DMAs of any destination (`[PI] DMA ROM`) |
+| `-DXRC_TRACE_COUNT=func_...` | unset | trace builds: that function's entries (the first 8, then every 100th) |
+| `-DXRC_MEMBENCH=1` | unset | diagnosis: RDRAM's read speed (64 KB at a few offsets) at boot and at audio tasks 2 and 200, with the page table entries (`[MEMB]`; xemu's slow physical memory) |
+| `-DXHW_RDRAM_HIGHEST=<physical>` | 0x02FFFFFF in test builds, 0 in release | an 8 MB RDRAM window no higher than that when it fits (xemu reads the usual place's low half ~100x slower); 0: the top of the 64 MB |
+| `-DXRC_RDRAM_PAD_MB=<n>` | unset | diagnosis: RDRAM placed n MB lower in physical memory |
+| `-DXRC_DIAG_EVTQ=<vram>` / `-DXRC_DIAG_POST=<vram>` | unset | diagnosis, with `N64RX_CAPTURED_INTERP` on that function: libaudio's alEvtqNextEvent queue dumped once it spins (`[EVTQ]`), alEvtqPostEvent's posts counted per retrace and by whom (`[POST]`) |
+| `-DASP_HLE_OPTIME=1` | unset | test builds: the time each audio command kind takes, every 256 tasks (`[ASPT]`) |
 | `-DXRC_INTS_BOOST=0` | 1 | a thread with its interrupts off (`__osDisableInt`, cop0 Status IE clear: the runtime's lock) keeps its level, as before; otherwise it runs at level 14, above every game thread, until it turns them on (Kirby 64: a priority-0 thread holding the lock was preempted by a spinning one, the VI thread blocked on the lock and the game stopped, about one boot in two) |
 | `-DXRC_TV_FROM_REGION=0` | 1 | osTvType 1 (NTSC) for every game, as before; otherwise from the ROM header's region byte (PAL for D, F, H, I, L, P, S, U, W, X, Y; MPAL for B). Kirby 64 (E) told NTSC stops at its lockout screen |
 | `-DXRC_PAL_50HZ=0` | 1 | a PAL game gets the console's 60 retraces a second (it runs 20% fast); otherwise every sixth vblank is skipped, 50 a second |
