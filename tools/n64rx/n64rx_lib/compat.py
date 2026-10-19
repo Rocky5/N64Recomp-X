@@ -29,7 +29,8 @@ TIERS = {
         'The game board is black, which stops the game (a fix waits for a console test).',
         'The title logo is wrong (a fix waits for a console test).')),
     ('NPFE', 0): (EXPERIMENTAL, 'Pokémon Snap (US)', (
-        'On a new save the camera cannot be aimed, which stops the game.',)),
+        'On a new save the Beach tutorial locks the camera until three photos of a Pokémon '
+        '(follow its prompts: Z, then A); not yet shown to unlock on a real Xbox.',)),
     ('NZSE', 0): (EXPERIMENTAL, 'Majora\'s Mask (US)', (
         'Crashes while starting (a fix waits for a console test).',)),
     ('NJFE', 0): (EXPERIMENTAL, 'Jet Force Gemini (US)', (

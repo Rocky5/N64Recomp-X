@@ -28,15 +28,15 @@ result here moves its row there in the same change.
 - The 12-game regression set presents frames with no crash after every
   change; host tests pass; test_analyze 0 failures.
 
-**Open, in order:** Pokémon Snap's camera lock (the hook to the photo
-check is set and called; next: why `PokemonDetector_FindPokemonInFocus`
-finds nothing, the 8x8 regions' bytes after `osInvalDCache`); Jeremy
+**Open, in order:** Pokémon Snap's camera lock (the Beach tutorial
+waits for three photos with a Pokémon in focus; in xemu the photo check
+now finds one and the tutorial prompts "Press Z to aim": next, the three
+photos and the unlock shown in a run, then red with a new save); Jeremy
 McGrath's process switcher (`strand.c` taught its context save/load and
-the return to main); Chef's Luv Shack's logo; the sweep s10 (running at
-the end of this session in `build-host/sweep/s10`; its table into
-`docs/analyzer.md`, and entries NF2P, NF9E, NFBE run again: a test ran on
-its slot meanwhile); set 15 rebuilt at HEAD before red (it predates all
-of the above; red was unreachable all session). The entries at the end
+the return to main); Chef's Luv Shack's logo; the sweep s10's entries
+NF2P, NF9E, NFBE run again (a test ran on their slot) and its three
+losses; set 15 rebuilt at HEAD before red (it predates all of the above;
+red was unreachable all session). The entries at the end
 have the details.
 
 **Before that (2026-10-18, late):** the loading screen is the deep-space title
@@ -59,7 +59,7 @@ not marked red is xemu only.
 |---|---|
 | Gold | Super Mario 64, Pilotwings 64, Super Smash Bros. |
 | Silver | Mario Kart 64, GoldenEye, Banjo-Kazooie, Ocarina of Time 1.2 |
-| Experimental | Mario Party (its board: fix staged), Pokémon Snap (its camera lock: the photo check, open), Majora's Mask (boot crash: fix staged), Jet Force Gemini, Kirby 64 (E) (staged), Mario Tennis, Castlevania: Legacy of Darkness, All-Star Baseball 2000 / 2001 / '99, South Park: Chef's Luv Shack, the rest |
+| Experimental | Mario Party (its board: fix staged), Pokémon Snap (its camera lock: the tutorial's unlock, open), Majora's Mask (boot crash: fix staged), Jet Force Gemini, Kirby 64 (E) (staged), Mario Tennis, Castlevania: Legacy of Darkness, All-Star Baseball 2000 / 2001 / '99, South Park: Chef's Luv Shack, the rest |
 
 | game (US) | how built | xemu | console (red) |
 |---|---|---|---|
@@ -69,7 +69,7 @@ not marked red is xemu only.
 | Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text; one present a frame (its frames are several tasks; presented at the swap), audio; its processes run as coroutines; 720p at 29-30 fps; START past the title to Mushroom Village (`0e5dc19`) | `vmp5`: flicker gone, 29.9 fps. `vmp11`: stable to a board; the logo blocky, the board black (both fixed since: `vmp12` staged) |
 | Mario Party 2 / 3 | the ROM alone | intro, menus; 2: its audio thread, destroyed and made again by the game, plays on (58 tasks a second, 2026-10-17) | - |
 | Super Mario 64 | the ROM alone (+ three `--learn` rounds before) | head screen, Lakitu intro, castle grounds and Lakitu's text drawn right (scripted, 2026-10-17); 720p hor+ at 29-30 fps (the skybox stays in the 4:3 box) | `vsm6`, `vsm7`: works perfectly, 29.9 fps |
-| Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, title, the photographer card, Professor Oak's lab and his whole briefing, every glyph right; the Beach course whole to the goal gate, back to the lab and out again at 29.9 fps (2026-10-18, 64 thread records); its cliffs, rails and track textured since the clamp-extent rule | `vsnap5`: runs well, 29.7 fps on the Beach; the camera can't be moved (found: a new save's camera lock waits for three photos with a subject, and the photo check copies the frame being drawn: open, `XGFX_PROBE` started) |
+| Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, title, the photographer card, Professor Oak's lab and his whole briefing, every glyph right; the Beach course whole to the goal gate, back to the lab and out again at 29.9 fps (2026-10-18, 64 thread records); its cliffs, rails and track textured since the clamp-extent rule | `vsnap5`: runs well, 29.7 fps on the Beach; the camera can't be moved (the first run's tutorial: three photos with a Pokémon in focus; in xemu the photo check finds one and the tutorial prompts Z, then A; the unlock not yet shown) |
 | Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro with the lair drawn whole, Banjo's house (~28 fps); near/far now the game's (the IPL3 copy); 720p hor+ at ~28 fps, 10 MB free (geometry the game culls shows as void at the far edges) | `vbk12`: the jiggy transition right. `vbk13`: textures much better (RGBA 4-bit); static on the START screen (open) |
 | Blast Corps | the ROM alone + 15 `--learn` rounds | Rare logo, title, profile screen, the attract demo (50-56 fps) | - |
 | Majora's Mask | the ROM alone | title, file select, name entry, audio (2026-10-17) | `vmm9`: still crashes at its first uncached write (a KSEG1 alias page lost after boot; healed at the fault since, not yet on red) |
@@ -2316,9 +2316,8 @@ exception code's `__osRunningThread` now comes from beside
 consistent_threads`). Jeremy McGrath Supercross 2000 still needs its
 process switcher.
 
-**The library sweep s10** runs in the background on slot 14
-(`build-host/sweep/s10`); its table goes into `docs/analyzer.md` when it
-ends.
+**The library sweep s10** (`build-host/sweep/s10`): 144 of 246 still
+presenting at 30 s (s9: 132), 15 gained, 3 lost (`docs/analyzer.md`).
 
 
 ### Pokémon Snap's camera lock, narrowed (2026-10-19, late; xemu only)
@@ -2337,3 +2336,48 @@ whether the regions the probe wrote are the ones it reads after its
 picture back over them: `f3d_fb_inval`), and why the queue is never
 drained (its `osRecvMesg` NOBLOCK). New diagnostics: `-DXRC_PEEK_EVERY`,
 `-DXRC_PI_LOG_ALL`, `-DXRC_TRACE_COUNT` (`docs/testing.md`).
+
+### Pokémon Snap's camera lock is the tutorial; the photo check works (2026-10-19, night; xemu only)
+
+Correction to the entry above: the detector's queue (0x803AEF48) is not
+full. Its peek reads `validCount` 0, `msgCount` 2 (the 2 was the
+capacity), so `PokemonDetector_PostProcessImage` gets each frame's
+message and runs `FindPokemonInFocus`.
+
+The lock is the game's own: on a new save the Beach starts the tutorial
+(`updateTutorialMain`, `IsInputDisabled = true`: no stick, no dash, no
+C-buttons) until `D_800AE27C`, the photos taken with a Pokémon in focus,
+reaches 3. When a Pokémon is in focus the tutorial stops the course and
+prompts "Press Z to aim", then "Press A". Without a detection there is no
+prompt and the camera never unlocks.
+
+Four runs, xemu slot 14, the same test build (`-DXRC_PEEK=0x803AE758u
+-DXRC_PEEK_EVERY=1`), the same input to frame 6103 (`scen/snap27`'s route
+through the lab, then A every 2 s on the Beach):
+- run 1: at frame ~6044, 39 s into the course,
+  `PokemonDetector_HasPokemonInFocus` = 1, Snorlax (id 0x8F, flags 0x3D:
+  `POKEMON_FLAG_4`, a photo subject). The tutorial process (0x803552B0)
+  starts and the course holds on "Press Z to aim" to the end of the run.
+  The photo check works end to end in the port.
+- runs 2 and 3 (Z+A pressed later; film 60 to 40): no Pokémon in focus,
+  the photo count stays 0, the camera stays locked, and the course ends
+  back at the lab.
+- run 4 (run 1's input again, with the new summary line): Pidgey (id
+  0x10, flags 0x25) in focus at frame ~5070, 7 s into the course. Between
+  frames 4992 and 5082 the Pokémon copies reached half or more 22 times
+  (up to 64 of 64). After that the tutorial holds with one Pokémon at 56
+  of 64 every frame.
+
+So the probe gives the game what it compares, and the tutorial finds its
+subject. The same input finds a different Pokémon at a different time
+(Pidgey at 7 s, Snorlax at 39 s, or none in runs 2 and 3) because the
+Pokémon move on the game's timing. The first 40 lines of the earlier
+runs (8 of 64) were the course's first frames, not the whole run.
+Left to show: the unlock itself. Once the prompt is up, Z held and A
+pressed take the tutorial's 3 photos (`D_800AE27C` to 3), then the stick
+turns the view. That takes a scenario that waits for the prompt, or a
+player: on red, follow the prompts. New test-build line: `[GFX] probe
+frames A-B: n later copies, the most m of 64, k at half or more` every 30
+frames. A frame's first copy now has its own 8 lines and no longer uses
+up the 40. Run scenarios: `build-host/scen/snapd` (A only), `snapz`,
+`snapz2` (Z held with A); untracked.

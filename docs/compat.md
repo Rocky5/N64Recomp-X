@@ -45,7 +45,7 @@ Rules:
 | **Silver** | Banjo-Kazooie (US) | `NBKE` 1.0 | `vbk12`, `vbk13`: plays at ~30 fps, the jiggy transition and the textures right | static on the START screen (open: not reproduced in xemu) |
 | **Silver** | Ocarina of Time 1.2 (US) | `CZLE` 1.2 | `vzel13`, `vzel14`: plays at its own 20 fps, steadier since the learn writer | hitches at scene loads (its relocated overlays interpreted the first time), small audio skips there, texture pop-in, a blocky title |
 | Experimental | Mario Party (US) | `CLBE` 1.0 | `vmp11`: stable to a board | the board black (game-breaking; fixed in `vmp13`, staged), the title logo (fixed, staged) |
-| Experimental | Pokémon Snap (US) | `NPFE` 1.0 | `vsnap5`: runs well on the Beach | the camera cannot be aimed on a new save (game-breaking: its photo check draws to an off-screen image; open) |
+| Experimental | Pokémon Snap (US) | `NPFE` 1.0 | `vsnap5`: runs well on the Beach | on a new save the Beach tutorial locks the camera until three photos with a Pokémon in focus; the port's photo check finds one in xemu and prompts "Press Z to aim", but the unlock is not yet shown and red has not run it (open) |
 | Experimental | Majora's Mask (US) | `NZSE` 1.0 | `vmm9`: crashes at boot | the crash (a fix staged in `vmm12`) |
 | Experimental | Jet Force Gemini (US) | `NJFE` 1.0 | `vjfg1`: Rare logo, a broken menu, slow, silent | Rare's own GBI and audio microcode |
 | Experimental | Kirby 64 - The Crystal Shards (E) | `NK4P` 1.0 | not run on a console | first run (`vk1` staged); in xemu: intro, the tutorial rooms; one HUD icon garbled |

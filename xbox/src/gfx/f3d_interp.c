@@ -1347,14 +1347,31 @@ static int probe_copy(uint32_t w0, uint32_t w1) {
             wr16(XU_K0(s_probe.target + 2u * (dy * s_probe.tw + dx)),
                  (uint16_t)((s_probe.id[j * s_probe.w + i] << 1) | 1u));
         }
-    if (XHW_TEST_BUILD) {   /* test builds: the first copies that saw something drawn since the one before */
-        static unsigned s_said;
+    if (XHW_TEST_BUILD) {   /* test builds: the first copies that saw something drawn since the one before
+                             * (a frame's first copy, the background, apart: it spent the lines) */
+        static unsigned s_said, s_said1;
         int k, changed = 0;
         for (k = 0; k < s_probe.w * s_probe.h; k++) changed += s_probe.id[k] == s_probe.epoch;
-        if (changed && s_said < 40) {
-            s_said++;
+        if (changed && (s_probe.epoch == 1 ? s_said1++ < 8 : s_said < 40)) {
+            s_said += s_probe.epoch != 1;
             xhw_logf("[GFX] probe copy %u: %d of %d pixels drawn since the last (frame %u)", (unsigned)s_probe.epoch,
                      changed, s_probe.w * s_probe.h, (unsigned)s_frame_no);
+        }
+        {   /* and every 30 frames: the most a later copy (a Pokemon) saw, how many reached half */
+            static unsigned s_from, s_most, s_half, s_copies, s_lines;
+            if (s_probe.epoch != 1) {
+                s_copies++;
+                if ((unsigned)changed > s_most) s_most = (unsigned)changed;
+                s_half += changed * 2 >= s_probe.w * s_probe.h;
+            }
+            if (s_frame_no - s_from >= 30u) {
+                if (s_copies && s_lines < 400) {
+                    s_lines++;
+                    xhw_logf("[GFX] probe frames %u-%u: %u later copies, the most %u of %d, %u at half or more", s_from,
+                             (unsigned)s_frame_no, s_copies, s_most, s_probe.w * s_probe.h, s_half);
+                }
+                s_from = s_frame_no, s_most = s_half = s_copies = 0;
+            }
         }
     }
     s_probe.epoch++;

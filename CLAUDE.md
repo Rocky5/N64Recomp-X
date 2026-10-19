@@ -26,8 +26,8 @@ camera), Majora's Mask (boot crash: fix staged), Jet Force Gemini, Kirby 64
 `vsm13`: 6-9 ms a frame; hold BACK for the settings before the game, L + R
 for 480i).
 In xemu: 720p on the working
-games, GoldenEye's Dam right (textures, sky, Bond's gun, the pause watch: its cosf fell into sinf), Pokémon Snap through its Beach course (its camera locked: the photo check copies the frame being drawn), Kirby 64 (E) to its tutorial, Mario Tennis's matches, Castlevania: Legacy of Darkness to Foggy Lake, All-Star Baseball 2000 / 2001 / '99 in a game, Ocarina and Majora's relocated overlays recompiled, Jet Force Gemini past its boot, Perfect Dark past its boot, Paper Mario past its
-copy-protection boot. The library sweep (s9: 132 of 246 still presenting at
+games, GoldenEye's Dam right (textures, sky, Bond's gun, the pause watch: its cosf fell into sinf), Pokémon Snap through its Beach course (the camera lock is the first run's tutorial: three photos with a Pokémon in focus; the photo check now finds one and the tutorial prompts), Kirby 64 (E) to its tutorial, Mario Tennis's matches, Castlevania: Legacy of Darkness to Foggy Lake, All-Star Baseball 2000 / 2001 / '99 in a game, Ocarina and Majora's relocated overlays recompiled, Jet Force Gemini past its boot, Perfect Dark past its boot, Paper Mario past its
+copy-protection boot. The library sweep (s10: 144 of 246 still presenting at
 30 s) (`tools/xbox/sweep.py`) ranks what blocks the rest
 (`docs/analyzer.md`). CI is manual-only (free minutes). The desktop app (`app/`, `docs/app.md`)
 is the way in for users: portable, a prebuilt toolchain download, Windows

@@ -386,6 +386,17 @@ the biggest class; three looked at: Chopper Attack's task switcher
 (stack-switching coroutines), Jet Force Gemini's call-site resolver (fixed
 since: `ra_hooks`), Body Harvest and Pokémon Puzzle League (no cause yet).
 
+**s10 (2026-10-19, at `bd9ac1c`).** 144 still presenting at 30 s (s9:
+132); 152 present at least one frame (s9: 143). Gained: Mario Golf,
+Bomberman 64, Bomberman Hero, Goemon's Great Adventure, Hexen, Forsaken,
+Jet Force Gemini, Robopon 64, Top Gear Overdrive, Snowboard Kids 2,
+Rampage 2, Aidyn Chronicles, CyberTiger, PGA European Tour, NTWJ. Lost:
+Jeopardy! (a KUSEG read), Fighter's Destiny (a KUSEG write), Vigilante 8
+(an integer divide by zero after presenting); not yet looked at. The
+KUSEG reads are still the biggest class (24), then the games that never
+present (55). NF2P, NF9E and NFBE shared their xemu slot with another
+test during this sweep; their rows are to be run again.
+
 **2026-10-18.** Two rules from games that failed: a far `j` inside a big
 function is decided after the walk (`N64RX_J_LATER`; s9's six "undeclared
 label" compile failures, Mario Golf's 19 KB function), and a libultra
