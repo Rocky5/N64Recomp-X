@@ -34,6 +34,9 @@
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
+#if defined(__SSE__)
+#include <xmmintrin.h>
+#endif
 
 #include "xrc_widescreen.h"
 #include "ultra/ultra.h"
@@ -58,6 +61,11 @@
 #define xu_from_rdram(d, a, n) xu_from_rdram((d), XU_K0(a), (n))
 
 /* ---- switches (docs/testing.md) ---- */
+/* vertices and matrices read as words of the image (their halves and bytes in
+ * N64 order within them); -DXGFX_VTX_WORDS=0: halfword by halfword, as before */
+#ifndef XGFX_VTX_WORDS
+#define XGFX_VTX_WORDS 1
+#endif
 #ifndef XGFX_FAR_CLIP
 #define XGFX_FAR_CLIP 1        /* Fast3D clips at the far plane (z <= w): the sea stops short of the horizon */
 #endif
@@ -181,8 +189,22 @@ typedef struct {
     float r, g, b, a;          /* shade 0..1 */
     float fog;                 /* 0..255 */
     uint32_t oc;               /* outcode: 1 x+, 2 x-, 4 y+, 8 y-, 16 near, 32 needs clipping, 64 far */
+    /* to_out's work that does not change between the triangles sharing the
+     * vertex (XGFX_VTX_OUT_CACHE): valid while ostamp == s_ostamp and the
+     * fog bit is ofog */
+    uint32_t ostamp, ofog;
+    float ox, oy, oz;          /* framebuffer x before the HUD anchor, y, depth 0..1 before the bias */
+    uint8_t orgba[4];
 } Vtx;
 #define VTX_LERP_FLOATS 11
+/* the vertices' screen positions and colours are worked out once per vertex,
+ * not once per triangle that uses it; s_ostamp moves on whenever what they
+ * depend on changes (the viewport, the output map). -DXGFX_VTX_OUT_CACHE=0:
+ * per triangle, as before (the same numbers) */
+#ifndef XGFX_VTX_OUT_CACHE
+#define XGFX_VTX_OUT_CACHE 1
+#endif
+static uint32_t s_ostamp = 1;
 
 typedef struct {
     uint8_t fmt, siz, cms, cmt, masks, maskt, shifts, shiftt, palette;
@@ -255,6 +277,17 @@ static inline const uint8_t* host(uint32_t a) { return xu_host(seg(a)); }
  * from the image at N64 addresses */
 static void mtx_from_n64(float out[4][4], uint32_t m) {
     int e;
+    if (XGFX_VTX_WORDS && !(m & 3u) && (m & 0x1FFFFFFFu) + 64u <= xrc_rdram_size) {
+        /* the image's words: each holds two halves in N64 order (the integer
+         * parts first, then the fractions) */
+        const uint32_t* q = (const uint32_t*)xu_host(m);
+        for (e = 0; e < 16; e += 2) {
+            uint32_t wi = q[e >> 1], wf = q[8 + (e >> 1)];
+            out[e >> 2][e & 3] = (float)(int32_t)((wi & 0xFFFF0000u) | (wf >> 16)) * (1.0f / 65536.0f);
+            out[e >> 2][(e & 3) + 1] = (float)(int32_t)((wi << 16) | (wf & 0xFFFFu)) * (1.0f / 65536.0f);
+        }
+        return;
+    }
     for (e = 0; e < 16; e++)
         out[e >> 2][e & 3] = (float)(((int32_t)(int16_t)rd16(m + 2u * e) << 16) | (int32_t)rd16(m + 32u + 2u * e)) *
                              (1.0f / 65536.0f);
@@ -362,28 +395,63 @@ static const GfxUcode s_uc_f3d = { GFX_UC_F3D, 0, 16, 0, "" };
 static const GfxUcode* s_uc = &s_uc_f3d;
 static unsigned s_vmax = 16;
 
+/* the vertex's clip position as four lanes at once (SSE: the P3 has it):
+ * each lane's sum in the scalar code's order, ((x m0 + y m1) + z m2) + m3,
+ * with no fused multiply-add, so the same bits (bench_dl's pictures match).
+ * GoldenEye's vertices were a third of its display-list time on the host.
+ * -DXGFX_VTX_SSE=0: the scalar sums, as before */
+#ifndef XGFX_VTX_SSE
+#define XGFX_VTX_SSE 1
+#endif
+#if !defined(__SSE__)
+#undef XGFX_VTX_SSE
+#define XGFX_VTX_SSE 0
+#endif
+
 static void do_vtx(uint32_t n, uint32_t v0, uint32_t addr) {
     uint32_t i, src;
+#if XGFX_VTX_SSE
+    __m128 m0, m1, m2, m3;
+#endif
     src = seg(addr);
     if (R.mvp_dirty) {
         mtx_mul(R.mvp, R.mv[R.mv_top], R.proj);   /* row vectors: v MV P */
         R.mvp_dirty = 0;
     }
+#if XGFX_VTX_SSE
+    m0 = _mm_loadu_ps(R.mvp[0]), m1 = _mm_loadu_ps(R.mvp[1]), m2 = _mm_loadu_ps(R.mvp[2]), m3 = _mm_loadu_ps(R.mvp[3]);
+#endif
     for (i = 0; i < n && v0 + i < s_vmax; i++, src += 16) {
         /* N64 Vtx: s16 ob[3], u16 flag, s16 tc[2], u8 cn[4] */
         int16_t ob[3], tc[2];
         uint8_t cn[4];
         Vtx* v = &R.vc[v0 + i];
         float x, y, z;
-        ob[0] = (int16_t)rd16(src); ob[1] = (int16_t)rd16(src + 2); ob[2] = (int16_t)rd16(src + 4);
-        tc[0] = (int16_t)rd16(src + 8); tc[1] = (int16_t)rd16(src + 10);
-        cn[0] = rd8(src + 12); cn[1] = rd8(src + 13); cn[2] = rd8(src + 14); cn[3] = rd8(src + 15);
+        v->ostamp = 0;
+        if (XGFX_VTX_WORDS && !(src & 3u)) {   /* the image's words are native: four reads */
+            const uint32_t* q = (const uint32_t*)xu_host(src);
+            uint32_t w0 = q[0], w1 = q[1], w2 = q[2], w3 = q[3];
+            if ((src & (xrc_rdram_size - 1)) + 16u > xrc_rdram_size) w1 = rd32(src + 4), w2 = rd32(src + 8), w3 = rd32(src + 12);
+            ob[0] = (int16_t)(w0 >> 16); ob[1] = (int16_t)w0; ob[2] = (int16_t)(w1 >> 16);
+            tc[0] = (int16_t)(w2 >> 16); tc[1] = (int16_t)w2;
+            cn[0] = (uint8_t)(w3 >> 24); cn[1] = (uint8_t)(w3 >> 16); cn[2] = (uint8_t)(w3 >> 8); cn[3] = (uint8_t)w3;
+        } else {
+            ob[0] = (int16_t)rd16(src); ob[1] = (int16_t)rd16(src + 2); ob[2] = (int16_t)rd16(src + 4);
+            tc[0] = (int16_t)rd16(src + 8); tc[1] = (int16_t)rd16(src + 10);
+            cn[0] = rd8(src + 12); cn[1] = rd8(src + 13); cn[2] = rd8(src + 14); cn[3] = rd8(src + 15);
+        }
         x = ob[0]; y = ob[1]; z = ob[2];
+#if XGFX_VTX_SSE
+        _mm_storeu_ps(&v->x, _mm_add_ps(_mm_add_ps(_mm_add_ps(_mm_mul_ps(_mm_set1_ps(x), m0), _mm_mul_ps(_mm_set1_ps(y), m1)),
+                                                   _mm_mul_ps(_mm_set1_ps(z), m2)),
+                                        m3));
+#else
         const float(*m)[4] = R.mvp;
         v->x = x * m[0][0] + y * m[1][0] + z * m[2][0] + m[3][0];
         v->y = x * m[0][1] + y * m[1][1] + z * m[2][1] + m[3][1];
         v->z = x * m[0][2] + y * m[1][2] + z * m[2][2] + m[3][2];
         v->w = x * m[0][3] + y * m[1][3] + z * m[2][3] + m[3][3];
+#endif
         v->oc = outcode(v);
         if (R.geom & (F3D_G_LIGHTING | F3D_G_TEXTURE_GEN)) {
             vtx_lit(v, cn);
@@ -475,6 +543,7 @@ static void map_setup(void) {
         s_ox = s_cx;
         s_oy = s_cy;
     }
+    s_ostamp++;
 }
 
 /* SUBSCREEN edges in N64 pixels, 2 pixels of slack (the HUD fade box lands
@@ -510,6 +579,9 @@ static int s_trace;   /* -DXGFX_TRACE_FRAME=<n>: frame n's draws as [DRAW] lines
 #ifndef XGFX_TRACE_PRIM   /* -DXGFX_TRACE_PRIM=0xRRGGBB: the frame after the first draw with that prim colour */
 #define XGFX_TRACE_PRIM 0
 #endif
+#ifndef XGFX_TRACE_MISS   /* -DXGFX_TRACE_MISS=1: the frame after the first texture miss */
+#define XGFX_TRACE_MISS 0
+#endif
 static int s_trace_next;
 
 /* a draw that lands in the pillarbox strips without being a hor+ world
@@ -538,8 +610,15 @@ static void log_side_leak(void) {
 
 static float s_m0[2] = { -1.0f, -1.0f };   /* bind_unit: unit 0's mask-0 axes (its loaded extent, 0..1), or -1 */
 static uint32_t s_m0_tile, s_m0_addr;
+/* f3d_bench: the list run again with the back end left out (nothing drawn;
+ * textures still looked up, made only if new) or in, untimed by [PERF] */
+static int s_null_back, s_benching;
 static void flush(void) {
     if (!s_nb) return;
+    if (s_null_back) {
+        s_nb = 0;
+        return;
+    }
     if (XHW_TEST_BUILD && s_st.tex[0] && (s_m0[0] >= 0.0f || s_m0[1] >= 0.0f)) {
         static unsigned s_said;
         uint32_t i;
@@ -709,6 +788,17 @@ static void set_segment(unsigned n, uint32_t v) {
     }
     R.seg[n & 15] = v;
 }
+/* a palette's hash for the cache key, worked out again only when a
+ * LOADTLUT has written TMEM's palette half since (s_tlut_gen) or another
+ * palette is asked for: a CI8 texture hashed all 256 entries at every bind,
+ * before the per-frame memo could answer (GoldenEye's binds were an eighth
+ * of its display-list time on the host). The same keys.
+ * -DXGFX_TLUT_HASH_CACHE=0: hashed at every bind, as before */
+#ifndef XGFX_TLUT_HASH_CACHE
+#define XGFX_TLUT_HASH_CACHE 1
+#endif
+static uint32_t s_tlut_gen = 1, s_th_gen, s_th_b, s_th_n, s_th_lut, s_th;
+
 /* The texture tile `tidx` samples: converted, padded to powers of two,
  * uploaded once and cached. NULL when it can't be made. */
 static TexEntry* texture_for_tile(int tidx) {
@@ -783,7 +873,13 @@ static TexEntry* texture_for_tile(int tidx) {
     if (pal) {   /* the palette is part of the picture: in the key (equality only) */
         unsigned n = t->siz == F3D_G_IM_SIZ_4b ? 16u : 256u, b = t->siz == F3D_G_IM_SIZ_4b ? t->palette * 16u : 0u;
         uint32_t th = f3d_omh_text_lut(R.omh);
-        for (i = 0; i < n; i++) th = (th ^ R.tlut[b + i]) * 16777619u;
+        if (XGFX_TLUT_HASH_CACHE && s_th_gen == s_tlut_gen && s_th_b == b && s_th_n == n && s_th_lut == th) {
+            th = s_th;
+        } else {
+            uint32_t lut = th;
+            for (i = 0; i < n; i++) th = (th ^ R.tlut[b + i]) * 16777619u;
+            s_th_gen = s_tlut_gen, s_th_b = b, s_th_n = n, s_th_lut = lut, s_th = th;
+        }
         key ^= th | 1u;
     }
 #if XGFX_TEX_MEMO
@@ -922,10 +1018,12 @@ hit:
 }
 
 /* the first misses of each kind, for the log */
+static uint32_t s_ring[16][2], s_ring_n;   /* test builds: run_dl's last 16 commands, as the list holds them */
 static void tex_miss(const char* why, int tidx) {
     static unsigned s_n;
     const Tile* t = &R.tile[tidx & 7];
     const TmemLoad* ld = &R.loads[(t->tmem >> 3) & 63];
+    if (XGFX_TRACE_MISS && !s_trace_next) s_trace_next = 1;
     if (s_n++ >= 48) return;
     xhw_logf("[GFX] texture miss (%s): tile %d fmt %d siz %d line %d tmem %d s %d-%d t %d-%d mask %d/%d | load %d "
              "addr %08x bytes %u dxt %d",
@@ -937,6 +1035,11 @@ static void tex_miss(const char* why, int tidx) {
             if (R.loads[k].valid)
                 xhw_logf("[GFX]   load at tmem %u: addr %08x bytes %u %s", (unsigned)R.loads[k].tmem,
                          (unsigned)R.loads[k].addr, (unsigned)R.loads[k].bytes, R.loads[k].tile ? "tile" : "block");
+        if (XHW_TEST_BUILD && s_n <= 2)   /* and the commands before it, oldest first */
+            for (k = 0; k < 16; k++) {
+                const uint32_t* c = s_ring[(s_ring_n + (unsigned)k) & 15];
+                xhw_logf("[GFX]   cmd -%02d: %08x %08x", 16 - k, (unsigned)c[0], (unsigned)c[1]);
+            }
     }
 }
 
@@ -1120,6 +1223,9 @@ static int cc_reads_texel0(void) {
     return 0;
 }
 
+#ifndef XGFX_TEX_UNREAD
+#define XGFX_TEX_UNREAD 1
+#endif
 static void draw_state(void) {
     int cycle = (R.omh >> F3D_G_MDSFT_CYCLETYPE) & 3;
     flush();
@@ -1129,7 +1235,12 @@ static void draw_state(void) {
     s_st.two_cycle = cycle == 1;
     pixel_state(0);
     s_textured = s_tex1 = 0;
-    if (R.tex_on) {
+    /* a combiner that reads no texel draws untextured whatever G_TEXTURE says:
+     * no texture is looked up, converted or bound (Mario Party's board intro
+     * drew shade-only quads with the texture on: 36 misses of an unset tile
+     * 0 a run, each a lookup). Copy and fill modes bypass the combiner.
+     * -DXGFX_TEX_UNREAD=0: bound whenever G_TEXTURE is on, as before */
+    if (R.tex_on && (!XGFX_TEX_UNREAD || cycle >= 2 || cc_reads_texel0())) {
         bind_unit(0, R.tex_tile);
         s_textured = s_st.tex[0] != 0;
         if (s_st.two_cycle && cc_uses_texel1()) {
@@ -1161,9 +1272,23 @@ static uint8_t to8(float f) {
     return (uint8_t)(i < 0 ? 0 : i > 255 ? 255 : i);
 }
 
-static void to_out(const Vtx* v, XgfxVtx* o, const Vtx* flat) {
-    float iw = 1.0f / v->w;
-    float z01 = (v->z * iw + 1.0f) * 0.5f;
+static void to_out(const Vtx* cv, XgfxVtx* o, const Vtx* flat) {
+    Vtx* v = (Vtx*)cv;   /* the vertex buffer's or a clip copy's: its cache fields are ours */
+    uint32_t fogb = (R.geom & F3D_G_FOG) != 0;
+    float z01;
+    if (!XGFX_VTX_OUT_CACHE || v->ostamp != s_ostamp || v->ofog != fogb) {
+        float iw = 1.0f / v->w;
+        v->oz = (v->z * iw + 1.0f) * 0.5f;
+        v->ox = (R.vp_tx + v->x * iw * R.vp_sx) * s_sx + s_ox;
+        v->oy = (R.vp_ty - v->y * iw * R.vp_sy) * s_sy + s_oy;
+        v->orgba[0] = to8(v->r);
+        v->orgba[1] = to8(v->g);
+        v->orgba[2] = to8(v->b);
+        v->orgba[3] = fogb ? 255 : to8(v->a);   /* the RSP puts fog in shade alpha; the combiner sees 1 */
+        v->ofog = fogb;
+        v->ostamp = s_ostamp;
+    }
+    z01 = v->oz;
     if (s_zrel > 0.0f && R.proj[2][3] < -1e-6f) {
         /* nearer by s_zrel of the eye distance: depth tends to A far away
          * (A = (1 + P22/P23)/2 for a perspective P, scale included), and a
@@ -1171,18 +1296,21 @@ static void to_out(const Vtx* v, XgfxVtx* o, const Vtx* flat) {
         float a = 0.5f * (1.0f + R.proj[2][2] / R.proj[2][3]);
         z01 -= (a - z01) * s_zrel;
     }
-    const Vtx* c = flat ? flat : v;
-    o->x = (R.vp_tx + v->x * iw * R.vp_sx) * s_sx + s_ox + s_xoff;
-    o->y = (R.vp_ty - v->y * iw * R.vp_sy) * s_sy + s_oy;
+    o->x = v->ox + s_xoff;
+    o->y = v->oy;
     o->z = (z01 < 0.0f ? 0.0f : z01 > 1.0f ? 1.0f : z01) * s_out.zmax;
 #ifdef XGFX_DEBUG_ZHALF
     o->z *= 0.5f;
 #endif
     o->w = v->w;
-    o->rgba[0] = to8(c->r);
-    o->rgba[1] = to8(c->g);
-    o->rgba[2] = to8(c->b);
-    o->rgba[3] = (R.geom & F3D_G_FOG) ? 255 : to8(c->a);   /* the RSP puts fog in shade alpha; the combiner sees 1 */
+    if (flat) {
+        o->rgba[0] = to8(flat->r);
+        o->rgba[1] = to8(flat->g);
+        o->rgba[2] = to8(flat->b);
+        o->rgba[3] = fogb ? 255 : to8(flat->a);
+    } else {
+        memcpy(o->rgba, v->orgba, 4);
+    }
     o->s0 = v->s * s_u_scale[0] - s_u_off[0];
     o->t0 = v->t * s_v_scale[0] - s_v_off[0];
     o->s1 = v->s * s_u_scale[1] - s_u_off[1];
@@ -1418,11 +1546,11 @@ static void probe_tri(const XgfxVtx* a, const XgfxVtx* b, const XgfxVtx* c) {
         }
 }
 
-static void emit_poly(const Vtx* poly, int n, const Vtx* flat) {
+static void emit_polyp(const Vtx* const* poly, int n, const Vtx* flat) {
     XgfxVtx pv[12];
     int i;
     if (s_nb + (uint32_t)(n - 2) > BATCH_TRIS) flush();
-    for (i = 0; i < n; i++) to_out(&poly[i], &pv[i], flat);
+    for (i = 0; i < n; i++) to_out(poly[i], &pv[i], flat);
     if (s_overlay) overlay_full(pv, n);
     if (XGFX_PROBE && s_probe.on && R.cimg == s_probe.main)
         for (i = 1; i + 1 < n; i++) probe_tri(&pv[0], &pv[i], &pv[i + 1]);
@@ -1435,11 +1563,19 @@ static void emit_poly(const Vtx* poly, int n, const Vtx* flat) {
     }
 }
 
+static void emit_poly(const Vtx* poly, int n, const Vtx* flat) {
+    const Vtx* pp[12];
+    int i;
+    for (i = 0; i < n && i < 12; i++) pp[i] = &poly[i];
+    emit_polyp(pp, n, flat);
+}
+
 static void lerp_vtx(Vtx* o, const Vtx* a, const Vtx* b, float t) {
     const float *pa = &a->x, *pb = &b->x;
     float* po = &o->x;
     unsigned i;
     for (i = 0; i < VTX_LERP_FLOATS; i++) po[i] = pa[i] + (pb[i] - pa[i]) * t;
+    o->ostamp = 0;
 }
 
 /* Sutherland-Hodgman in clip space against near (z + w >= 0), the x/y
@@ -1487,7 +1623,7 @@ static void clip_tri(Vtx* const v[3], const Vtx* flat) {
     }
     if (n < 3) return;
     for (i = 0; i < n; i++)
-        if (in[i].w < 1e-5f) in[i].w = 1e-5f;
+        if (in[i].w < 1e-5f) in[i].w = 1e-5f, in[i].ostamp = 0;
     if (R.geom & cullmask) {   /* all w > 0 now: the NDC area sign is the true orientation */
         float area = 0.0f;
         for (i = 0; i < n; i++) {
@@ -1535,8 +1671,7 @@ static void do_tri(int ia, int ib, int ic, int flag) {
     if (needs_clip) s_t_clip++;
     if (s_st_epoch != s_epoch) draw_state();
     if (!needs_clip) {
-        Vtx tri[3] = { *v[0], *v[1], *v[2] };
-        emit_poly(tri, 3, flat);
+        emit_polyp((const Vtx* const*)v, 3, flat);
         return;
     }
     clip_tri(v, flat);
@@ -1618,7 +1753,8 @@ static void do_fillrect(uint32_t w0, uint32_t w1) {
         s_zclears++;
         flush();
         if (s_trace) xhw_logf("[DRAW] z clear %d,%d-%d,%d fill %08x", ulx, uly, lrx, lry, (unsigned)R.fill);
-        if (x0 <= SUB_X0 && x1 >= SUB_X1 && y0 <= SUB_Y0 && y1 >= SUB_Y1) {   /* SUBSCREEN-sized: the whole picture */
+        if (s_null_back) {
+        } else if (x0 <= SUB_X0 && x1 >= SUB_X1 && y0 <= SUB_Y0 && y1 >= SUB_Y1) {   /* SUBSCREEN-sized: the whole picture */
             xgfx_clear((int32_t)s_wx0, (int32_t)s_cy, (int32_t)s_wx1, (int32_t)(s_cy + s_ch), 0, 0, 1, 1.0f);
         } else {
             xgfx_clear((int32_t)(x0 * s_sx + s_ox), (int32_t)(y0 * s_sy + s_oy), (int32_t)(x1 * s_sx + s_ox),
@@ -1926,10 +2062,18 @@ static uint32_t s_unknown[256];
  * their parent in clipping and precision only: the same commands. */
 static int s_fam = GFX_UC_F3D;   /* s_uc->family */
 
+#ifndef XGFX_DKR
+#define XGFX_DKR 1
+#endif
+static int s_rare, s_dkr_on;   /* Rare's DKR microcode (below, run_dl) */
 void f3d_set_ucode(const GfxUcode* uc) {
+    int rare = XGFX_DKR && uc && !uc->found && uc->family == GFX_UC_F3D;
     s_uc = uc ? uc : &s_uc_f3d;
     s_fam = s_uc->family;
     s_vmax = s_uc->vtx_max > VC_MAX ? VC_MAX : s_uc->vtx_max < 16 ? 16 : s_uc->vtx_max;
+    if (rare != s_rare) s_dkr_on = 0;
+    s_rare = rare;
+    if (s_rare && s_dkr_on) s_vmax = 32;
 }
 
 /* the RDP halves that follow a G_TEXRECT */
@@ -1942,6 +2086,7 @@ static void do_viewport(uint32_t m) {   /* Vp: s16 vscale[4], vtrans[4]; x, y wi
     R.vp_sx = (int16_t)rd16(m) * 0.25f; R.vp_sy = (int16_t)rd16(m + 2) * 0.25f;
     R.vp_tx = (int16_t)rd16(m + 8) * 0.25f; R.vp_ty = (int16_t)rd16(m + 10) * 0.25f;
     R.vp_sz = (int16_t)rd16(m + 4); R.vp_tz = (int16_t)rd16(m + 12);
+    s_ostamp++;
     clip_rect_update();
 }
 
@@ -1962,6 +2107,7 @@ static void do_modifyvtx(uint8_t where, unsigned i, uint32_t val) {
     Vtx* v;
     if (i >= s_vmax) return;
     v = &R.vc[i];
+    v->ostamp = 0;
     switch (where) {
         case F3DEX_G_MWO_POINT_RGBA:
             v->r = (val >> 24) * (1.0f / 255.0f); v->g = ((val >> 16) & 0xFF) * (1.0f / 255.0f);
@@ -2423,11 +2569,126 @@ static int ex_cmd(uint32_t* pw0, uint32_t* pw1) {
     return 0;   /* the RDP's */
 }
 
+#ifndef XGFX_RARE_DLINMEM
+#define XGFX_RARE_DLINMEM 1
+#endif
+static int s_dlinmem_depth;   /* Rare's 0x07 inside one (run_dl) */
+
+/* ---------------------------------------------------- Rare's DKR microcode
+ *
+ * Diddy Kong Racing's microcode (and Jet Force Gemini's, a later one; both
+ * strip the version text) changes Fast3D's geometry: the encodings are the
+ * DKR decomp's include/f3ddkr.h (CC0), read as the key. Matrices are whole
+ * MVPs the CPU made (mtxf_to_mtx: Nintendo's integer/fraction layout) loaded
+ * into one of 4 slots and selected (G_MTX: the slot in w0 bits 22-23, or JFG's
+ * in bits 16-19; G_MOVEWORD 0x0A selects one); vertices are 10 bytes (s16 x,
+ * y, z, u8 r, g, b, a) transformed by the selected slot alone, written from 0
+ * or appended (w0 bit 16), and with billboarding on (G_MOVEWORD 0x02) added
+ * to vertex 0's clip position; G_TRIN (0x05) draws up to 16 triangles from
+ * memory, 16 bytes each (flags: 0x40 draw back faces; three vertex indices;
+ * u, v per vertex in 10.5), w0 bit 16 texturing them; JFG's 0xBF sets the
+ * bases its vertex and triangle addresses are relative to. Turned on once a
+ * microcode with no version text sends 0x05 or 0x07 (a Fast3D one never
+ * does), so the first such frame's geometry before it reads as Fast3D.
+ * DIVERGES: none meant. -DXGFX_DKR=0: Fast3D, as before (defined above f3d_set_ucode) */
+static float s_dkr_m[4][4][4];     /* the MVP slots */
+static int s_dkr_cur, s_dkr_bb;    /* the slot vertices use; billboarding */
+static unsigned s_dkr_vn;          /* vertices loaded (for an append) */
+static uint32_t s_dkr_voff, s_dkr_toff;   /* JFG's 0xBF bases */
+
+static void dkr_turn_on(unsigned op) {
+    s_dkr_on = 1;
+    s_vmax = 32;
+    xhw_logf("[GFX] the microcode with no version text sent %02X: Rare's DKR geometry from here on (XGFX_DKR)", op);
+}
+
+static void dkr_mtx(uint32_t w0, uint32_t w1) {
+    float m[4][4];
+    unsigned idx = (w0 >> 16) & 0xFu ? (w0 >> 16) & 3u : (w0 >> 22) & 3u;
+    int mult = ((w0 >> 16) & 0xFu) && ((w0 >> 23) & 1u);
+    mtx_from_n64(m, seg(w1));
+    if (mult) mtx_mul(s_dkr_m[idx], m, s_dkr_m[0]);
+    else memcpy(s_dkr_m[idx], m, sizeof m);
+    s_dkr_cur = (int)idx;
+    s_ostamp++;
+}
+
+static void dkr_vtx(uint32_t w0, uint32_t w1) {
+    uint32_t m = (w0 >> 19) & 0x1Fu, len = w0 & 0xFFFFu, n, i, v0, a;
+    const float(*M)[4] = s_dkr_m[s_dkr_cur];
+    n = len == 10u * m + 8u ? m : m + 1u;   /* JFG's count, or DKR's (its length 18n + 8) */
+    v0 = (w0 >> 16) & 1u ? s_dkr_vn : 0u;
+    a = seg(w1) + s_dkr_voff;
+    for (i = 0; i < n && v0 + i < s_vmax; i++, a += 10) {
+        Vtx* v = &R.vc[v0 + i];
+        float x = (float)(int16_t)rd16(a), y = (float)(int16_t)rd16(a + 2), z = (float)(int16_t)rd16(a + 4);
+        v->ostamp = 0;
+        v->x = x * M[0][0] + y * M[1][0] + z * M[2][0] + M[3][0];
+        v->y = x * M[0][1] + y * M[1][1] + z * M[2][1] + M[3][1];
+        v->z = x * M[0][2] + y * M[1][2] + z * M[2][2] + M[3][2];
+        v->w = x * M[0][3] + y * M[1][3] + z * M[2][3] + M[3][3];
+        if (s_dkr_bb && v0 + i > 0) {   /* billboard: on the anchor (vertex 0), its w */
+            v->x += R.vc[0].x, v->y += R.vc[0].y, v->z += R.vc[0].z;
+            v->w = R.vc[0].w;
+        }
+        v->oc = outcode(v);
+        v->r = rd8(a + 6) * (1.0f / 255.0f);
+        v->g = rd8(a + 7) * (1.0f / 255.0f);
+        v->b = rd8(a + 8) * (1.0f / 255.0f);
+        v->a = rd8(a + 9) * (1.0f / 255.0f);
+        v->s = v->t = 0.0f;
+        if ((R.geom & F3D_G_FOG) && v->w > 0.0f) {
+            float f = v->z / v->w * R.fog_m + R.fog_o;
+            v->fog = f < 0.0f ? 0.0f : f > 255.0f ? 255.0f : f;
+        } else {
+            v->fog = 0.0f;
+        }
+    }
+    s_dkr_vn = v0 + i;
+}
+
+static void dkr_trin(uint32_t w0, uint32_t w1) {
+    uint32_t n = (w0 & 0xFFFFu) / 16u, i, a = seg(w1) + s_dkr_toff, geom = R.geom;
+    int tex = (int)((w0 >> 16) & 1u);
+    if (!n) n = ((w0 >> 20) & 0xFu) + 1u;
+    if (n > 16) n = 16;
+    if (R.tex_on != tex || R.tex_tile != 0) {
+        R.tex_on = (uint8_t)tex;
+        R.tex_tile = 0;
+        DIRTY();
+    }
+    for (i = 0; i < n; i++, a += 16) {
+        unsigned flags = rd8(a), vi[3], k;
+        vi[0] = rd8(a + 1), vi[1] = rd8(a + 2), vi[2] = rd8(a + 3);
+        if (vi[0] >= s_dkr_vn || vi[1] >= s_dkr_vn || vi[2] >= s_dkr_vn) continue;
+        for (k = 0; k < 3; k++) {
+            R.vc[vi[k]].s = (float)(int16_t)rd16(a + 4 + 4 * k) * (1.0f / 32.0f);
+            R.vc[vi[k]].t = (float)(int16_t)rd16(a + 6 + 4 * k) * (1.0f / 32.0f);
+        }
+        {   /* 0x40: both faces; else the back culled */
+            uint32_t want = (geom & ~CULLMASK) | ((flags & 0x40u) ? 0u : F3D_G_CULL_BACK);
+            if (R.geom != want) {
+                R.geom = want;
+                DIRTY();
+            }
+        }
+        do_tri((int)vi[0], (int)vi[1], (int)vi[2], 0);
+    }
+    if (R.geom != geom) {
+        R.geom = geom;
+        DIRTY();
+    }
+}
+
 static void run_dl(const uint32_t* pc) {
     const uint32_t* stack[DL_DEPTH];
     int sp = 0;
     for (;;) {
         uint32_t w0 = pc[0], w1 = pc[1];
+        if (XHW_TEST_BUILD) {   /* test builds: the last commands, for tex_miss's report */
+            s_ring[s_ring_n & 15][0] = w0, s_ring[s_ring_n & 15][1] = w1;
+            s_ring_n++;
+        }
         pc += 2;
         if (s_fam != GFX_UC_F3D && ex_cmd(&w0, &w1)) continue;
         switch (w0 >> 24) {
@@ -2439,12 +2700,21 @@ static void run_dl(const uint32_t* pc) {
                 break;
         }
         switch (w0 >> 24) {
-            case F3D_G_MTX: s_mtx_loads++; do_mtx(w0, w1); break;
+            case F3D_G_MTX:
+                s_mtx_loads++;
+                if (s_dkr_on) dkr_mtx(w0, w1);
+                else do_mtx(w0, w1);
+                break;
             case F3D_G_POPMTX:
                 if (R.mv_top > 0) { R.mv_top--; R.mvp_dirty = 1; }
                 break;
             case F3D_G_VTX: {
                 uint32_t n, v0, len, addr;
+                if (s_dkr_on) {
+                    s_vtx_loads++;
+                    dkr_vtx(w0, w1);
+                    break;
+                }
                 f3d_vtx_decode(w0, w1, &n, &v0, &len, &addr);
                 s_vtx_loads++;
                 do_vtx(n, v0, addr);
@@ -2452,10 +2722,47 @@ static void run_dl(const uint32_t* pc) {
             }
             case F3D_G_TRI1: {
                 uint8_t a, b, c, f;
+                if (s_dkr_on) {   /* JFG: the bases its vertex (w1) and triangle (w0) addresses are relative to */
+                    s_dkr_toff = w0 & 0xFFFFFFu;
+                    s_dkr_voff = w1 & 0xFFFFFFu;
+                    break;
+                }
                 f3d_tri1_decode(w1, &a, &b, &c, &f);
                 if (a < 16 && b < 16 && c < 16) do_tri(a, b, c, f);
                 break;
             }
+            case F3D_G_RESERVED1:   /* Rare's G_TRIN (DKR, JFG): triangles from memory */
+                if (s_rare) {
+                    if (!s_dkr_on) dkr_turn_on(0x05);
+                    dkr_trin(w0, w1);
+                } else {
+                    s_unknown[F3D_G_RESERVED1]++;
+                }
+                break;
+            case F3D_G_RESERVED2:
+                if (s_rare && !s_dkr_on) dkr_turn_on(0x07);
+                /* Rare's later Fast3D (Jet Force Gemini; its microcode has no
+                 * version text): 0x07 runs n commands from memory and comes
+                 * back, w0 = 07 nn llll (n, and their bytes), w1 their address.
+                 * JFG puts each texture rectangle's SETTILE / LOADBLOCK /
+                 * SETTILESIZE / RDPHALF words there: unread, its text and its
+                 * menu backgrounds drew as grey boxes (tile 0 never set).
+                 * Nintendo's Fast3D leaves 0x07 reserved.
+                 * -DXGFX_RARE_DLINMEM=0: unknown, as before */
+                if (XGFX_RARE_DLINMEM && s_fam == GFX_UC_F3D && s_dlinmem_depth < 2) {
+                    uint32_t n = (w0 >> 16) & 0xFFu, i, a = seg(w1);
+                    uint32_t buf[2 * 256 + 2];
+                    if (!n) n = (w0 & 0xFFFFu) / 8u;
+                    if (n > 256) n = 256;
+                    for (i = 0; i < n; i++) buf[2 * i] = rd32(a + 8 * i), buf[2 * i + 1] = rd32(a + 8 * i + 4);
+                    buf[2 * n] = (uint32_t)F3D_G_ENDDL << 24, buf[2 * n + 1] = 0;
+                    s_dlinmem_depth++;
+                    run_dl(buf);
+                    s_dlinmem_depth--;
+                } else {
+                    s_unknown[F3D_G_RESERVED2]++;
+                }
+                break;
             case F3D_G_TRI4:   /* Rare's Fast3D (GoldenEye, Perfect Dark): 4-bit indices, x and y in w1, z in w0 */
                 if (XGFX_TRI4 && s_fam == GFX_UC_F3D) {
                     int i;
@@ -2509,6 +2816,14 @@ static void run_dl(const uint32_t* pc) {
                 uint16_t off;
                 uint32_t data;
                 f3d_moveword_decode(w0, w1, &idx, &off, &data);
+                if (s_dkr_on && idx == 0x02) {   /* DKR: G_MW_BILLBOARD */
+                    s_dkr_bb = (int)(data & 1u);
+                    break;
+                }
+                if (s_dkr_on && idx == 0x0A) {   /* DKR: G_MW_MVPMATRIX, the slot << 6 */
+                    s_dkr_cur = (int)((data >> 6) & 3u);
+                    break;
+                }
                 if (idx == F3D_G_MW_SEGMENT) set_segment((off >> 2) & 15, data);
                 else if (idx == F3D_G_MW_NUMLIGHT) R.num_lights = f3d_numlights_from_data(data);
                 else if (idx == F3D_G_MW_FOG) f3d_fog_from_data(data, &R.fog_m, &R.fog_o);
@@ -2643,6 +2958,7 @@ static void run_dl(const uint32_t* pc) {
                     count = (uint16_t)(count >= sl ? count - sl : 0);
                 }
                 for (at -= 256, i = 0; i <= count && at + i < 256; i++) R.tlut[at + i] = rd16(src + 2 * i);
+                s_tlut_gen++;
                 DIRTY();
                 break;
             }
@@ -3217,6 +3533,7 @@ void f3d_run(uint32_t dl, int present) {
     if (!s_init) {
         s_init = 1;
         R.vp_sx = 160.0f; R.vp_sy = 120.0f; R.vp_tx = 160.0f; R.vp_ty = 120.0f;
+        s_ostamp++;
         for (i = 0; i < 16; i++) R.mv[0][i >> 2][i & 3] = R.proj[i >> 2][i & 3] = (i % 5) == 0 ? 1.0f : 0.0f;
     }
     frame_open();
@@ -3234,7 +3551,7 @@ void f3d_run(uint32_t dl, int present) {
     s_fullsync = 0;
     s_rdp_n = 0;
     s_trace = XGFX_TRACE_FRAME && s_frames == XGFX_TRACE_FRAME;
-    if (XGFX_TRACE_PRIM && s_trace_next == 1) s_trace_next = 2, s_trace = 1;
+    if ((XGFX_TRACE_PRIM || XGFX_TRACE_MISS) && s_trace_next == 1) s_trace_next = 2, s_trace = 1;
     if (XGFX_TRACE_MS) {
         static int s_traced;
         static uint64_t s_first;   /* ms from the first frame */
@@ -3244,12 +3561,22 @@ void f3d_run(uint32_t dl, int present) {
     DIRTY();
     run_dl((const uint32_t*)host(dl));
     flush();
-    {
+    if (!s_benching) {
         uint64_t t1 = xhw_time_us();
         s_dl_us += t1 - t0;
         xhw_perf_add(XHW_PERF_DL, t1 - t0);
     }
     if (present) f3d_present_frame();
+}
+
+/* gfx.c's XRC_DLBENCH: one run of the list into the open frame, the back end
+ * left out (null_back) or not; the caller times it */
+void f3d_bench(uint32_t dl, int null_back) {
+    s_benching = 1;
+    s_null_back = null_back;
+    f3d_run(dl, 0);
+    s_null_back = 0;
+    s_benching = 0;
 }
 
 /* the open frame's end: the port's drawing, the present, the counters */

@@ -219,8 +219,10 @@ def _hardware(N):
             one([a], 'osDpSetNextBuffer', 'writes DPC_START and DPC_END')
         if N.hw(a, SP, 0x10) and N.hw(a, 0x04080000, 0, 'w'):
             one([a], '__osSpSetPc', 'writes SP_PC')
-        if ft.leaf and N.only_hw(a, (SP, 0x10)) and 'w' in ft.hw.get(SP + 0x10, '') and sz <= 0x14:
-            one([a], '__osSpSetStatus', 'writes SP_STATUS only')
+        # writes its argument: libultra's debug monitor (Star Fox 64 links it) has __rmonStepRCP, which
+        # writes a constant there, and the two together named neither (no osSpTaskStartGo either)
+        if ft.leaf and N.only_hw(a, (SP, 0x10)) and 'w' in ft.hw.get(SP + 0x10, '') and sz <= 0x14 and                 (0 in ft.args_used or os.environ.get('N64RX_SPSET_ARG', '1') == '0'):
+            one([a], '__osSpSetStatus', 'writes SP_STATUS only (its argument)')
         if ft.leaf and N.only_hw(a, (SP, 0x10)) and ft.hw.get(SP + 0x10) == 'r':
             one([a] if sz <= 0x10 else [], '__osSpGetStatus', 'reads SP_STATUS only')
         if N.hw(a, SP, 0, 'w') and N.hw(a, SP, 4, 'w') and N.hw(a, SP, 8, 'w'):

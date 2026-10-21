@@ -98,3 +98,13 @@ void xrc_trace_thread(void* thread, unsigned n) {
 }
 
 void xrc_trace_init(void) { xhw_crash_set_extra(crash_report); }
+
+/* N64RX_SP_CHECK builds (pipeline.py write_sp_check): a call came back with
+ * another $sp; the first 32 such calls, then every 1000th */
+void xrc_sp_bad(uint32_t site, const char* callee, uint32_t target, uint32_t before, uint32_t after);
+void xrc_sp_bad(uint32_t site, const char* callee, uint32_t target, uint32_t before, uint32_t after) {
+    static unsigned s_n;
+    if (s_n++ < 32 || s_n % 1000 == 0)
+        xhw_logf("[SPCHECK] the call at %08x to %s (%08x) came back with sp %08x (it went with %08x) (%u)",
+                 (unsigned)site, callee, (unsigned)target, (unsigned)after, (unsigned)before, s_n);
+}

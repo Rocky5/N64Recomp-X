@@ -17,6 +17,10 @@ from .features import features
 
 # kill switch: N64RX_XJAL_INTERP=0 leaves a function with a jal into another's body recompiled
 XJAL = os.environ.get('N64RX_XJAL_INTERP', '1') != '0'
+# patches/recomp/0002: a jal to an address where this segment has no function (another overlay's, a
+# function's body, or code no segment holds) is called through the runtime's lookup instead of
+# interpreting its caller. N64RX_LOOKUP_JAL=0: the caller interpreted, as before
+LOOKUP_JAL = os.environ.get('N64RX_LOOKUP_JAL', '1') != '0'
 # captured code's jump tables in KUSEG pages, and its callees in pages, no capture holds: asked for
 # (N64RX_KUSEG_WANT=0: not)
 KUSEG_WANT = os.environ.get('N64RX_KUSEG_WANT', '1') != '0'
@@ -231,7 +235,7 @@ def report(a: Analysis, ids, live, nm, replaced):
     return '\n'.join(out) + '\n'
 
 
-def cross_funcs(a: Analysis, live, nm, replaced):
+def cross_funcs(a: Analysis, live, nm, replaced, lookups=None):
     """live functions with a branch or j into the body of another function
     (not its start), or a branch to code no function holds: the recompiler emits a goto to a label the other
     function holds, which C cannot compile ("use of undeclared label"; the
@@ -277,6 +281,9 @@ def cross_funcs(a: Analysis, live, nm, replaced):
                     # call where that version has no start (learn._plausible kept another's out)
                     loose = seg.name.startswith('code_') and not (k >= 0 and spans[k][0] == t)
                     if seg.has(t) and (inside or loose):
+                        if LOOKUP_JAL and lookups is not None:
+                            lookups.add(t)   # patches/recomp/0002: whatever the game has there when it runs
+                            continue
                         out[kx] = nm[kx]
                         break
                     continue
@@ -427,7 +434,7 @@ def _table_elsewhere(a, rom, t, f):
     return False
 
 
-def recomp_hazards(a: Analysis, live, nm, replaced):
+def recomp_hazards(a: Analysis, live, nm, replaced, lookups=None):
     """live functions N64Recomp would crash on or refuse one run at a time:
     a jump table it reads outside the function's own segment (it takes the
     table to sit in the function's segment and reads the ROM past its end:
@@ -438,7 +445,9 @@ def recomp_hazards(a: Analysis, live, nm, replaced):
     interpreter runs them; also a cop0 register other than Status, which
     N64Recomp refuses. Returns {vram: (name, why, want)}: `want`, the RDRAM
     range from the function to its table when the function is captured code
-    (learn.py): the console saves it, the next build has both in one segment"""
+    (learn.py): the console saves it, the next build has both in one segment.
+    With LOOKUP_JAL the two jal cases are not hazards: their targets go into
+    `lookups` (a set), for the recompiler to call through the lookup."""
     from .mips import Ins, words
     rom = a.img.rom
     starts = {x for fs in a.funcs.values() for x in fs}   # vram: N64Recomp finds a jal's function in every section
@@ -456,6 +465,9 @@ def recomp_hazards(a: Analysis, live, nm, replaced):
             for i, w in enumerate(ws):
                 ins = Ins(w, f.start + 4 * i)
                 if ins.is_jal and not seg.has(ins.target) and ins.target not in starts:
+                    if LOOKUP_JAL and lookups is not None:
+                        lookups.add(ins.target)   # the runtime finds it, or its safety net runs it and learns it
+                        continue
                     why = f'jal {ins.target:08X}: no function there'
                     t = ins.target
                     if (KUSEG_WANT and seg.name.startswith('code_') and (t < 0x80000000) == (f.start < 0x80000000)
@@ -467,6 +479,9 @@ def recomp_hazards(a: Analysis, live, nm, replaced):
                 if ins.is_jal and seg.name.startswith('code_') and seg.has(ins.target) and ins.target not in starts:
                     # into captured code where no function starts: another overlay's function at that address
                     # (N64Recomp would make a static there and split the function that holds it)
+                    if LOOKUP_JAL and lookups is not None:
+                        lookups.add(ins.target)   # whichever overlay is there when it runs (ovl.c, guard.c)
+                        continue
                     why = f'jal {ins.target:08X}: another overlay\'s function'
                     break
                 if ins.op == 17 and ins.rs in (16, 17) and 8 <= ins.funct <= 11:   # round/trunc/ceil/floor.l: not in N64Recomp

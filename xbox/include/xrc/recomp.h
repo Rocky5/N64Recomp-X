@@ -94,11 +94,21 @@ static inline void DMULT(int64_t a, int64_t b, int64_t* lo64, int64_t* hi64) {
 
 static inline void DDIV(int64_t a, int64_t b, int64_t* quot, int64_t* rem) {
     int overflow = ((uint64_t)a == 0x8000000000000000ull) && (b == -1ll);
+    if (b == 0) {   /* the VR4300's, no trap (DIV32 below; interp.c's twin) */
+        *quot = a >= 0 ? -1 : 1;
+        *rem = a;
+        return;
+    }
     *quot = overflow ? a : (a / b);
     *rem = overflow ? 0 : (a % b);
 }
 
 static inline void DDIVU(uint64_t a, uint64_t b, uint64_t* quot, uint64_t* rem) {
+    if (b == 0) {
+        *quot = ~0ull;
+        *rem = a;
+        return;
+    }
     *quot = a / b;
     *rem = a % b;
 }
@@ -263,6 +273,36 @@ static inline void set_cop1_cs(uint32_t val) {
 #define U32(val) ((uint32_t)(val))
 #define S64(val) ((int64_t)(val))
 #define U64(val) ((uint64_t)(val))
+
+/* DIV / DIVU (patches/recomp/0003): the VR4300 never traps on a zero
+ * divisor: lo = -1 (or 1 for a negative dividend; DIVU all ones), hi = the
+ * dividend; 0x80000000 / -1 gives 0x80000000 rem 0. Code built without
+ * zero-division checks relies on it (Vigilante 8, World Driver
+ * Championship crashed on the host's #DE in the sweep); 32-bit idiv, where
+ * N64Recomp divided in 64 bits (a libcall on the P3). -DXRC_DIV_VR4300=0:
+ * the plain division, as before (a zero divisor traps). */
+#ifndef XRC_DIV_VR4300
+#define XRC_DIV_VR4300 1
+#endif
+#if XRC_DIV_VR4300
+#define DIV32(a, b, lo_, hi_)                                                                   \
+    do {                                                                                         \
+        int32_t xa_ = (int32_t)(a), xb_ = (int32_t)(b);                                          \
+        if (xb_ == 0) lo_ = (int64_t)(xa_ >= 0 ? -1 : 1), hi_ = (int64_t)xa_;          \
+        else if (xa_ == INT32_MIN && xb_ == -1) lo_ = (int64_t)xa_, hi_ = 0;                \
+        else lo_ = (int64_t)(xa_ / xb_), hi_ = (int64_t)(xa_ % xb_);                   \
+    } while (0)
+#define DIVU32(a, b, lo_, hi_)                                                                  \
+    do {                                                                                         \
+        uint32_t xa_ = (uint32_t)(a), xb_ = (uint32_t)(b);                                       \
+        if (xb_ == 0) lo_ = (int64_t)-1, hi_ = (int64_t)(int32_t)xa_;                  \
+        else lo_ = (int64_t)(int32_t)(xa_ / xb_), hi_ = (int64_t)(int32_t)(xa_ % xb_); \
+    } while (0)
+#else
+#define DIV32(a, b, lo_, hi_) \
+    (lo_ = S32(S64(S32(a)) / S64(S32(b))), hi_ = S32(S64(S32(a)) % S64(S32(b))))
+#define DIVU32(a, b, lo_, hi_) (lo_ = S32(U32(a) / U32(b)), hi_ = S32(U32(a) % U32(b)))
+#endif
 
 #define MUL_S(val1, val2) ((val1) * (val2))
 #define MUL_D(val1, val2) ((val1) * (val2))

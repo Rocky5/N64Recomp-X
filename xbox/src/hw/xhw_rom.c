@@ -443,9 +443,9 @@ static void rom_chips(const xrom_info* info) {
     size_t i;
     for (i = 0; i < sizeof k_region / sizeof k_region[0]; i++)
         if (k_region[i].c == (char)info->region) rn = k_region[i].name;
-    if (rn) snprintf(id, sizeof id, "%s Â· %s Â· 1.%u", info->code, rn, (unsigned)info->version);
-    else snprintf(id, sizeof id, "%s Â· 1.%u", info->code, (unsigned)info->version);
-    snprintf(where, sizeof where, "%u MB Â· %s", (unsigned)((info->size + (1u << 20) - 1) >> 20),
+    if (rn) snprintf(id, sizeof id, "%s · %s · 1.%u", info->code, rn, (unsigned)info->version);
+    else snprintf(id, sizeof id, "%s · 1.%u", info->code, (unsigned)info->version);
+    snprintf(where, sizeof where, "%u MB · %s", (unsigned)((info->size + (1u << 20) - 1) >> 20),
              s_inside ? "built into this XBE" : "beside this XBE");
     xhw_splash_rom(id, where, 0);
 }

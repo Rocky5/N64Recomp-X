@@ -30,6 +30,9 @@
 #include "../../xbox/src/hw/asp_hle.h"
 #include "asp_ref.h"
 
+void xhw_logf(const char* fmt, ...);
+void xhw_logf(const char* fmt, ...) { (void)fmt; }   /* asp_hle.c's log: silent here */
+
 #if defined(ASP_HLE_RESAMPLE_PER_TAP) && ASP_HLE_RESAMPLE_PER_TAP
 #define PER_TAP 1
 #else

@@ -109,7 +109,29 @@ Rare's Fast3D (GoldenEye, Perfect Dark: `RSP SW Version: 2.0G`) has
 `G_TRI4` at 0xB1, unused in Nintendo's Fast3D: four triangles of 4-bit
 indices, x and y nibbles in w1, z in w0, a triangle of three 0s skipped
 (`XGFX_TRI4`, host test `tri4`); without it GoldenEye drew one model
-triangle in ten.
+triangle in ten. Jet Force Gemini's later Rare microcode (no version
+text) has 0x07, reserved in Nintendo's Fast3D: `07 nn llll` + an address
+runs n commands from memory and returns (`XGFX_RARE_DLINMEM`); its
+texture rectangles' tile setup lives there.
+
+Its 3D is not read yet (open; read from a dump of its name-entry screen,
+`build-host/dumps/jfg-name.log`, with `bench_dl.py`): 0x05 (70,000 a
+minute, unhandled) draws triangles from memory, 16 bytes each (flag,
+three vertex indices, then s,t per vertex in 10.5), the count in the low
+12 bits of w0 >> 4 and the bytes in w0's low half; 0x04 loads 10-byte
+vertices (s16 x, y, z, then RGBA), the count in bits 19-23, the bytes n x
+10 + 8, at an address relative to a base 0xBF sets (`bf000000 002ab930`:
+w1 the vertex base, w0's low 24 bits another); 0x01 loads a 64-byte
+matrix into a slot (w0 bits 16-19, `01000040` / `01010040`) whose layout
+is Nintendo's integer/fraction one (its 2D matrix is DKR's ortho exactly:
+[1 0 0 0][0 1 0 0][0 0 0 0][0 0 0 160]), but the slots its letters use
+hold integer parts 0x8000 with zero fractions: what DKR's `mtxf_to_mtx`
+(FTOFIX32) writes for a NaN or out-of-range float. The same in six frames
+in a row, so not a matrix written late: the game's own float maths made
+them (unused slots it fills so, or a NaN our recompiled FPU code produces
+where the VR4300 did not: the next thing to look at). Read through the
+DKR path since 2026-10-20 (`XGFX_DKR`) its menu background draws; its
+letters do not.
 
 RDP rules added 2026-10-17 (each with its switch in `docs/testing.md`):
 - the screen's size is the width of the buffer the game swaps to (its
@@ -187,6 +209,7 @@ every family.
 | Super Mario 64 | Fast3D | the head screen and the castle grounds (`--learn`, the TLB); the head's shading is off |
 | Paper Mario | F3DEX2 | not reached: the analyser now passes its boot; the build stops at overlays sharing a vram |
 | Super Smash Bros. | F3DEX (fifo 2.0) | the intro, the title and the character select at about 50 fps (no learning rounds) |
+| Diddy Kong Racing | Rare's DKR microcode (no version text; `XGFX_DKR`) | the intro (the characters on the beach), the title's 3D flyby behind the logo and its menu (2026-10-20) |
 | Blast Corps | Fast3D (2.0D) | the Rare logo, the attract demo at 50-56 fps with its text (the font's glyphs hashed whole), the title, the profile screen (its portrait frame empty) |
 | Banjo-Kazooie | F3DEX 1.21 | its intro: Banjo and Kazooie, textured, about 20 fps (`--learn`, captured code); the sky and a tree draw black. A tile inside a larger LOADBLOCK takes the latest load that covers its TMEM address (`XGFX_TMEM_WITHIN`: Banjo's faces) |
 | GoldenEye | Fast3D 2.0G with Rare's G_TRI4 | Nintendo/Rare logos, the gun barrel, the 440x330 file select and mission menus, the Dam in-game; the pause watch's model missing, the sky purple, one block's texture garbled (open) |

@@ -251,16 +251,24 @@ def write_guard(pack, gen, data):
     bytes RDRAM holds. N64RX_GUARD=0: no wrappers. Returns the number wrapped."""
     import tomllib
     entries = {}   # name -> (vram, size, hash)
+    learnt = set()   # entries of the learnt DMA overlays (learn_*): checked again every retrace
+    # learn.py's learn_* segments (an overlay the console saw a DMA load) are guarded too: a game that
+    # decompresses its next scene's code over one with the CPU (Star Fox 64's title over its intro, at
+    # 0x80187520) sends no DMA the runtime's overlay switch sees, and the intro's recompiled code ran
+    # there. N64RX_GUARD_LEARN=0: code_* only, as before
+    prefixes = ('.code_', '.learn_') if os.environ.get('N64RX_GUARD_LEARN', '1') != '0' else ('.code_',)
     if os.environ.get('N64RX_GUARD', '1') != '0':
         syms = tomllib.loads(_syms_path(pack).read_text(encoding='utf-8'))
         for sec in syms.get('section', []):
-            if not sec['name'].startswith('.code_'):
+            if not sec['name'].startswith(prefixes):
                 continue
             v0, r0 = sec['vram'], sec['rom']
             for f in sec.get('functions', []):
                 v, n = f['vram'], max(f.get('size', 4), 4)
                 if f['name'] not in entries:
                     entries[f['name']] = (v, n, _fnv(data[r0 + v - v0:r0 + v - v0 + n]))
+                    if sec['name'].startswith('.learn_'):
+                        learnt.add(f['name'])
     names = sorted(entries, key=lambda nm: (entries[nm][0], nm))
     order = [entries[nm][0] for nm in names]
     index = {nm: (i, entries[nm][0]) for i, nm in enumerate(names)}
@@ -307,8 +315,40 @@ def write_guard(pack, gen, data):
         f'const unsigned xrc_guard_count = {len(order)}u;\n'
         f'volatile unsigned char xrc_guard_state[{n}];\n'
         f'{decl}'
-        f'recomp_func_t* const xrc_guard_body[{n}] = {{\n{body}\n}};\n', encoding='utf-8', newline='\n')
+        f'recomp_func_t* const xrc_guard_body[{n}] = {{\n{body}\n}};\n'
+        f'const unsigned char xrc_guard_retrace_each[{n}] = {{\n    '
+        + (', '.join('1' if nm in learnt else '0' for nm in names) or '0') + '\n};\n',
+        encoding='utf-8', newline='\n')
     return wrapped
+
+
+SP_CALL = re.compile(r'^(\s*)((?:func_|static_)\w+|\w+_recomp|LOOKUP_FUNC\([^)]*\))\(rdram, ctx\);$')
+SP_SITE = re.compile(r'^\s*// 0x([0-9A-F]{8}):')
+
+
+def write_sp_check(gen):
+    """diagnosis (N64RX_SP_CHECK=1): every call in the generated code checks that $sp comes back as it
+    went (trace.c xrc_sp_bad logs the call site and the callee when it does not: a callee that left
+    its frame behind; Castlevania: Legacy of Darkness's crash). Returns the number of calls wrapped"""
+    n = 0
+    for f in sorted(gen.glob('funcs_*.c')):
+        lines = f.read_text(encoding='utf-8').split('\n')
+        site, out = 0, ['void xrc_sp_bad(uint32_t site, const char* callee, uint32_t target, uint32_t before, uint32_t after);']
+        for ln in lines:
+            m = SP_SITE.match(ln)
+            if m:
+                site = int(m.group(1), 16)
+            m = SP_CALL.match(ln)
+            if m:
+                ind, callee = m.group(1), m.group(2)
+                tg = callee[len('LOOKUP_FUNC('):-1] if callee.startswith('LOOKUP_FUNC(') else '0'
+                ln = (f'{ind}{{ gpr xrc_sp0 = ctx->r29; uint32_t xrc_tg = (uint32_t)({tg}); {callee}(rdram, ctx); '
+                      f'if (ctx->r29 != xrc_sp0) xrc_sp_bad(0x{site:08X}u, "{callee.replace(chr(34), "")}", xrc_tg, '
+                      f'(uint32_t)xrc_sp0, (uint32_t)ctx->r29); }}')
+                n += 1
+            out.append(ln)
+        f.write_text('\n'.join(out), encoding='utf-8', newline='\n')
+    return n
 
 
 SETJMP_CALL = re.compile(r'^(\s*)n64_setjmp\(rdram, ctx\);$', re.M)
@@ -668,6 +708,8 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
         if nsj:
             prog.note(f'{nsj} calls to the game\'s setjmp made host setjmps (coroutines: strand.c)')
         nguard = write_guard(pack, gen, recomp_rom.read_bytes())
+        if os.environ.get('N64RX_SP_CHECK', '0') != '0':
+            prog.note(f'{write_sp_check(gen)} calls check $sp on return (N64RX_SP_CHECK, trace.c)')
         if nguard:
             prog.note(f'{nguard} functions from captured code checked against RDRAM before they run (guard.c)')
         if write_alias_c(pack, gen):

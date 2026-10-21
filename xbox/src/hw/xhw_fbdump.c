@@ -118,6 +118,52 @@ void xhw_fbdump(const void* fb, int w, int h, int bpp, int pitch) {
     xhw_watchdog_busy(0);
 }
 
+/* a big blob (a test build's RDRAM for tools/xbox/bench_dl.py) deflated,
+ * streamed in 64 KB pieces */
+void xhw_dump_zblob(const char* tag, const void* data, uint32_t len) {
+    enum { ZBUF = 32 * 1024 };
+    static unsigned char out[ZBUF + 64];
+    char line[48];
+    z_stream zs;
+    size_t have = 0;
+    uint32_t off = 0;
+    int rc;
+    memset(&zs, 0, sizeof zs);
+    zs.zalloc = z_alloc;
+    zs.zfree = z_free;
+    if (deflateInit2(&zs, 1, Z_DEFLATED, 9, 1, Z_DEFAULT_STRATEGY) != Z_OK) return;
+    xhw_watchdog_busy(1);
+    xhw_game_time_hold(1);
+    snprintf(line, sizeof line, "[%s] ZBEGIN %u", tag, (unsigned)len);
+    xhw_log_com1_line(line);
+    for (;;) {
+        uint32_t n = len - off > 65536 ? 65536 : len - off;
+        int flush = off + n >= len ? Z_FINISH : Z_NO_FLUSH;
+        zs.next_in = (Bytef*)data + off;
+        zs.avail_in = (uInt)n;
+        off += n;
+        do {
+            size_t emit;
+            zs.next_out = out + have;
+            zs.avail_out = (uInt)(ZBUF - have);
+            rc = deflate(&zs, flush);
+            have = ZBUF - zs.avail_out;
+            emit = rc == Z_STREAM_END ? have : have - have % 57;
+            if (emit) {
+                emit_b64_tag(tag, out, emit);
+                memmove(out, out + emit, have - emit);
+                have -= emit;
+            }
+        } while (zs.avail_out == 0 || (flush == Z_FINISH && rc != Z_STREAM_END));
+        if (flush == Z_FINISH) break;
+    }
+    snprintf(line, sizeof line, "[%s] END", tag);
+    xhw_log_com1_line(line);
+    deflateEnd(&zs);
+    xhw_game_time_hold(0);
+    xhw_watchdog_busy(0);
+}
+
 /* 24-bit bottom-up BMP, rows converted one at a time (the framebuffer is
  * write-combined: read each row once, in order) */
 void xhw_fbdump_file(const void* fb, int w, int h, int bpp, int pitch) {

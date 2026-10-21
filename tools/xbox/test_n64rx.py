@@ -208,6 +208,27 @@ class Learn(unittest.TestCase):
         with mock.patch.dict('os.environ', {'N64RX_WITHHOLD': '80300010,func_80400000'}):
             self.assertEqual(learn.withheld(lt), {0x80400000})   # the learnt one is never withheld
 
+    def test_group_records(self):
+        """pages saved at one moment (learn.c's GROUP flag) stay one version: _code_records keeps them as
+        a group, each page still counted as a page record"""
+        from n64rx_lib import learn
+
+        def rec(v, data, flags=0):
+            return v.to_bytes(4, 'big') + (len(data) | flags).to_bytes(4, 'big') + data
+        a1, b1 = bytes([1]) * 0x1000, bytes([2]) * 0x1000   # two scenes' code over two pages
+        a2, b2 = bytes([3]) * 0x1000, bytes([4]) * 0x1000
+        out = learn.Learnt()
+        # a function at 0x80100F00 over two pages: from its start to the second page's end
+        learn._code_records(rec(0x80100000, a1) + rec(0x80101000, b1) + rec(0x80100F00, a2[0xF00:] + b2, learn.GROUP),
+                            out)
+        self.assertEqual(out.groups, [(0x80100F00, a2[0xF00:] + b2)])
+        self.assertEqual(out.seen[0x80101000][b2][0::2], [1, True])   # its whole page counts as a page record
+        self.assertNotIn(a2, out.seen[0x80100000])                     # the part page does not
+        with mock.patch.object(learn, 'GROUPS', False):
+            out = learn.Learnt()
+            learn._code_records(rec(0x80100F00, a2[0xF00:] + b2, learn.GROUP), out)
+            self.assertEqual(out.groups, [])
+
 
 class FakeEngine:
     """stands in for the toolchain: writes what the real steps would"""

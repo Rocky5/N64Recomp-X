@@ -7,6 +7,8 @@
  * names the task's GBI from the version text in its microcode's data
  * segment (Fast3D, F3DEX, F3DEX2, S2DEX; docs/renderer.md), and the
  * interpreter starts the list in it. */
+#include <stdlib.h>
+
 #include "f3d_interp.h"
 #include "settings.h"
 #include "ultra/ultra.h"
@@ -82,6 +84,97 @@ void xrc_gfx_swap(uint32_t fb) {
     xrc_gfx_unlock();
 }
 
+/* test builds, -DXRC_DLDUMP=<n>: the first XRC_DLDUMP_N graphics tasks
+ * after retrace <n> are dumped before they run, for tools/xbox/bench_dl.py
+ * to replay on the host: the task, then the first time the whole RDRAM
+ * image as the runtime keeps it ([DLRAM]), after that only the 4 KB pages
+ * that changed since the last dump ([DLPAGES]: each page's index, then its
+ * bytes). COM1 carries about 10 KB a second in xemu: a whole image is a
+ * minute or two, a frame's changed pages seconds. */
+#if defined(XRC_DLDUMP) && XRC_DLDUMP > 0
+#ifndef XRC_DLDUMP_N
+#define XRC_DLDUMP_N 6
+#endif
+static uint32_t page_hash(const uint8_t* p) {
+    uint32_t h = 2166136261u, i, w;
+    for (i = 0; i < 4096; i += 4) {
+        memcpy(&w, p + i, 4);
+        h = (h ^ w) * 16777619u;
+    }
+    return h;
+}
+static void dl_dump(uint32_t task) {
+    static unsigned s_done;
+    static uint32_t* s_hash;
+    uint32_t words[17], np = xrc_rdram_size / 4096u;
+    unsigned i, n = 0;
+    if (s_done >= XRC_DLDUMP_N || xu_retrace() < (unsigned)XRC_DLDUMP) return;
+    if (!s_hash && !(s_hash = (uint32_t*)malloc(np * sizeof *s_hash))) return;
+    for (i = 0; i < 16; i++) words[i] = rd32(task + i * 4);
+    words[16] = xrc_rdram_size;
+    xhw_logf("[DLDUMP] task %08x data %08x ucode data %08x", (unsigned)task, (unsigned)words[TK_DATA_PTR / 4],
+             (unsigned)words[TK_UCODE_DATA / 4]);
+    xhw_dump_blob("DLTASK", words, sizeof words);
+    if (!s_done++) {
+        for (i = 0; i < np; i++) s_hash[i] = page_hash(xrc_rdram_host + i * 4096u);
+        xhw_dump_zblob("DLRAM", xrc_rdram_host, xrc_rdram_size);
+        return;
+    }
+    {   /* the changed pages, gathered into one buffer (at most 256 of them) */
+        enum { MAXP = 256 };
+        uint8_t* buf = (uint8_t*)malloc(MAXP * 4100u);
+        if (!buf) return;
+        for (i = 0; i < np && n < MAXP; i++) {
+            uint32_t h = page_hash(xrc_rdram_host + i * 4096u);
+            if (h == s_hash[i]) continue;
+            s_hash[i] = h;
+            memcpy(buf + n * 4100u, &i, 4);
+            memcpy(buf + n * 4100u + 4, xrc_rdram_host + i * 4096u, 4096);
+            n++;
+        }
+        xhw_logf("[DLDUMP] %u pages changed", n);
+        xhw_dump_zblob("DLPAGES", buf, n * 4100u);
+        free(buf);
+    }
+}
+#endif
+
+/* -DXRC_DLBENCH=<n> (console diagnosis, any build): every n retraces one
+ * graphics task is run XRC_DLBENCH_RUNS more times before its real run,
+ * first with the back end left out (the interpreter's own time: the list
+ * walk, vertices, clipping, textures looked up), then with it (the NV2A's
+ * push buffer and waits too), and both are logged as [DLBENCH]: where a
+ * game's "display lists" time in [PERF] goes, on the console's own CPU. The
+ * game sees one long frame each time. */
+#ifndef XRC_DLBENCH
+#define XRC_DLBENCH 0
+#endif
+#ifndef XRC_DLBENCH_RUNS
+#define XRC_DLBENCH_RUNS 8
+#endif
+static void dl_bench(uint32_t task) {
+    static unsigned s_next = XRC_DLBENCH;
+    uint32_t dl = rd32(task + TK_DATA_PTR), ud = rd32(task + TK_UCODE_DATA), us = rd32(task + TK_UCODE_DATA_SIZE);
+    uint64_t t0, t1, t2;
+    unsigned k, r = xu_retrace();
+    if (!XRC_DLBENCH || r < s_next) return;
+    s_next = r + XRC_DLBENCH;
+    t0 = xhw_time_us();
+    for (k = 0; k < XRC_DLBENCH_RUNS; k++) {
+        f3d_set_ucode(gfx_ucode_for_task(ud, us, dl));
+        f3d_bench(dl, 1);
+    }
+    t1 = xhw_time_us();
+    for (k = 0; k < XRC_DLBENCH_RUNS; k++) {
+        f3d_set_ucode(gfx_ucode_for_task(ud, us, dl));
+        f3d_bench(dl, 0);
+    }
+    t2 = xhw_time_us();
+    xhw_logf("[DLBENCH] retrace %u, list %08x: %u us a run with no back end, %u us with it (%u runs each)", r,
+             (unsigned)dl, (unsigned)((t1 - t0) / XRC_DLBENCH_RUNS), (unsigned)((t2 - t1) / XRC_DLBENCH_RUNS),
+             (unsigned)XRC_DLBENCH_RUNS);
+}
+
 /* DIVERGES: a task that comes while the BACK menu is open waits for it to
  * close (the game is frozen under the menu; settings_menu.c) */
 static int s_dp = 1;
@@ -103,6 +196,10 @@ void xrc_gfx_task(uint32_t task) {
         xhw_logf("[GFX] %u tasks and no swap to their buffer: frames presented at every task's end", XRC_SWAP_TASKS);
     }
     before = f3d_presents();
+#if defined(XRC_DLDUMP) && XRC_DLDUMP > 0
+    dl_dump(task);
+#endif
+    if (XRC_DLBENCH) dl_bench(task);
     s_busy = 1;
     f3d_set_ucode(gfx_ucode_for_task(rd32(task + TK_UCODE_DATA), rd32(task + TK_UCODE_DATA_SIZE),
                                      rd32(task + TK_DATA_PTR)));

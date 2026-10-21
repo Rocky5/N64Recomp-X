@@ -136,6 +136,18 @@ analyse, recompile, compile, link, xbe; `--run` adds what the boot reached
 a crash, a card or 30 s of beats. xemu is not hardware: a run says where
 a game stops in xemu, nothing about timing.
 
+`--learn R` (with `--run`) runs the learning loop R rounds, as a user's
+console would: each game whose boot learnt something (`[LEARN]` lines) and
+presented no frames is built again with every boot log it has kept
+(`learn/<code>-<n>.log`, passed as `--learn`) and booted again; the rows
+keep each round's summary (`rounds`). `--learn-all` takes the games that
+present frames too. On a sweep that ran without it, the first round boots
+each game once more to have a log.
+
+`tools/xbox/sweep_diff.py <old results.json> <new results.json> [--all]`
+compares two sweeps: how many of the games both ran present frames in
+each, and which ones changed (with their learning rounds).
+
 Run a sweep from a worktree pinned to a commit, never from the checkout
 being worked in (every build compiles the runtime from the tree it runs
 in; s6 caught half-made edits and lost 30 games):
@@ -259,6 +271,13 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_TLB_MISS=0` | 1 | an access to an unmapped KUSEG page is a crash, as before; otherwise the crash handler's fixup runs the game's own exception code (its vector at 0x80000000, or `__osException`) and libultra's fault path, then retries (`tlb.c`) |
 | `-DXRC_RCP_DEFER=0` | 1 | a task's SP/DP done events go out inside `osSpTaskStartGo`, as before; otherwise when the starting thread next blocks, or at the next retrace |
 | `-DXRC_TIMER_CATCHUP=0` | 1 | a periodic timer that fell more than one interval behind keeps its deadline in the past, as before: the timer thread's wait underflowed (~31 days) and every timer stopped; otherwise it is re-armed from now (as libultra re-arms it from the interrupt) and a past deadline waits 0 ms (`test_time.py`) |
+| `N64RX_SP_CHECK=1` | 0 | diagnosis: every call in the generated code checks that $sp comes back as it went; `[SPCHECK]` names the call site, the callee (and a function pointer's target) the first 32 times (`pipeline.py write_sp_check`, `trace.c`) |
+| `N64RX_INTERP_FUNCS=<vram>,...` | unset | diagnosis: those functions run in the interpreter (its test-build check logs one that returns with a callee-saved register or sp changed) |
+| `N64RX_DIAG_HOOKS="<vram>=<C>\|\|..."` | unset | diagnosis: C put before the instruction at `<vram>` in the function that holds it (an N64Recomp hook), e.g. a register checked and logged |
+| `-DXGFX_VTX_OUT_CACHE=0` | 1 | each triangle works out its vertices' screen position, depth and colour again, as before; otherwise once per vertex while the viewport and the output map stay (`f3d_interp.c` to_out; the same numbers) |
+| `-DXGFX_VTX_WORDS=0` | 1 | a vertex is read halfword by halfword, as before; otherwise as four words of the image |
+| `-DXRC_DLDUMP=<retrace>`, `-DXRC_DLDUMP_N=<n>` | 0, 6 | test builds: n graphics tasks after that retrace and the RDRAM they read over COM1, for `tools/xbox/bench_dl.py` (below) |
+| `-DXRC_DLBENCH=<n>`, `-DXRC_DLBENCH_RUNS=<k>` | 0, 8 | every n retraces one task run k more times with and without the back end, timed: `[DLBENCH]` (below) |
 | `-DXHW_SHOT_FREEZE=0` | 1 | the game's clock (osGetTime/osGetCount) runs on while a screenshot is written, as before: a 10 s `[FBDUMP]` looked like an RCP hang to Ocarina of Time (its 3 s timer) and it stopped after every xemu shot; otherwise it stands still for the dump |
 | `-DXRC_RCP_OWNER=0` | 1 | a held done event goes out when any thread blocks (and at every retrace), as before; otherwise when the thread that started the task blocks, or at a retrace once that thread is blocked or two retraces on (Mario Party's nnsched: the graphics thread took the audio task's SP done and both waited for good) |
 | `-DXRC_RCP_ROOM=0` | 1 | a held done event is posted even into a full queue (and dropped there), as before; otherwise it waits, with those after it, until its queue has room (Ocarina of Time's intermittent title stall: the scheduler's queue full of retrace messages, its SP done dropped) |
@@ -273,6 +292,30 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_TLB=0` | 1 | the TLB's entries are kept (tlbp, tlbr, `osVirtualToPhysical` still see them) but nothing is aliased: a TLB-mapped access faults as before `tlb.c` |
 | `-DXRC_KSEG1=0` | 1 | the window is not aliased at KSEG1 (`mem.c`): a recompiled access to uncached RDRAM (0xA0000000 + x) faults as before (the interpreter still goes through KSEG0) |
 | `-DXRC_KSEG1_HEAL=0` | 1 | a fault on a KSEG1 alias page is a crash, as before; otherwise a page whose PTE has gone is aliased again and the access retried (`[MEM] KSEG1 page ... lost`), and one the kernel now holds is logged with its PDE/PTE (`... taken`). Majora's Mask on the console (`vmm9`): the whole 8 MB alias was made at boot, then its first uncached write faulted on a page of it |
+| `-DXHW_ALIAS_OWN_TABLES=0` | 1 | a page table already in the page directory past the physical map (the KSEG1 alias, the RCP pages) is used as it is, and the tables made stay when the XBE is left, as before (red: an earlier XBE's table on a reused page, `docs/decisions.md`) |
+| `-DXHW_ALIAS_ADOPT_COPY=1` | 0 | an adopted table's entries are copied into ours and the old entry handed back on leaving, as the first version did; otherwise it starts empty (`[MEM] alias: a page table found ...`) and is never handed on |
+| `-DXRC_KSEG1_HEAL_MAX=<n>` | 64 | heals of one page in a row before the access faults to the crash card |
+| `-DXRC_STRAND_GC=0` | 1 | a parked strand no saved context still points into is never ended (Mario Party's process contexts leaked until the board froze) |
+| `-DXRC_NULL_PAGE=0` | 1 | the N64's page 0 through KUSEG faults, as before; otherwise it reads as zeros (Star Fox 64's audio heap reads an uninitialised `entry`) |
+| `-DXRC_START_DEFER=1` / `=2` | 0 | a thread started by a higher N64 priority waits until its starter sleeps (or lowers its priority, or 200 ms): 1 only where the two share a kernel level, 2 whatever the levels (Star Fox 64's boot race; the race one level apart under `XRC_RANK_LEVELS`) |
+| `-DXRC_RANK_LEVELS=1` | 0 | each N64 priority in use gets its own kernel level (up to 12), not the fixed map's shared ones (Star Fox 64's scheduler lag; with `XRC_START_DEFER=2`) |
+| `-DXRC_DIV_VR4300=0` | 1 | DIV / DIVU in generated code divide as N64Recomp emitted them (a zero divisor traps, #DE); otherwise the VR4300's results (`patches/recomp/0003`) |
+| `-DXRC_RECAPTURE_SPAN=0` | 1 | a guard miss recaptures the page holding the function's start only, as before; otherwise every page the function covers, as one group record (`learn.c`) |
+| `N64RX_LEARN_GROUPS=0` | 1 | (n64rx) versions of captured code built page by page only; otherwise a group record's pages are one version, built first (`learn.py`) |
+| `N64RX_ANALYSIS_CACHE=0` | 1 | (n64rx) the ROM is analysed on every build; otherwise the analysis is kept in the build folder (`analysis.cache`) for the next build of the same ROM by the same n64rx source with the same `N64RX_*` settings (Mario Party: ~6 minutes saved a build) |
+| `-DXGFX_VTX_SSE=0` | 1 | the vertex transform in scalar sums, as before; otherwise four lanes at once in SSE, the same bits (bench_dl's pictures match for GoldenEye's Dam and Kirby 64's tutorial; the gain not measured on a console) |
+| `-DXGFX_TLUT_HASH_CACHE=0` | 1 | a CI texture's palette hashed for the cache key at every bind, as before; otherwise again only after a LOADTLUT or for another palette (the same keys; on GoldenEye's Dam the binds' share of the host profile did not move, 11.1% -> 10.7%) |
+| `-DXGFX_TEX_UNREAD=0` | 1 | a triangle's texture is looked up and bound whenever G_TEXTURE is on, as before; otherwise only when the combiner reads a texel (or in copy/fill mode). Mario Party's board intro drew shade-only quads with the texture on: 36 "texture miss" lines of an unset tile 0 |
+| `-DXGFX_RARE_DLINMEM=0` | 1 | Fast3D's opcode 0x07 counted as unknown, as before; otherwise Rare's: n commands run from memory (Jet Force Gemini's texture rectangles) |
+| `-DXGFX_DKR=0` | 1 | a microcode with no version text read as Fast3D throughout, as before; otherwise Rare's DKR geometry (slot matrices, 10-byte vertices, G_TRIN) once it sends 0x05 or 0x07 (Diddy Kong Racing) |
+| `N64RX_PROBE=0` | 1 | (n64rx) functions only from calls, gaps and roots, as before; otherwise also from the jals aimed into a run no function covers, when enough land on a function's start (Virtual Pool 64, Starshot) |
+| `N64RX_TLB_ODD=0` | 1 | (n64rx) a TLB entry code's even-page argument taken as it is, as before; otherwise with no even page (-1) the odd page maps the code (Shadow Man) |
+| `N64RX_IPL3_7102=0` | 1 | (n64rx) the header's entrypoint for the 7102 boot chip, as before; otherwise 0x80000480, where its IPL3 loads (Lylat Wars) |
+| `-DXRC_THREAD_GP=0` | 1 | a new thread and a strand start with gp 0, as before; otherwise with the creator's (Starshot's gp-relative stores) |
+| `N64RX_FUNC_DMA=0` | 1 | (n64rx) a learnt function goes to the overlay of the newest DMA over its address, as before; otherwise to the DMA logged with it, or none (the captured bytes) |
+| `N64RX_BOOT_PLAIN=0` | 1 | (n64rx) the boot segment keyed as an overlay when a learnt segment overlaps it, as before (Paper Mario's build then failed) |
+| `-DXRC_HIGH_SAFETY=0` | 1 | a call to KSEG2/3 code with no function ends the game, as before; otherwise the safety net runs it through the TLB and learns it (Paper Mario's effects) |
+| `N64RX_HIGH_SEGS=0` | 1 | (n64rx) a function learnt in KSEG2/3 gets no segment from the ROM's load tables, as before |
 | `-DXHW_AUDIO_APU_IDLE_ALWAYS=1` | 0 | the boot stops the APU whatever state it is found in, as before; otherwise only an APU found running (its sample counter or a DSP FIFO moving) is stopped. Smash Bros. on the console froze the whole Xbox during the audio boot after a stuck boot, with the APU found idle; the boot now logs `[AUDIO] step:` lines to name the step |
 | `-DXRC_MMIO=0` | 1 | no RCP register model (`mmio.c`): no register pages, and the interpreter's KSEG1 accesses past RDRAM fault as before |
 | `N64RX_MMIO_INTERP=0` (env, n64rx) | 1 | the analyser does not send functions with constant hardware addresses to the interpreter (`emit.hw_funcs`): they are recompiled, as before |
@@ -406,3 +449,35 @@ Raceway race, A held, shots), `mk64_hd` (the same at 720p 16:9: hor+;
 needs the 720p/widescreen slot config above) and `pm_title` (Paper Mario's title, once
 its ROM-only build gets that far); both use frame events, since the shots
 stall the game for seconds.
+
+### A game's own frame, replayed on the host (`tools/xbox/bench_dl.py`)
+
+A test build made with `-DXRC_DLDUMP=<retrace>` dumps the first
+`XRC_DLDUMP_N` (6) graphics tasks after that retrace over COM1 (`rt/gfx.c`):
+each task's words (`[DLTASK]`), the whole RDRAM image once (`[DLRAM]`,
+deflated), then for each later task only the 4 KB pages that changed
+(`[DLPAGES]`). COM1 carries about 10 KB a second in xemu: the image takes a
+minute or two, a later task seconds; run long enough for it to end (the
+`[DLRAM] END` line). `python tools/xbox/bench_dl.py <serial.log>` builds
+`tests/xbox/bench_dl.c` with the real interpreter and runs the tasks over
+their images: `--png out.png` draws the first run in software (the
+combiner's one or two cycles, point sampling, depth, alpha test, blending,
+fog, the scissor: enough to see what a list draws, not the RDP's exact
+pixels), `--draws` lists every draw's state as `[BDRAW]` lines, `--trace N`
+gives the interpreter's own `[DRAW]` trace of task N, `--runs N` times the
+lists over a back end that only counts and, on Windows, samples the pc
+every millisecond and lists the hottest functions (the host's CPU, not the
+Pentium III: shares, not milliseconds), `-D NAME=value` builds with a
+switch. The image is the game's (ROM-derived): the tool keeps it in a
+temporary folder; keep the logs in an ignored folder
+(`build-host/dumps/`) and the pictures out of the tree.
+
+On the console: `-DXRC_DLBENCH=<n>` (any build) runs one graphics task
+every n retraces `XRC_DLBENCH_RUNS` (8) more times before its real run,
+first with the back end left out, then with it, and logs
+`[DLBENCH] retrace R, list L: A us a run with no back end, B us with it`:
+the interpreter's own share of `[PERF]`'s "display lists" against the
+NV2A's (push buffer, waits). The game sees one long frame each time.
+`-DXHW_PROF=1` (`xhw_prof.c`) samples every thread's pc on the console
+(`tools/xbox/sym.py --map <build's map> --prof boot.log`; statics fold into
+the public symbol before them).

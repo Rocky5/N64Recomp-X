@@ -33,7 +33,7 @@ Rules:
 - Built from the ROM alone (`n64rx build`, no pack) unless the row says
   otherwise.
 
-## The games (2026-10-18)
+## The games (2026-10-19)
 
 | tier | game | ROM (code, revision) | console run | keeps it from the next tier |
 |---|---|---|---|---|
@@ -41,20 +41,22 @@ Rules:
 | **Gold** | Pilotwings 64 (US; its pack or the ROM alone) | `NPWE` 1.0 | `vnrx1`: plays, sound, EEPROM saves, the BACK menu, the combos, 53-59 fps; Gold by the maintainer (2026-10-18) | - |
 | **Gold** | Super Smash Bros. (US) | `NALE` 1.0 | `vssb6`: perfect at 59.9 fps; `vssb7`: one boot froze in the audio boot (fixed since); `vssb8`: two clean boots; Gold by the maintainer (2026-10-18) | - |
 | **Silver** | Mario Kart 64 (US) | `NKTE` 1.0 | `vmk2`..`vmk10`: races at 29.9 fps, sound, Controller Pak | the map screen's TV (a framebuffer read) wrong; drift boosts in question |
-| **Silver** | GoldenEye 007 (US) | `NGEE` 1.0 | `vge5`: works very well, 59.5 fps in menus | frame-rate dips in play |
+| **Silver** | GoldenEye 007 (US) | `NGEE` 1.0 | `vge5`: works very well, 59.5 fps in menus; `vge10`: fine, dips to about 40 fps in intense scenes | frame-rate dips in intense scenes (to ~40 fps) |
 | **Silver** | Banjo-Kazooie (US) | `NBKE` 1.0 | `vbk12`, `vbk13`: plays at ~30 fps, the jiggy transition and the textures right | static on the START screen (open: not reproduced in xemu) |
 | **Silver** | Ocarina of Time 1.2 (US) | `CZLE` 1.2 | `vzel13`, `vzel14`: plays at its own 20 fps, steadier since the learn writer | hitches at scene loads (its relocated overlays interpreted the first time), small audio skips there, texture pop-in, a blocky title |
-| Experimental | Mario Party (US) | `CLBE` 1.0 | `vmp11`: stable to a board | the board black (game-breaking; fixed in `vmp13`, staged), the title logo (fixed, staged) |
+| Experimental | Mario Party (US) | `CLBE` 1.0 | `vmp11`: stable to a board; `vmp15`: froze at the board's start, textures shuffled on the board | the freeze at the board's start (game-breaking: its ended processes' contexts were never freed; fixed in `vmp16`, staged), textures shuffled on the board (open) |
 | Experimental | Pokémon Snap (US) | `NPFE` 1.0 | `vsnap5`: runs well on the Beach | on a new save the Beach tutorial locks the camera until three photos with a Pokémon in focus; the port's photo check finds one in xemu and prompts "Press Z to aim", but the unlock is not yet shown and red has not run it (open) |
-| Experimental | Majora's Mask (US) | `NZSE` 1.0 | `vmm9`: crashes at boot | the crash (a fix staged in `vmm12`) |
-| Experimental | Jet Force Gemini (US) | `NJFE` 1.0 | `vjfg1`: Rare logo, a broken menu, slow, silent | Rare's own GBI and audio microcode |
-| Experimental | Kirby 64 - The Crystal Shards (E) | `NK4P` 1.0 | not run on a console | first run (`vk1` staged); in xemu: intro, the tutorial rooms; one HUD icon garbled |
-| Experimental | Mario Tennis (US) | `NM8E` 1.0 | not run on a console | first run; in xemu: intro, title, menus, character select, a match (the ROM alone + learning rounds with input); slow in matches while code is still learnt |
-| Experimental | Castlevania - Legacy of Darkness (US) | `ND4E` 1.0 | not run on a console | first run; in xemu (the ROM alone + 3 learning rounds): intro, title, Game Start, the new-game opening, Foggy Lake with the HUD and the pause menu, ~30 fps |
+| Experimental | Majora's Mask (US) | `NZSE` 1.0 | `vmm9`, `vmm14`: crash after the Nintendo logo | the crash (a page table left by the game run before it, inside its RDRAM; fixed in `vmm15`, staged) |
+| Experimental | Jet Force Gemini (US) | `NJFE` 1.0 | `vjfg1`: Rare logo, a broken menu, slow, silent | Rare's own GBI (its 0x07 now read: the menus draw in xemu since 2026-10-20) and audio microcode |
+| Experimental | Kirby 64 - The Crystal Shards (US) | `NK4E` 1.0 | `vk4`: runs; major texture failure | the textures (game-breaking; open: not seen in xemu) |
+| Experimental | Kirby 64 - The Crystal Shards (E) | `NK4P` 1.0 | not run on a console | first run (`vk3` built, not deployed: the US ROM is tested instead); in xemu: intro, the tutorial rooms |
+| Experimental | Mario Tennis (US) | `NM8E` 1.0 | `vmt2`: a white screen, frozen at boot | the freeze (its uncached RDRAM's page table overwritten; fixed in `vmt3`, staged); in xemu: intro, menus, matches at ~25 fps |
+| Experimental | Castlevania - Legacy of Darkness (US) | `ND4E` 1.0 | `vcv2`: ran ~70 s at 29.9 fps, then crashed | the crash (a near-NULL read in its code; open: not seen in xemu); in xemu (the ROM alone + 4 learning rounds): intro to Foggy Lake, ~30 fps |
 | Experimental | All-Star Baseball 2000 (US) | `NBEE` 1.0 | not run on a console | first run; in xemu (the ROM alone + 26 learning rounds): legal screens, title, Main Setup, Controllers, the line-up, a game in the Metrodome (batting, pitches, ~22 fps) |
 | Experimental | All-Star Baseball 2001 (US) | `NASE` 1.0 | not run on a console | first run; in xemu (the ROM alone + 14 learning rounds): menus and a game (batting, ~22 fps) |
 | Experimental | All-Star Baseball '99 (US) | `NBSE` 1.0 | not run on a console | first run; in xemu (the ROM alone + 6 learning rounds): legal screen, Team Select, Controllers, a game (batting) |
 | Experimental | South Park: Chef's Luv Shack (US) | `NCYE` 1.0 | not run on a console | first run; in xemu (the ROM alone + 9 learning rounds): the title, Who's Playing, the menus; its logo draws wrong (the title's green background and red block, the letters) |
+| Experimental | Diddy Kong Racing (US, v1.1) | `NDYE` 1.1 | not run on a console | first run; in xemu (the ROM alone): its intro and title draw whole since Rare's DKR microcode is read (2026-10-20); a race not tried yet |
 | Experimental | every other game | - | - | `docs/analyzer.md` ranks what stops the library (the sweep) |
 
 ## How a row changes

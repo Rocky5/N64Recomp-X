@@ -30,6 +30,7 @@
  *
  * Kill switch: -DXRC_SAFETY_NET=0 (rt.h) makes a miss the fatal card again. */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "rt.h"
@@ -224,19 +225,30 @@ static uint8_t s_captured[(8u << 20) / 0x1000u];   /* KSEG0 pages saved */
  * anywhere, so such code is saved a 4 KB page at a time, read through the
  * TLB, keyed by its virtual page */
 #define VPAGE 0x1000u
+#ifndef XRC_HIGH_SAFETY   /* KSEG2/3 code through the safety net (holds_code) */
+#define XRC_HIGH_SAFETY 1
+#endif
 #define MAX_VPAGES 2048
 static uint32_t s_vpages[MAX_VPAGES];
 static uint32_t s_vhash[MAX_VPAGES];   /* each captured KUSEG page's bytes, hashed */
 static unsigned char s_vmulti[MAX_VPAGES];
 static unsigned s_nvpages;
 
-static void save(uint32_t base, uint32_t size, uint32_t (*word)(uint32_t)) {
-    static uint8_t buf[8 + CODE_BLOCK];
+/* GROUP in a record's size word: its pages were saved at one moment (one
+ * function's span, xrc_learn_recapture_n), so they are one version of the
+ * code there (n64rx's learn.py keeps them together) */
+#define GROUP 0x40000000u
+static void save_rec(uint32_t base, uint32_t size, uint32_t flags, uint32_t (*word)(uint32_t));
+static void save(uint32_t base, uint32_t size, uint32_t (*word)(uint32_t)) { save_rec(base, size, 0, word); }
+static void save_rec(uint32_t base, uint32_t size, uint32_t flags, uint32_t (*word)(uint32_t)) {
+    static uint8_t sbuf[8 + CODE_BLOCK];
+    uint8_t* buf = sbuf;
     char path[96], line[64];
-    uint32_t i;
+    uint32_t i, sz = size | flags;
+    if (size > CODE_BLOCK && (buf = (uint8_t*)malloc(8 + size)) == NULL) return;
     for (i = 0; i < 4; i++) {
         buf[i] = (uint8_t)(base >> (24 - 8 * i));
-        buf[4 + i] = (uint8_t)(size >> (24 - 8 * i));
+        buf[4 + i] = (uint8_t)(sz >> (24 - 8 * i));
     }
     for (i = 0; i < size; i += 4) {
         uint32_t w = word(base + i);
@@ -246,7 +258,8 @@ static void save(uint32_t base, uint32_t size, uint32_t (*word)(uint32_t)) {
     snprintf(path, sizeof path, "%slearn_code.bin", xhw_save_dir());
     if (!xhw_append_file(path, buf, 8 + size)) xhw_logf("[LEARN] could not write %s", path);
     if (XHW_TEST_BUILD) xhw_dump_blob("LEARNCODE", buf, 8 + size);
-    snprintf(line, sizeof line, "code %08x %x", (unsigned)base, (unsigned)size);
+    if (buf != sbuf) free(buf);
+    snprintf(line, sizeof line, "code %08x %x%s", (unsigned)base, (unsigned)size, flags & GROUP ? " group" : "");
     emit(line);
 }
 
@@ -339,6 +352,40 @@ void xrc_learn_kuseg(uint32_t va, int aliased) {
 /* guard.c: a captured page now holds other code than the build recompiled
  * (an overlay loaded over another): saved again, once a page a run, so the
  * next --learn build has this one too */
+/* A function the guard found changed may run over several pages (Mario
+ * Tennis's 0x8010CF2C, 0x14F4 bytes): each of them is saved, or the next
+ * build has a version cut short at the first page's end, whose function
+ * "runs out of the segment" and is interpreted again, round after round.
+ * -DXRC_RECAPTURE_SPAN=0: the first page only, as before */
+#ifndef XRC_RECAPTURE_SPAN
+#define XRC_RECAPTURE_SPAN 1
+#endif
+void xrc_learn_recapture(uint32_t vram);
+void xrc_learn_recapture_n(uint32_t vram, uint32_t bytes) {
+    static uint32_t s_done[64];
+    static unsigned s_n;
+    static volatile long s_busy;
+    uint32_t v, lo = vram & ~(VPAGE - 1), end = vram + (bytes ? bytes - 1u : 0u), hi;
+    unsigned i;
+    if (!XRC_RECAPTURE_SPAN || end < vram || bytes > 0x10000u) end = vram;
+    hi = (end & ~(VPAGE - 1)) + VPAGE;
+    if (!XRC_LEARN_CODE) return;
+    if (hi - lo == VPAGE || (int32_t)lo >= 0 || (lo & 0x1FFFFFFFu) + (hi - lo) > xrc_rdram_size) {
+        for (v = lo; v < hi; v += VPAGE) xrc_learn_recapture(v);   /* one page, or through the TLB: a page each */
+        return;
+    }
+    for (i = 0; i < s_n; i++)
+        if (s_done[i] == vram) return;
+    if (s_n == 64) return;
+    s_done[s_n++] = vram;
+    while (__sync_lock_test_and_set(&s_busy, 1)) xhw_sleep_ms(0);
+    /* from the function's own start to its last page's end, at one moment: learn.py makes it a version
+     * rooted at that start alone (a group from the page's start made versions with starts it guessed) */
+    v = vram & ~3u;
+    save_rec(0x80000000u | (v & 0x1FFFFFFFu), hi - v, GROUP, word_kseg0);
+    __sync_lock_release(&s_busy);
+}
+
 void xrc_learn_recapture(uint32_t vram) {
     static uint32_t s_done[256];
     static unsigned s_n;
@@ -374,6 +421,17 @@ void xrc_learn_want(uint32_t lo, uint32_t hi) {
 static void log_one(Learnt* e) {
     char line[80];
     uint32_t phys = e->vram & 0x1FFFFFFFu;
+    if (XRC_HIGH_SAFETY && e->vram >= 0xC0000000u) {   /* through the TLB: the DMA that filled its page */
+        uint32_t p = xrc_tlb_to_phys(e->vram);
+        if (p == ~0u) {   /* unmapped since: nothing to tie it to (n64rx finds its ROM table entry) */
+            snprintf(line, sizeof line, "func %08x %x from %08x", (unsigned)e->vram, (unsigned)e->len,
+                     (unsigned)e->caller);
+            e->logged = 1, e->logged_len = e->len;
+            emit(line);
+            return;
+        }
+        phys = p;
+    }
     unsigned i, n = s_ndma, k = n < MAX_DMA ? n : MAX_DMA;
     e->logged = 1, e->logged_len = e->len;
     for (i = 0; i < k; i++) {   /* newest first */
@@ -385,7 +443,7 @@ static void log_one(Learnt* e) {
             break;
         }
     }
-    if (i == k) capture(e->vram);   /* no DMA from the ROM put it there: its bytes, from RDRAM */
+    if (i == k && e->vram < 0xC0000000u) capture(e->vram);   /* no DMA from the ROM put it there: its bytes, from RDRAM */
     snprintf(line, sizeof line, "func %08x %x from %08x", (unsigned)e->vram, (unsigned)e->len, (unsigned)e->caller);
     emit(line);
 }
@@ -459,8 +517,18 @@ static void host_thunk(uint8_t* rdram, recomp_context* ctx) { xrc_safety_run(rdr
 #endif
 uint32_t xrc_tlb_resolve(uint32_t vaddr, int store);   /* tlb.c */
 
+/* KSEG2/3 code the game maps with its TLB where it loaded it (Paper Mario's
+ * effects at 0xE0xxxxxx): the safety net runs it (the interpreter fetches
+ * through the TLB) and learns it, by its physical page, where it ended the
+ * game with "No function at this address" before. -DXRC_HIGH_SAFETY=0: as before (defined above) */
 static int holds_code(uint32_t vram) {
     uint32_t off = vram - 0x80000000u;
+    if (XRC_HIGH_SAFETY && vram >= 0xC0000000u) {
+        uint32_t p = xrc_tlb_to_phys(vram);
+        if (p == ~0u && XRC_LOOKUP_TLB && !(vram & 3)) p = xrc_tlb_resolve(vram, 0);
+        if (p == ~0u || p + 8 > xrc_rdram_size || (vram & 3)) return 0;
+        return (xrc_word(0x80000000u | p) | xrc_word(0x80000000u | (p + 4))) != 0;
+    }
     if ((int32_t)vram >= 0) {   /* KUSEG: code the game maps with its own TLB (Turok 2), by its physical page */
         uint32_t p = xrc_tlb_to_phys(vram);
         if (p == ~0u && XRC_LOOKUP_TLB && vram >= 0x10000u && !(vram & 3)) p = xrc_tlb_resolve(vram, 0);

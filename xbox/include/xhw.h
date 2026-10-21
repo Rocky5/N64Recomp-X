@@ -98,6 +98,10 @@ int xhw_watch_pages(uint32_t va, uint32_t bytes, int arm);
  * runtime's register model keeps, xbox/src/rt/mmio.c): the page's address in
  * the kernel's physical window, or NULL (va in use, no memory). Never freed. */
 void* xhw_alias_page(uint32_t va);
+/* A read-only page of zeros at va (the N64's page 0 through KUSEG, mem.c):
+ * a mapping the TLB's aliases may take over (xhw_alias_map treats it as
+ * free). 1 when mapped. */
+int xhw_alias_zero_page(uint32_t va);
 /* diagnosis: log every write to the word at host address `host` (DR0;
  * xhw_crash.c), with the writer; the runtime's -DXRC_WATCH=<N64 address> */
 void xhw_watch_write(uint32_t host);
@@ -187,6 +191,8 @@ int xhw_write_file_atomic(const char* path, const void* data, uint32_t len);
 int xhw_append_file(const char* path, const void* data, uint32_t len);   /* made when missing */
 /* a blob over COM1 as base64 lines "[tag] ..." between "[tag] BEGIN <len>" and "[tag] END" (test builds' logs) */
 void xhw_dump_blob(const char* tag, const void* data, uint32_t len);
+/* the same, zlib-deflated: "[tag] ZBEGIN <len>" .. "[tag] END" (the game clock held meanwhile) */
+void xhw_dump_zblob(const char* tag, const void* data, uint32_t len);
 
 /* ---- controllers ---- */
 typedef struct xhw_pad {

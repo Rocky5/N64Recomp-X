@@ -23,6 +23,7 @@ static unsigned s_gfx, s_aud;
 
 unsigned xu_gfx_tasks(void) { return s_gfx; }
 unsigned xu_aud_tasks(void) { return s_aud; }
+void xu_count_task(int gfx) { gfx ? s_gfx++ : s_aud++; }   /* mmio.c: a task started through SP_STATUS */
 
 /* until the interpreter and the audio HLE are linked: count and log */
 __attribute__((weak)) void xrc_gfx_task(uint32_t task) {
@@ -43,7 +44,7 @@ __attribute__((weak)) void xrc_audio_task(uint32_t task) {
 
 ULTRA(osSpTaskLoad) {
     (void)rdram;
-    (void)ctx;
+    xrc_mmio_sp_task(ARG(0));   /* mmio.c: a game's own osSpTaskStartGo finds it there */
 }
 
 /* A task runs to its end inside osSpTaskStartGo; its done events wait until
@@ -129,10 +130,11 @@ int xrc_jpeg_task(uint32_t task);   /* ../jpeg.c */
 #define XRC_SP_BY_TYPE 1
 #endif
 
-ULTRA(osSpTaskStartGo) {
-    uint32_t task = ARG(0), type = rd32(task + TK_TYPE);
+/* the task run, its done events held for the starting thread: osSpTaskStartGo,
+ * and mmio.c for a game's own osSpTaskStartGo through SP_STATUS */
+void xu_sp_run(uint32_t task) {
+    uint32_t type = rd32(task + TK_TYPE);
     int gfx = type == M_GFXTASK;
-    (void)rdram;
 #ifdef XRC_LOG_SP_STARTS
     {   /* diagnosis: the first SP starts, their type and thread */
         static unsigned s_n;
@@ -179,6 +181,12 @@ ULTRA(osSpTaskStartGo) {
     s_pend[s_npend].at = xu_retrace();
     s_npend++;
     xu_unlock();
+}
+
+ULTRA(osSpTaskStartGo) {
+    (void)rdram;
+    xrc_mmio_sp_task(0);   /* run here: a later raw SP start does not run it again */
+    xu_sp_run(ARG(0));
 }
 
 ULTRA(osSpTaskYield) {

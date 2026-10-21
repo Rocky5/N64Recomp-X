@@ -14,6 +14,7 @@ void f3d_present_frame(void);   /* the open frame presented (none open: nothing)
 int f3d_swap(uint32_t fb);
 void f3d_fb_inval(uint32_t addr, uint32_t bytes);   /* osInvalDCache: a staged frame there into RDRAM (XGFX_FB_READBACK) */   /* osViSwapBuffer: presents the open frame if it is fb's; 1 when it did */
 unsigned f3d_presents(void);   /* frames presented so far */
+void f3d_bench(uint32_t dl, int null_back);   /* gfx.c XRC_DLBENCH: the list once more into the open frame (null_back: nothing drawn) */
 void f3d_split_frames(int on);
 int f3d_frame_open(void);   /* a frame is open (drawn into, not presented yet) */   /* frames may span tasks: a task that draws into another swapped buffer presents the open frame */
 int f3d_last_fullsync(void);   /* the last f3d_run's list had a G_RDPFULLSYNC */

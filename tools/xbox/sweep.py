@@ -6,15 +6,18 @@ game, several at a time, each with a timeout, and writes where each one
 stopped: analyse / recompile / compile / link / xbe, the first error line,
 the time. With --run N each XBE that built is booted in xemu for N seconds
 (one at a time, the caller's slot: . /c/xemu/nrx-envN.sh first) and the
-last log lines are kept.
+last log lines are kept. With --learn R as well, the learning loop runs R
+rounds: each game that learnt something ([LEARN] lines) and presents no
+frames is built again with its boot logs as --learn and booted again, as
+the console's loop would (docs/analyzer.md).
 
   python tools/xbox/sweep.py "P:/Game Console ISO/N64/Roms" [--jobs 5] [--timeout 1800]
-         [--tag NAME] [--only REGEX] [--redo] [--run SECONDS] [--list]
+         [--tag NAME] [--only REGEX] [--redo] [--run SECONDS] [--learn ROUNDS] [--list]
 
 Everything it writes stays in build-host/sweep/<tag>/ (never tracked: the
 logs name the user's ROMs and the XBEs hold their code): results.json,
 table.md, logs/<code>.txt (n64rx's output), out/<code>/ (the XBE folder),
-run/<code>.txt (the serial log's tail). A second run resumes: games
+run/<code>.txt (the serial log's tail), learn/<code>-<n>.log (whole boot logs, --learn). A second run resumes: games
 already in results.json are skipped unless --redo or --only names them.
 """
 import argparse
@@ -144,12 +147,19 @@ def classify(stage, err, text):
     return stage
 
 
+def learn_logs(sdir, code):
+    """the serial logs the learning rounds kept for a game, oldest first"""
+    return sorted((sdir / 'learn').glob(f'{code}-*.log'), key=lambda p: int(p.stem.rsplit('-', 1)[1]))
+
+
 def build_one(g, args, sdir):
     code = g['code']
     out = sdir / 'out' / code
     logf = sdir / 'logs' / f'{code}.txt'
     cmd = [sys.executable, str(ROOT / 'tools/n64rx/n64rx.py'), 'build', g['path'], '--out', str(out),
            '--engine', 'native', '--fast'] + (['--analyze'] if args.analyze else [])
+    for p in learn_logs(sdir, code):   # what earlier rounds learnt (--learn)
+        cmd += ['--learn', str(p)]
     t0 = time.time()
     try:
         r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=args.timeout,
@@ -269,9 +279,10 @@ def run_summary(lines):
             'missing': missing, 'learn': learn, 'ucode': ucode, 'summary': summary.replace('|', '/')}
 
 
-def run_one(r, secs, sdir):
+def run_one(r, secs, sdir, keep_as=None):
     """boot the XBE in xemu (the caller's slot) and keep the serial log's
-    interesting lines and its tail"""
+    interesting lines and its tail (and the whole log as learn/<keep_as>.log,
+    for the next learning round)"""
     env = dict(os.environ, MX_XBE=r['xbe'], MX_SHOTS='0')
     bash = 'C:/Program Files/Git/bin/bash.exe' if WIN else 'bash'
     t0 = time.time()
@@ -287,6 +298,8 @@ def run_one(r, secs, sdir):
     lines = log.read_text(encoding='utf-8', errors='replace').replace('\r', '').splitlines() if log.is_file() else []
     keep = [l for l in lines if RUN_KEYS.search(l)][:120] + ['--- tail ---'] + lines[-40:]
     (sdir / 'run' / f"{r['code']}.txt").write_text('\n'.join(keep) + '\n', encoding='utf-8')
+    if keep_as and log.is_file():
+        shutil.copyfile(log, sdir / 'learn' / f'{keep_as}.log')
     return {**run_summary(lines), 'lines': len(lines), 'seconds': round(time.time() - t0)}
 
 
@@ -300,13 +313,17 @@ def main():
     ap.add_argument('--redo', action='store_true', help='build games already in results.json again')
     ap.add_argument('--analyze', action='store_true', help='--analyze even where a pack matches')
     ap.add_argument('--run', type=int, default=0, metavar='SECONDS', help='boot each XBE that built in xemu')
+    ap.add_argument('--learn', type=int, default=0, metavar='ROUNDS',
+                    help='with --run: the learning loop, ROUNDS times: each game that learnt something and '
+                         'presents no frames is built again with its boot logs (--learn) and booted again')
+    ap.add_argument('--learn-all', action='store_true', help='--learn for the games that present frames too')
     ap.add_argument('--list', action='store_true', help='only show which ROM stands for each game')
     ap.add_argument('--rescan', action='store_true', help='redo the error lines and categories from the logs')
     a = ap.parse_args()
     if 'N64RX_RECOMP' not in os.environ:
         print('note: N64RX_RECOMP is not set; each worktree builds its own N64Recomp', flush=True)
     sdir = ROOT / 'build-host/sweep' / a.tag
-    for d in ('logs', 'out', 'run'):
+    for d in ('logs', 'out', 'run', 'learn'):
         (sdir / d).mkdir(parents=True, exist_ok=True)
     chosen, skipped = pick_roms(a.folder)
     (sdir / 'skipped.json').write_text(json.dumps(skipped, indent=1), encoding='utf-8')
@@ -360,10 +377,41 @@ def main():
         for i, r in enumerate(built, 1):
             if r.get('run') and not a.redo and not only:
                 continue
-            r['run'] = run_one(r, a.run, sdir)
+            r['run'] = run_one(r, a.run, sdir, keep_as=f"{r['code']}-{len(learn_logs(sdir, r['code'])) + 1}"
+                               if a.learn else None)
             rpath.write_text(json.dumps(results, indent=1), encoding='utf-8')
             write_table(sdir, results, skipped)
             print(f"[run {i}/{len(built)}] {r['code']} {r['file'][:40]:40} {r['run']['summary']}", flush=True)
+    for rnd in range(1, a.learn + 1 if a.run else 1):
+        # the learning loop (docs/analyzer.md): what a boot learnt goes into the next build
+        todo = [r for r in results.values() if r['stage'] == 'xbe' and r.get('run') and r['run']['learn']
+                and (a.learn_all or r['run']['category'] != 'frames')
+                and (not only or only.search(r['file']) or only.search(r['code']))]
+        print(f'learning round {rnd}: {len(todo)} games built again with what they learnt', flush=True)
+        if not todo:
+            break
+        for r in todo:   # a run from before --learn kept no log: boot it once more to have one
+            if not learn_logs(sdir, r['code']):
+                r['run'] = run_one(r, a.run, sdir, keep_as=f"{r['code']}-1")
+        with cf.ThreadPoolExecutor(a.jobs) as ex:
+            futs = {ex.submit(build_one, r, a, sdir): r for r in todo}
+            for f in cf.as_completed(futs):
+                old = futs[f]
+                try:
+                    b = f.result()
+                except Exception as e:
+                    b = {**old, 'stage': 'sweep', 'category': 'sweep error', 'error': repr(e)[:300]}
+                with lock:
+                    b['run'], b['rounds'] = old['run'], old.get('rounds', []) + [old['run']['summary']]
+                    results[old['code']] = b
+        for i, r in enumerate([results[t['code']] for t in todo], 1):
+            if r['stage'] != 'xbe':
+                print(f"[learn {rnd} {i}/{len(todo)}] {r['code']} build failed: {r['error'][:90]}", flush=True)
+                continue
+            r['run'] = run_one(r, a.run, sdir, keep_as=f"{r['code']}-{len(learn_logs(sdir, r['code'])) + 1}")
+            rpath.write_text(json.dumps(results, indent=1), encoding='utf-8')
+            write_table(sdir, results, skipped)
+            print(f"[learn {rnd} {i}/{len(todo)}] {r['code']} {r['file'][:40]:40} {r['run']['summary']}", flush=True)
     write_table(sdir, results, skipped)
     print(f'table: {sdir / "table.md"}')
     return 0

@@ -11,6 +11,7 @@ kind) or 4 Kbit EEPROM when the game probes for one."""
 import hashlib
 import os
 import pathlib
+import pickle
 import re
 import tomllib
 
@@ -32,13 +33,47 @@ def _title_id(code):
     return 0x4E520000 | h
 
 
+def _analyze_cached(data, bdir):
+    """analyze(data), kept in the build folder (analysis.cache) for the next
+    build of the same ROM by the same n64rx with the same N64RX_* settings:
+    Mario Party's takes ~6 minutes, a test build with other C flags none.
+    What learn.py adds is applied after, to a fresh copy each time. The
+    cache holds facts about the user's ROM: it stays in their build folder
+    as analysis.txt does. N64RX_ANALYSIS_CACHE=0: analysed every time."""
+    if os.environ.get('N64RX_ANALYSIS_CACHE', '1') == '0':
+        return analyze(data)
+    h = hashlib.sha256(hashlib.sha1(data).digest())
+    for p in sorted(pathlib.Path(__file__).resolve().parent.rglob('*.py')):   # n64rx's own code
+        h.update(p.name.encode() + p.read_bytes())
+    for k, v in sorted(os.environ.items()):
+        if k.startswith('N64RX_'):
+            h.update(f'{k}={v}\n'.encode())
+    key = h.hexdigest().encode()
+    path = bdir / 'analysis.cache'
+    try:
+        blob = path.read_bytes()
+        if blob[:len(key)] == key:
+            return pickle.loads(blob[len(key):])
+    except (OSError, pickle.UnpicklingError, EOFError, AttributeError, ImportError, IndexError, TypeError, ValueError):
+        pass
+    a = analyze(data)
+    try:
+        bdir.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix('.tmp')
+        tmp.write_bytes(key + pickle.dumps(a, protocol=pickle.HIGHEST_PROTOCOL))
+        tmp.replace(path)
+    except (OSError, pickle.PicklingError, RecursionError, TypeError, AttributeError):
+        pass   # a cache that cannot be written is only a slower next build
+    return a
+
+
 def make(rom, bdir, base=None, learnt=None):
     """(Pack, info) for this ROM from the analysis; info has the live set and
     the names for the pipeline's retry. learnt: what the console's safety
     net ran (learn.py, --learn)"""
     learnt = learnt or learn.Learnt()
     try:
-        a = analyze(rom.data)
+        a = _analyze_cached(rom.data, pathlib.Path(bdir))
     except AnalysisError as e:
         raise N64rxError(f'This ROM could not be analysed: {e}.',
                          'It may use a boot or entry code n64rx does not know yet; '
@@ -107,6 +142,7 @@ def make(rom, bdir, base=None, learnt=None):
     # register other than ra, a jump through a register with no table): the
     # runtime's interpreter runs it (xbox/src/rt/interp.c)
     interp = {x: nm[x] for x, f in a.all_funcs().items() if x in live and x != a.entry and f.bad.startswith('jr $')}
+    lookups = set()   # jal targets the recompiler calls through the lookup (patches/recomp/0002)
     # code captured from RDRAM a page at a time, with pages between not captured (Mario Tennis's KUSEG
     # 0x50000000, 0x50002000, 0x50005000): a function whose walk runs out of its segment was recompiled
     # cut short and returned mid-way; the interpreter reads on in RDRAM. N64RX_RUNOUT_INTERP=0: as before
@@ -123,7 +159,7 @@ def make(rom, bdir, base=None, learnt=None):
     # a branch into another function's body cannot be compiled: interpreted
     # (N64RX_XBRANCH_INTERP=0: recompiled, the compile then fails as before)
     if os.environ.get('N64RX_XBRANCH_INTERP', '1') != '0':
-        interp.update({x: n for x, n in emit.cross_funcs(a, live, nm, replaced).items() if n not in ignored})
+        interp.update({x: n for x, n in emit.cross_funcs(a, live, nm, replaced, lookups).items() if n not in ignored})
     # diagnosis: every function in code captured from RDRAM interpreted (N64RX_CAPTURED_INTERP=1), which
     # reads the bytes RDRAM holds when it runs: whether a captured overlay's recompiled code is stale
     ci = os.environ.get('N64RX_CAPTURED_INTERP', '0')   # 1, or a range lo-hi (hex) of vram
@@ -132,10 +168,16 @@ def make(rom, bdir, base=None, learnt=None):
         interp.update({x: nm[x] for seg in a.img.segments if seg.name.startswith(('code_', 'tlb_'))
                        for x in a.funcs.get(seg.name, {}) if x in live and nm[x] not in ignored and x != a.entry
                        and nm[x] not in replaced and lo <= x < hi})
+    # diagnosis: N64RX_INTERP_FUNCS=<vram>,... interpreted (its check of the callee-saved registers and sp
+    # at each return, in test builds, names a function that returns with them changed)
+    for t in filter(None, re.split(r'[,\s]+', os.environ.get('N64RX_INTERP_FUNCS', ''))):
+        x = int(t[5:] if t.startswith('func_') else t, 16)
+        if x in nm and nm[x] not in replaced:
+            interp[x] = nm[x]
     # what N64Recomp would crash on (a jump table outside the function's segment) or refuse one run at a
     # time (a jal to no function): interpreted up front (N64RX_RECOMP_PRECHECK=0: left to the recompiler)
     if os.environ.get('N64RX_RECOMP_PRECHECK', '1') != '0':
-        hz = {x: v for x, v in emit.recomp_hazards(a, live, nm, replaced).items() if v[0] not in ignored and x != a.entry}
+        hz = {x: v for x, v in emit.recomp_hazards(a, live, nm, replaced, lookups).items() if v[0] not in ignored and x != a.entry}
         interp.update({x: n for x, (n, _why, _want) in hz.items()})
         if hz:
             a.notes.append(f'{len(hz)} functions the recompiler would refuse or crash on, interpreted: ' +
@@ -174,7 +216,8 @@ def make(rom, bdir, base=None, learnt=None):
            f'entrypoint = 0x{a.entry:08X}', 'symbols_file_path = "syms.toml"', 'rom_file_path = "@ROM@"',
            'output_func_path = "@OUT@"', 'recomp_include = "#include \\"recomp.h\\""',
            'functions_per_output_file = 50', '', '[patches]',
-           'ignored = [' + ', '.join(f'"{n}"' for n in sorted(ignored)) + ']', '']
+           'ignored = [' + ', '.join(f'"{n}"' for n in sorted(ignored)) + ']',
+           'lookup_jal = [' + ', '.join(f'0x{t:08X}' for t in sorted(lookups)) + ']', '']
     for func, vram, value, why in patches:
         cfg += [f'# {why}', '[[patches.instruction]]', f'func = "{func}"', f'vram = 0x{vram:08X}',
                 f'value = 0x{value:08X}', '']
@@ -185,6 +228,16 @@ def make(rom, bdir, base=None, learnt=None):
         if x in nm and nm[x] not in ignored:
             cfg += ['[[patches.hook]]', f'func = "{nm[x]}"', f'before_vram = 0x{x:08X}',
                     'text = "xrc_ovl_relocate((uint32_t)ctx->r4, (uint32_t)ctx->r5, (uint32_t)ctx->r6);"', '']
+    # diagnosis: N64RX_DIAG_HOOKS="<vram>=<C text>||..." puts C before the instruction at <vram> in the
+    # function that holds it (an N64Recomp hook): a register checked, a trace dumped
+    for item in filter(None, os.environ.get('N64RX_DIAG_HOOKS', '').split('||')):
+        at, _, text = item.partition('=')
+        site = int(at, 16)
+        holder = next((x for seg in a.img.segments for v, f in a.funcs.get(seg.name, {}).items()
+                       for x in [a.key(seg, v)] if f.start <= site < f.end and x in nm and nm[x] not in ignored), None)
+        if holder is not None:
+            cfg += ['[[patches.hook]]', f'func = "{nm[holder]}"', f'before_vram = 0x{site:08X}',
+                    'text = "' + text.replace('\\', '\\\\').replace('"', '\\"') + '"', '']
     (pdir / 'recomp.toml').write_text('\n'.join(cfg), encoding='utf-8', newline='\n')
     (pathlib.Path(bdir) / 'analysis.txt').write_text(emit.report(a, ids, live, nm, replaced), encoding='utf-8')
     uses_eep = any(n in ('osEepromProbe', 'osEepromRead', 'osEepromLongRead') for n, _w in ids.values())

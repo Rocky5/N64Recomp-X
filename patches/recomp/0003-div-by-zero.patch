@@ -1,0 +1,22 @@
+diff --git a/src/cgenerator.cpp b/src/cgenerator.cpp
+--- a/src/cgenerator.cpp
++++ b/src/cgenerator.cpp
+@@ -524,14 +524,15 @@
+             fmt::print(output_file, "DMULTU(U64({}), U64({}), &lo, &hi);\n", gpr_to_string(reg1), gpr_to_string(reg2));
+             break;
+         case InstrId::cpu_div:
+-            // Cast to 64-bits before division to prevent artihmetic exception for s32(0x80000000) / -1
+-            fmt::print(output_file, "lo = S32(S64(S32({0})) / S64(S32({1}))); hi = S32(S64(S32({0})) % S64(S32({1})));\n", gpr_to_string(reg1), gpr_to_string(reg2));
++            // N64Recomp-X (patches/recomp/0003-div-by-zero.md): the runtime's DIV32 gives the
++            // VR4300's results for a zero divisor (and s32(0x80000000) / -1) instead of a host trap
++            fmt::print(output_file, "DIV32({0}, {1}, lo, hi);\n", gpr_to_string(reg1), gpr_to_string(reg2));
+             break;
+         case InstrId::cpu_ddiv:
+             fmt::print(output_file, "DDIV(S64({}), S64({}), &lo, &hi);\n", gpr_to_string(reg1), gpr_to_string(reg2));
+             break;
+         case InstrId::cpu_divu:
+-            fmt::print(output_file, "lo = S32(U32({0}) / U32({1})); hi = S32(U32({0}) % U32({1}));\n", gpr_to_string(reg1), gpr_to_string(reg2));
++            fmt::print(output_file, "DIVU32({0}, {1}, lo, hi);\n", gpr_to_string(reg1), gpr_to_string(reg2));
+             break;
+         case InstrId::cpu_ddivu:
+             fmt::print(output_file, "DDIVU(U64({}), U64({}), &lo, &hi);\n", gpr_to_string(reg1), gpr_to_string(reg2));

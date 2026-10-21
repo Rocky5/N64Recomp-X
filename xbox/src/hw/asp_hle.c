@@ -235,10 +235,15 @@ static uint32_t resolve(uint32_t w)
 #endif
 }
 
+static uint32_t s_cur_op;   /* the command running (rdram_at's log) */
+
 static uint8_t* rdram_at(uint32_t a)
 {
     uint8_t* p = (uint8_t*)s_addr(a & ~7u, s_user);
-    if (!p) s_stats.bad_addr++;
+    if (!p && s_stats.bad_addr++ < 4) {   /* the first few, for the log: which address, which command */
+        void xhw_logf(const char* fmt, ...);
+        xhw_logf("[AUDIO] bad address %08x (command %02x)", (unsigned)a, (unsigned)s_cur_op);
+    }
     return p;
 }
 
@@ -941,6 +946,7 @@ static void cmd_polef(uint32_t flags, int16_t gain, uint32_t inb, uint32_t outb,
 static void exec(uint32_t w0, uint32_t w1)
 {
     uint32_t op = w0 >> 24, flags = (w0 >> 16) & 0xFF;
+    s_cur_op = op;
     s_cur_w0 = w0, s_cur_w1 = w1;
     s_stats.cmds[op < 16 ? op : 32]++;
     switch (op) {

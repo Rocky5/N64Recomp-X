@@ -1234,3 +1234,329 @@ Result (xemu, `scen/ootgame`, 120 s): Ocarina of Time presented 3137
 frames with 15 learnt overlays recompiled (938 functions) against 1950
 before; Majora's Mask 2040 in 85 s with 45 (1578 functions) against 1887
 in 105 s. Image 11.9 MB and 11.2 MB.
+
+## The uncached alias's page tables are ours, and leave with us (2026-10-19, `xhw_alias.c`, `XHW_ALIAS_OWN_TABLES`, `xhw_alias_shutdown`)
+
+Set 16 on red: Majora's Mask crashed after the Nintendo logo (`vmm14`)
+and Mario Tennis froze on a white screen (`vmt2`), both on uncached
+(KSEG1) accesses whose alias pages had "lost" their PTEs. The PDE of
+0xA3800000 pointed at a table at physical 0x03A30000 in both: Mario
+Tennis's run had made that table (the page just under its 4 MB window),
+the XBE was left, and the page directory entry outlived the quick reboot
+while its page went back to the kernel. Majora's Mask's 8 MB window then
+held that very page: its own stores became PTEs (the "lost" PTEs read
+80762388, 8075ecbc: N64 pointers) until an uncached store found a page
+"taken". xemu's kernel never showed a table there.
+
+- A table already in the page directory in kernel space past the physical
+  map (the KSEG1 alias, the RCP's register pages) is never used as it
+  is: its entries are copied into a page of ours and the PDE pointed at
+  it (`table_for_ex`'s adopt; logged once per region). Our tables are
+  tracked by their physical page, so a PDE the kernel changed is adopted
+  again on the next heal.
+- Leaving the XBE (the dashboard combo, a relaunch) takes every table we
+  made where there was none out of the page directory, and gives a region
+  that had an entry (a split large page, an adopted table) that entry
+  back (`xhw_alias_shutdown`).
+- A page healed 64 times in a row stops being healed: the access faults
+  with the crash card instead of the console freezing in the heal
+  (`XRC_KSEG1_HEAL_MAX`).
+
+Kill switch `-DXHW_ALIAS_OWN_TABLES=0` (the table there is used, as
+before). Not yet on red.
+
+2026-10-20: an adopted table starts empty, its present entries counted
+for the log line, not copied: the only tables found there on red were an
+earlier XBE's, on a page since reused, so their "entries" are whatever
+that page holds now (copied, they read as pages in use, or as aliases onto
+random frames: a likely cause of Kirby 64's textures on red). And leaving
+gives a split large page its entry back but never an adopted table's: it
+would hand the stale entry on to the next XBE. `-DXHW_ALIAS_ADOPT_COPY=1`:
+copied and handed back, as the first version did.
+
+## Mario Party's processes: ended contexts are reclaimed (2026-10-19, `strand.c`, `XRC_STRAND_GC`)
+
+Hudson's process manager ends a process by freeing it, never by a longjmp
+that starts another context on the same buffer, so the strand behind each
+ended process (a host thread with a 128 KB stack) stayed parked for good:
+xemu stopped at 96 with "Too many coroutines" on the way to a board, and
+red (`vmp15`) froze at the board's start with 11 MB left. A parked strand
+(not an N64 thread's own first one) none of whose buffers still holds the
+sp and ra its setjmp wrote there can never be resumed: when fewer than 24
+strands are free, such strands are ended (their threads unwind and free
+their slots). xemu: 43 ended a cycle, the board reached ("Welcome to the
+Board!", "Then, the Game starts"). Kill switch `-DXRC_STRAND_GC=0`.
+
+## osSetEventMesg: the message before the queue (2026-10-19, `ultra/thread.c`)
+
+The event's queue was stored, then (for OS_EVENT_VI) the runtime's VI
+thread started, then the message: a retrace between them posted a NULL
+message. Mario Tennis's own VI manager read its type through it at its
+first retrace and died at frame 2 in release builds (the test builds'
+logging moved the race), the game running on without retraces handled
+(`vmt2`'s white screen may be this or the alias above). The message is
+stored first, then the queue, under the lock, then the retraces start.
+
+## Calls into code loaded at run time go through the lookup (2026-10-19, `patches/recomp/0002`, `N64RX_LOOKUP_JAL`)
+
+See `patches/recomp/0002-lookup-jal-targets.md`. The analyser's three
+cases that sent a whole caller to the interpreter (a jal to no function,
+to another overlay's function, into a function's body in captured code)
+now list the target in `[patches] lookup_jal`, and the patched recompiler
+calls it through `get_function`: Mario Tennis's interpreted functions 385
+-> 129. Kill switch `N64RX_LOOKUP_JAL=0`.
+
+## A zero divisor gives the VR4300's result, not a host trap (2026-10-20, `patches/recomp/0003`, `recomp.h`, `XRC_DIV_VR4300`)
+
+See `patches/recomp/0003-div-by-zero.md`. DIV and DIVU are emitted as the
+runtime's `DIV32` / `DIVU32`; DDIV / DDIVU got the same zero cases. The
+VR4300 never traps there (lo -1 or 1, hi the dividend), code built without
+zero-division checks relies on it, and the sweep's Vigilante 8 and World
+Driver Championship crashed on the host's #DE. The macros also divide in
+32 bits where N64Recomp divided in 64 (a libgcc call on the P3).
+`-DXRC_DIV_VR4300=0`: the old expressions.
+
+## A thread started by a higher priority on its level waits (2026-10-19, `ultra/thread.c`, `XRC_START_DEFER`, off)
+
+Star Fox 64 (US 1.1, `NFXE`) starts its graphics thread (40) from its
+main thread (100), both on level 10, then makes the message queues; the
+graphics thread ran at once, sent its first DMA's message into
+`gDmaMesgQueue` before the queue was made again over it, and waited on it
+for good (the sf64 decomp read as the key). `-DXRC_START_DEFER=1` makes a
+thread started by a higher N64 priority sharing its level wait until that
+thread has slept once (200 ms at most). Off by default until it has been
+run across the regression set.
+
+Later the same night: a level apart is not enough either. With
+`XRC_RANK_LEVELS=1` (every priority its own level: main 13, audio 12,
+timer 11, graphics 10, serial 9) the boot race came back (0 frames), and a
+new log line in `osCreateMesgQueue` ("queue made again with N64 thread
+... asleep on it") named three threads (graphics, timer, serial) asleep on
+queues main then made again: a host block in the starter (a log line, the
+runtime's lock) lets any lower level run, where libultra never would.
+`-DXRC_START_DEFER=2` holds a thread started by a higher N64 priority until
+that thread sleeps, whatever their levels. With both, Star Fox 64 plays its
+intro past the scene change where the fixed map's lag overflowed
+`sNewAudioTasks[]` (xemu: 1716 frames at 105 s, no stall; the old build
+stopped at 135).
+
+## A learnt start is used only where the bytes can start one, in every segment (2026-10-19, `learn.py`, `N64RX_LEARN_STARTS_ALL`)
+
+Castlevania: Legacy of Darkness crashed ~70 s into play on red (`vcv2`)
+and at frame ~10800 of `scen/cvlod` in xemu: `func_8001AB28`'s s0 came
+back 0 from a call. `N64RX_SP_CHECK=1` (below) named the call: the
+function pointer at 0x800029D8 (its object teardown) to `func_802E54B4`
+came back with sp 0x18 lower. The learn logs held a start at 0x802E5500,
+a function of another area overlay the game loads at 0x802E3B70 (the
+safety net logged it while that one was there); applied to this overlay's
+bytes it is the delay slot of `func_802E54B4`'s jalr, so the analyser cut
+the function there and its recompiled half returned without its epilogue.
+The plausibility check captured code had (a frame opened there, or the
+code before it ends a function) now applies to the learnt starts of every
+segment: an implausible one is weak (walked over, never a split). With it
+the function is whole (0x70 bytes), no call changes sp, and the scenario
+runs to its end (6605 frames in 185 s, against 3908 in 260 s and a
+crash). Kill switch `N64RX_LEARN_STARTS_ALL=0`.
+
+## The learnt DMA overlays are guarded too (2026-10-19, `pipeline.py write_guard`, `guard.c`, `N64RX_GUARD_LEARN`)
+
+Star Fox 64 decompresses a scene's code over the last one's with the CPU
+(MIO0, no DMA to the place), so the runtime's overlay switch (by DMA) kept
+the intro's recompiled code at 0x80187520 under the title's. `learn_*`
+segments' functions are now wrapped by the guard like captured code and
+checked again every retrace (`xrc_guard_retrace_each`): a mismatch runs
+the bytes RDRAM holds in the interpreter and recaptures the page. Star
+Fox 64 then played its opening to "Great Fox: Message from General
+Pepper" (1268 frames) where it stopped at 611 before. Kill switch
+`N64RX_GUARD_LEARN=0`.
+
+## A changed function is recaptured whole, its pages kept together (2026-10-20, `learn.c`, `guard.c`, `learn.py`, `XRC_RECAPTURE_SPAN`, `N64RX_LEARN_GROUPS`)
+
+Mario Tennis's match ran 1.1-1.6 million MIPS instructions every 300
+retraces in the interpreter, round after round of learning, in the same
+six functions of its scene code (0x8010CF2C, 0x14F4 bytes, the most). Two
+gaps: a guard miss recaptured only the page holding the function's start,
+so the next build had that version cut short at the page's end ("runs out
+of the segment": interpreted again); and the versions of a span were built
+page by page from each page's n-th other version, which can pair one
+scene's page with another's (a function over both never matches RDRAM).
+The guard now passes the function's size, and learn.c saves it from its
+own start to its last page's end as one record with GROUP set in the size
+word (KSEG0; through the TLB, a page each as before). learn.py makes each
+such record a version of that function alone (`code_<vram>_g<n>`, rooted at
+its start and what it calls there, up to 24 per span), beside the
+page-by-page versions of the whole span; the record's whole pages count as
+page captures too. Two first cuts failed: a group as a whole-span version
+(Mario Tennis's scene span is 0x62000 bytes; eight of them took the image
+from 12.7 to 21 MB, 3.5 MB free after the NV2A's share in xemu), and a
+group of whole pages with the starts the analyser guessed in them (the
+game hung at boot, a thread spinning in one of them).
+Kill switches `-DXRC_RECAPTURE_SPAN=0` (the first page only) and
+`N64RX_LEARN_GROUPS=0` (page by page only). An old n64rx reading a new
+learn file stops at the first group record (its size reads as huge).
+
+## The analysis is kept between builds (2026-10-20, `romonly.py _analyze_cached`, `N64RX_ANALYSIS_CACHE`)
+
+`analyze()` is most of a ROM-only build's first step (Mario Party: 359 of
+428 s), and a test build that changes only C flags, or a learning round,
+ran it again. It is now pickled into the build folder (`analysis.cache`,
+35 MB for Mario Party, 0.1 s to read), keyed by the ROM's SHA-1, every
+`n64rx_lib` source file and every `N64RX_*` variable; the learning loop's
+additions are applied to a fresh copy each time. It holds facts derived
+from the user's ROM and stays in their build folder, as `analysis.txt`
+does. Kill switch `N64RX_ANALYSIS_CACHE=0`.
+
+## The 7102 boot chip loads at 0x80000480 (2026-10-20, `analyze/__init__.py`, `N64RX_IPL3_7102`)
+
+Lylat Wars (Star Fox 64 PAL, the only game on CIC-7102) came back from its
+boot code with three functions found. Its header's entrypoint says
+0x80000400, but its code is linked at 0x80000480: read at the header's
+address its jal targets fell 0x80 bytes past their functions (5316 of them
+land on a prologue at 0x80000480, a few hundred at any other base). The
+7102's IPL3 (CRC 0x009E9EA3, the PAL twin of 6101's) loads there whatever
+the header says; the analyser now takes that address for that boot chip
+(a fact about the IPL3, not the game). From the ROM alone with Star Fox
+64's thread switches (`-DXRC_START_DEFER=2 -DXRC_RANK_LEVELS=1`): 2907
+frames in 120 s in xemu. Kill switch `N64RX_IPL3_7102=0`.
+
+## A TLB entry code that maps only the odd page (2026-10-20, `analyze/funcs.py tlb_entry`, `N64RX_TLB_ODD`)
+
+Shadow Man's entry code calls osMapTLB with no even page (evenpaddr -1),
+the odd page at physical 0 and 1 MB pages, then jumps to 0x00103060: its
+code runs at 0x00100000 + its physical address. The analyser took the -1
+as the even page's address, put the code at base 1, and found none ("the
+boot code came back"). With no even page, the odd page (oddpaddr, the
+stack argument at 0x10) half a pair above vaddr is the mapping: 457
+functions, and the game boots in xemu (no frames yet: a read past RDRAM
+through its TLB, learning rounds next). Kill switch `N64RX_TLB_ODD=0`.
+
+## Code no walk reaches, found from the calls aimed at it (2026-10-20, `analyze/funcs.py _probe`, `N64RX_PROBE`)
+
+Virtual Pool 64's analysis found 58 of its ~1900 functions and Starshot's
+77 of ~1600: their game code sits in the boot segment past a data blob or
+after the last function found, reached only through pointers, and the
+gap scan looks between functions and gives up on a gap whose first walk
+hits data. Now, when nothing new turns up, each run of a ROM segment that
+no function covers (4 KB or more) is read for its jals aimed inside it:
+when at least 8 of them, and 60% or more, land on a function's start (a
+prologue, `addiu sp, sp, -n`, or the word after a `jr ra` and its delay
+slot), those targets are walked as starts (Virtual Pool: 1420 of 1480).
+Not for code captured from RDRAM (other overlays' calls aim there).
+Virtual Pool 64: 1839 functions, 2791 frames in 70 s in xemu (none
+before); Starshot: 1558. The decomp check (`test_analyze.py`, six pairs)
+gives the same results with and without it. Kill switch `N64RX_PROBE=0`.
+
+## A new thread starts with its creator's gp (2026-10-20, `ultra/thread.c`, `strand.c`, `XRC_THREAD_GP`)
+
+Starshot's entry code sets gp (0x800B8500) and calls main; its first
+thread then stored through `0xFC0($gp)` and the runtime's thread had gp 0:
+a write to KUSEG page 0. gp is one value for a whole N64 program and
+libultra leaves it alone in a new thread's context, so the thread kept the
+gp the entry set. osCreateThread now keeps the creator's gp for the new
+thread, and a strand (strand.c) takes the last one a thread was created
+with. Starshot then runs (no frames yet in 90 s, learning next). Kill
+switch `-DXRC_THREAD_GP=0`.
+
+## The boot segment keeps its plain keys when a learnt segment overlaps it (2026-10-20, `analyze/__init__.py overlays`, `N64RX_BOOT_PLAIN`)
+
+Paper Mario DMAs code into part of its own boot segment (a learnt segment
+at 0x8006C000, 0xB90 bytes). Every segment whose vram another shares was
+keyed as an overlay (vram | ROM offset << 32), the boot included: its
+functions lost their libultra names (70 -> 0, the rule only names plain
+keys) and N64Recomp refused the build ("func_80025C00_1000 is set as
+ignored ... but does not exist"). The boot is never an overlay now; the
+segment over it keeps its overlay keys, so the two stay apart. Kill switch
+`N64RX_BOOT_PLAIN=0`.
+
+## A learnt function goes to the overlay it ran in (2026-10-20, `learn.py`, `N64RX_FUNC_DMA`)
+
+learn.py put a learnt function in the overlay of the newest DMA over its
+address anywhere in the log, but learn.c logs, with each function, the
+DMA that put its code there when it ran (`dma ...` the line before
+`func ...`), or none when no DMA did (the CPU wrote it: a decompressed
+map). Paper Mario loads hundreds of maps at 0x80240000, decompressed by
+the CPU; a start learnt in one went to another's ROM segment and split a
+function there (a crash at frame 691). Now a function goes to the DMA
+logged with it; with none, to the captured bytes, or to the segment
+holding its address only when that is the one code there. Paper Mario:
+back to ~2390 frames (stopping at an effect mapped through its TLB at
+0xE006C298, open: its DMA is logged by physical address). GoldenEye,
+Banjo-Kazooie and Mario Tennis analyse the same; Castlevania's area
+overlays (sharing 0x801CAEA0 and 0x802E3B70) get their own learnt
+segments. Kill switch `N64RX_FUNC_DMA=0`.
+
+## KSEG2/3 code goes through the safety net (2026-10-20, `learn.c holds_code`, `interp.c fetch`, `learn.py`/`segments.py high_load`, `XRC_HIGH_SAFETY`, `N64RX_HIGH_SEGS`)
+
+Paper Mario maps each of its 128 effects at its own vram (0xE0xxxxxx)
+through its TLB onto wherever it loaded it. A call to one ended the game
+("No function at this address: e006c298"): the safety net only took KSEG0
+and TLB-mapped KUSEG. Now a KSEG2/3 address the TLB maps is run by the
+interpreter (its fetch goes through the TLB there too) and learnt by its
+physical page; the next build looks for the one ROM table entry (start,
+end, vram) whose vram range holds it and recompiles that as a segment
+(`high_load`; table words at KSEG2/3 addresses are used for nothing else:
+most are other words; an entry counts only with a page-aligned vram, 1 MB
+at most, and a function start at the learnt address in its bytes: Paper
+Mario's table names each effect's code and its graphics data at one
+vram). Paper Mario: round 8 recompiles six effects (the code entries at
+0xE0068000, 0xE006A000, 0xE006C000, 0xE0078000, 0xE008E000, 0xE00AE000),
+runs 3139 frames in 70 s; its effect globals (0xE0200000, loaded another
+way) still run in the safety net. Kill switches `-DXRC_HIGH_SAFETY=0`,
+`N64RX_HIGH_SEGS=0`.
+
+## Rare's 0x07: n commands from memory (2026-10-20, `f3d_interp.c`, `XGFX_RARE_DLINMEM`)
+
+Jet Force Gemini's microcode (no version text, read as Fast3D) uses
+opcode 0x07, reserved in Nintendo's Fast3D: `07 nn llll` with an address
+runs n commands from there and comes back (`07060030 000a4f78`: 6
+commands, 0x30 bytes). JFG puts each texture rectangle's SETTILE,
+LOADBLOCK, SETTILESIZE and RDPHALF words there; unread, tile 0 was never
+set, every rectangle missed its texture, and its menus' text and
+backgrounds drew as grey boxes (`vjfg1` on red: "a broken menu"). Now
+run in place (Fast3D family only, one level deep), and the main menu
+draws whole in xemu (PLAY, MULTI, OPTIONS with their icons; no texture
+miss). Kill switch `-DXGFX_RARE_DLINMEM=0`.
+
+## Rare's DKR microcode: matrices, vertices and triangles from memory (2026-10-20, `f3d_interp.c` `dkr_*`, `XGFX_DKR`)
+
+Diddy Kong Racing (and Jet Force Gemini, a later one) runs a microcode
+with no version text whose geometry is not Fast3D's; the encodings are the
+DKR decomp's `include/f3ddkr.h` (CC0, read as the answer key). G_MTX loads
+a whole MVP (the CPU's, Nintendo's integer/fraction layout) into one of
+four slots and selects it (slot in w0 bits 22-23; JFG's in 16-19);
+G_MOVEWORD 0x0A selects a slot, 0x02 turns billboarding on; G_VTX loads
+10-byte vertices (s16 x, y, z, RGBA) transformed by that slot alone,
+from 0 or appended (w0 bit 16), a billboard vertex added to vertex 0's
+clip position; G_TRIN (0x05) draws up to 16 triangles from memory (flags
+0x40 = both faces, three indices, u, v per vertex in 10.5; w0 bit 16
+textures them); JFG's 0xBF sets the bases its addresses are relative to.
+On once a microcode with no version text sends 0x05 or 0x07, which
+Nintendo's Fast3D never does. Diddy Kong Racing's intro and title in
+xemu: whole (the character intro on the beach, the title's 3D flyby
+behind the logo), where it drew grey boxes; host replay of its title
+frame: 933 draws, 4285 triangles (6 draws without). Jet Force Gemini:
+its menu background now, its 3D letters not yet (its matrices hold
+values the DKR layout does not explain: open). Kill switch
+`-DXGFX_DKR=0`.
+
+## A learnt DMA that is a found segment, longer, grows it (2026-10-20, `learn.py apply`)
+
+Mortal Kombat 4's sweep learning round failed to link ("duplicate symbol
+_func_80132000_51400__g"): the analyser found its load at 0x80132000 from
+ROM 0x51400 as 0x884A0 bytes, the console saw the same DMA 0xD98A0 bytes
+long and ran code past the first's end, and learn.py added a second
+segment with the same ROM offset and vram: their functions' overlay names
+(vram + ROM offset) were the same. Such a DMA now grows the segment the
+analyser found. Mortal Kombat 4 then builds and runs 70 s in xemu with no
+crash (no frames yet; it crashed at boot in s10 and s11).
+
+## The audio HLE's RDRAM span stops at RDRAM's end (2026-10-20, `rt/audio.c asp_addr`, `XRC_ASP_SPAN_END`)
+
+The audio HLE asks for each address as a 4 KB span (DMEM's size: no
+transfer is longer); Diddy Kong Racing saves its audio buffers at
+0x3FF0C0, under the top of 4 MB, so the span ran past RDRAM's end and
+every one of those SAVEBUFFs was dropped as a "bad address" (1.7 a task,
+its music and effects with holes). Near the end the span is now what is
+left of RDRAM: 0 bad addresses. The regression set's 13 games had none
+before or after. The first four bad addresses are now logged with their
+command (`[AUDIO] bad address ...`). Kill switch `-DXRC_ASP_SPAN_END=0`.

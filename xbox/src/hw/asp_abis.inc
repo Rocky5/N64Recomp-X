@@ -217,6 +217,7 @@ static void nead_hilogain(uint32_t w0, uint32_t w1)
 static void exec_nead(uint32_t w0, uint32_t w1)
 {
     uint32_t op = w0 >> 24, flags = (w0 >> 16) & 0xFF, a = w1 & 0xFFFFFFu;
+    s_cur_op = op;
     int shortt = (s_uc.flags & ASP_NEAD_SHORT) != 0;
     if (op >= 32 || !(s_uc.present & (1u << op))) {
         s_stats.cmds[op ? 32 : 0]++;
@@ -391,6 +392,7 @@ static void naudio_envmix(uint32_t flags, uint32_t state)
 static void exec_naudio(uint32_t w0, uint32_t w1)
 {
     uint32_t op = w0 >> 24, flags = (w0 >> 16) & 0xFF;
+    s_cur_op = op;
     if (op >= 16 || op == 7 || op == 8) {
         s_stats.cmds[32]++;
         return;

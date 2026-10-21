@@ -2381,3 +2381,190 @@ frames A-B: n later copies, the most m of 64, k at half or more` every 30
 frames. A frame's first copy now has its own 8 lines and no longer uses
 up the 40. Run scenarios: `build-host/scen/snapd` (A only), `snapz`,
 `snapz2` (Z held with A); untracked.
+
+## 2026-10-19 (evening): set 16 on red, its failures, set 17 fixes (red + xemu)
+
+**Red ran set 16** (`build-host/hwbuild16.sh`, `hwbuild16k.sh`,
+`deploy-set16.sh`; the working tree, not xemu-smoked first; logs pulled to
+`C:/xemu/hw/logs{k4,mt2,ge10,mp15,mm14,cv2,sm15,ssb12}`). The maintainer:
+
+| build | result | cause, fix |
+|---|---|---|
+| `vk4` Kirby 64 (USA, `NK4E`, new) | runs; "major texture failure" | open: nothing in the log, not seen in xemu (the same intro draws right there). A likely cause: the stale page-directory entry below (left by an earlier XBE run) pointing at a page that is now Kirby's texture pool or RDRAM, our KSEG1 PTEs written into it; set 17's own tables avoid that. Next time BACK + WHITE screenshots (`screenshots = 1` in settings.ini) |
+| `vmt2` Mario Tennis (new) | a white screen, frozen | two causes: its uncached RDRAM's page table overwritten (the log stops at the 16th KSEG1 heal) and, in release builds only, a NULL message from `osSetEventMesg`'s race killing its own VI manager at frame 2 (reproduced in xemu with the release XBE); both fixed (`docs/decisions.md`), `vmt4` staged, 55 s clean in xemu |
+| `vge10` GoldenEye | fine; dips to ~40 fps in intense scenes | the 0x70020000 page learnt (round 31): interpreted instructions 1.5M -> 53K per 5 s |
+| `vmp15` Mario Party | froze at the board's start; textures shuffled on the board | the strands of ended processes never freed (fixed: `XRC_STRAND_GC`, `vmp16` staged; xemu reaches the board); the shuffle open (`[GFX] texture miss (no load)`: a tile with line 0, at the board's first frames) |
+| `vmm14` Majora's Mask | black after the Nintendo logo, crash | a page table left by the XBE run before (Mario Tennis's) inside its RDRAM window (fixed: own tables, cleared on exit; `vmm15` staged) |
+| `vcv2` Castlevania LoD | crashed ~70 s in | reproduced in xemu (frame 10584, `func_8001AB28`'s s0 0 after a call into its object teardown): open, being bisected |
+| loading screen | the ID chip had odd characters | a double-encoded middle dot in `xhw_rom.c` (fixed) |
+
+`[MEM]`/`[CLOCK]` on red (`vmt2`): boot free 50188 KB, after nv2a 12204
+KB, cpu 733 MHz.
+
+**Set 17 staged** (`build-host/hwbuild17.sh`, `deploy-set17.sh`; rebuilt
+2026-10-20 ~05:30 with everything in the overnight entry below, Diddy
+Kong Racing added; ThinLTO release; all 15 smoke-booted 45 s in xemu,
+every one presenting, no crash; not deployed, no hardware testing
+tonight): vsnap11 `d39ec2e4f69c`, vzel19 `a8de229c6897`, vge11
+`008633e4d249`, vjfg7 `733f5ca22015`, vssb13 `3f62dade2070`, vmk16
+`40727e8b598c`, vsm16 `8b0728448c81`, vmp17 `c51a68523f9f`, vmm16
+`23e9ddfdba3f`, vbk18 `f8b13d58c401`, vk5 `a3a6e896d3c1` (Kirby 64 USA),
+vmt5 `d84a91eb3730`, vcv3 `66e770db821c`, vsf1 `64659b4bdcf8` (Star Fox
+64 US 1.1, new: `-DXRC_START_DEFER=2 -DXRC_RANK_LEVELS=1`, title ID
+4E5260B9), vdkr1 `632f65a16d48` (Diddy Kong Racing US 1.1, new: Rare's
+DKR microcode, title ID 4E52E856). To look at: Mario Tennis boot
+and a match (`vmt5`), Majora's Mask past the Nintendo logo (`vmm16`), Mario
+Party's board (`vmp17`), Castlevania past a minute of play (`vcv3`),
+Kirby's textures with BACK + WHITE screenshots (`screenshots = 1` in its
+settings.ini), Star Fox 64 past its intro (`vsf1`), Diddy Kong Racing
+(`vdkr1`), Jet Force Gemini's menus (`vjfg7`), the loading screen's
+ID chip, the Gold games as a regression check, and a relaunch between
+games (the stale-table fix). (`vmp16`, `vmm15`, `vmt3`, `vmt4` were interim builds.)
+
+**Also today (xemu):** the display-list replay (`tools/xbox/bench_dl.py`,
+`docs/testing.md`), `-DXRC_DLBENCH`; GoldenEye's per-frame interpreter cost
+~8-10 ms in xemu against ~1.5 ms for the back end; patches/recomp/0002
+(lookup jals: Mario Tennis 385 -> 129 interpreted functions); Kirby 64
+(USA) from the NAS (`Kirby 64 - The Crystal Shards (U) [!].z64`): its
+opening story at ~50 fps in xemu; Star Fox 64 (US 1.1) from a boot hang to
+its space intro (start deferral, `osSpTaskLoad`'s task for a raw SP start,
+page 0 read as zeros), then a stall at its first scene load (open). The
+regression set (14 games) presents frames with no crash after all of it.
+
+### Star Fox 64 (US 1.1, `NFXE`) from its ROM alone (2026-10-19, night; xemu only, open)
+
+The sweep skipped it (a duplicate of Lylat Wars (E), which stops at boot).
+With the sf64 decomp as the key:
+- boot hang: its graphics thread (40) ran beside its main thread (100) on
+  level 10 and sent a DMA message into `gDmaMesgQueue` before main made the
+  queue: `-DXRC_START_DEFER=1` (off by default) lets it reach frames;
+- no task ever ran: the debug monitor's `__rmonStepRCP` made
+  `__osSpSetStatus` ambiguous, so `osSpTaskStartGo` went unnamed and its own
+  copy started the SP through SP_STATUS with no task block in DMEM: the
+  rule now wants the written value to be the argument (both named), and
+  the runtime's `osSpTaskLoad` leaves its task for a raw SP start
+  (`XRC_SP_LOAD_TASK`), run as `osSpTaskStartGo` runs one;
+- its audio heap's uninitialised `entry` read (a decomp `@bug`) crashed the
+  audio thread: page 0 through KUSEG now reads as zeros (`XRC_NULL_PAGE`);
+- its scenes are decompressed over each other by the CPU: the learnt DMA
+  overlay at 0x80187520 is guarded now (`N64RX_GUARD_LEARN`).
+It then plays its intro and the opening cinematic ("Great Fox", General
+Pepper's message) in xemu, and stops at a scene change: its main thread
+(the scheduler, 100) lags on level 10 beside four lower threads, the audio
+thread queues three tasks between two of its drains, and the game's
+`sNewAudioTasks[]` overflows into `sNewGfxTasks[]` (the graphics task is
+lost; the N64 never lets the scheduler lag). `XRC_RANK_LEVELS=1` would keep
+them apart but brings the boot race back (0 frames): open.
+
+2026-10-20: the race with ranked levels was the same race one level
+apart. `osCreateMesgQueue` now logs a queue made again over a sleeper, and
+named graphics, timer and serial asleep on queues main then made: a host
+block in main (a log line, the lock) let the lower levels run.
+`-DXRC_START_DEFER=2` holds a started thread of lower N64 priority until
+its starter sleeps (or lowers its priority, or 200 ms), whatever the
+levels. With `-DXRC_START_DEFER=2 -DXRC_RANK_LEVELS=1` Star Fox 64 plays
+its intro and the story past the scene change (1716 frames at 105 s,
+xemu under load at 5-7 fps, no stall). The regression set with both (14
+games, 70 s, xemu): every one presents, no crash, most a little ahead of
+the baseline (Pilotwings 3125 against 2430; Mario Tennis 1322 against
+1679, no input scripted). Both stay off by default: the console-proven
+games move levels under them (Super Mario 64, Smash Bros., Mario Kart 64),
+and only a console run decides that. Set 17 carries a Star Fox 64 build
+with both (`vsf1`, title ID 4E5260B9).
+
+## 2026-10-20 (overnight, no hardware): stale tables, Star Fox's threads, division, learning (xemu only)
+
+- **Adopted page tables start empty** and are never handed on at exit
+  (`docs/decisions.md`; `XHW_ALIAS_ADOPT_COPY=1` restores copying). The
+  likeliest common cause of set 16's console-only failures: Majora's Mask,
+  Mario Tennis's white screen, and perhaps Kirby 64's and Mario Party's
+  textures (both draw right in xemu, both ran after another XBE on red).
+  Not verifiable without the console: xemu leaves no tables behind.
+  Majora's Mask in xemu with it: 621 frames, the quit combo at 40 s.
+- **Star Fox 64** past its scene change with `-DXRC_START_DEFER=2
+  -DXRC_RANK_LEVELS=1` (see its section above); off by default.
+- **Integer division by zero** gives the VR4300's result
+  (`patches/recomp/0003`, `XRC_DIV_VR4300`): Vigilante 8 ran 2415 frames
+  past the frame (1592) where the sweep saw it fault.
+- **Learning:** a changed function is recaptured whole and its pages kept
+  together (`XRC_RECAPTURE_SPAN`, `N64RX_LEARN_GROUPS`). Mario Tennis's
+  match: interpreted instructions per 300 retraces 1.06-1.58M -> ~770K
+  (rounds 30-32 from `scen/mt`, a match each), image 12.9 MB, 11.7 MB free
+  after the NV2A (xemu). What is left (0x800F02B4, its jump table 300 KB
+  away in another capture; 0x10000000, a branch past its segment) is ~1%
+  of a 733 MHz CPU.
+- **The analysis is cached** in the build folder (`N64RX_ANALYSIS_CACHE`):
+  Mario Party's 6-minute analysis once per ROM and n64rx version.
+- **The sweep learns** (`tools/xbox/sweep.py --learn R`): rebuilds each game
+  that learnt something with its boot logs and boots it again.
+- Regression set (14 games, 70 s each, xemu, with rank levels and
+  start-defer on): all present, none crash.
+- Mario Party's board in xemu: right. Its 36 "texture miss" lines (an
+  all-zero tile 0, the board's intro) were shade-only quads (combiner
+  `fcffffff fffe793c`) drawn with G_TEXTURE on: harmless, and no longer
+  looked up (`XGFX_TEX_UNREAD`). Test builds now log the 16 commands
+  before the first misses; `-DXGFX_TRACE_MISS=1` (trace the frame after a
+  miss) did not fire there (not looked into further).
+- Kirby 64's console textures: its texture pool is healthy in xemu (3.6 MB
+  free, no failed allocation); nothing more without console screenshots.
+- **Lylat Wars (Star Fox 64 PAL)**: its 7102 boot chip loads at
+  0x80000480, not the header's 0x80000400 (`N64RX_IPL3_7102`): from 3
+  functions found to 1701, and 2907 frames in 120 s in xemu (with the
+  Star Fox thread switches).
+- **Shadow Man**: its entry maps only an odd TLB page (`N64RX_TLB_ODD`):
+  from no code found to 457 functions; it boots and then takes a TLB miss
+  at 0x00800004 (from 0x00117730) before its exception code is in (the
+  vectors still hold IPL3's): open. Three learning rounds learnt nothing
+  more.
+- The sweep's games with a big plain boot segment and few functions
+  (Virtual Pool 64: 58 of ~1900; Starshot: 77) copy their code out of the
+  boot image with the CPU (no DMA for the analyser to find): the learning
+  loop's captures are the way in.
+- **Code the walks missed** (`N64RX_PROBE`): Virtual Pool 64 from 58 to
+  1839 functions and 2791 frames in 70 s (none in s10/s11); Starshot from
+  77 to 1558. The six decomp pairs are unchanged.
+- **gp for new threads** (`XRC_THREAD_GP`): Starshot no longer faults on
+  its first gp-relative store; after two learning rounds it presents
+  frames (3028 in 50 s of game time, xemu; s10/s11: a crash at boot).
+- **Sweep s11** (the tree of 2026-10-19 ~23:40: page 0 as zeros, the
+  strands' GC, the osSetEventMesg order, start-defer off; first boots only,
+  30 s): 147 of 246 present frames (s10: 144): Buck Bumble, Donald Duck
+  Goin' Quackers, Rugrats in Paris newly. Five games now fault reading N64
+  0x00001000 where they read page 0 before (Air Boarder 64, Chopper
+  Attack, Extreme-G, Mortal Kombat 4, Iggy's Reckin' Balls: compressed
+  loaders whose own dispatch goes wrong; learning first). **Sweep s12**
+  (tonight's tree, `--learn 2`) is running from `../nrx-s12`, slot 10.
+- **Paper Mario**: round 4 reached 2257 frames (stopping at an effect at
+  0xE006C298 with no function); its log adds a DMA of code into the boot
+  segment, which broke the next build (`N64RX_BOOT_PLAIN` fixes that).
+  Rounds 5-6 then crash at frame 691 in `func_80243FC4_164824`: a start
+  learnt in another map's overlay applied to this one (Paper Mario loads
+  hundreds of maps at 0x80240000; learnt starts are not tied to the
+  overlay they came from). Fixed (`N64RX_FUNC_DMA`): round 5 again runs
+  ~2390 frames and stops at its first effect (0xE006C298, mapped through
+  its TLB at 0xE0xxxxxx; learn.c logs the effect's DMA by physical
+  address, so nothing ties it to that address yet). Then
+  (`XRC_HIGH_SAFETY`): its effects run in the safety net; rounds 6-7 reach
+  ~2475 frames and stop at a null-pointer store in its battle code
+  (`func_80263C60`, frame ~5166). Round 8 recompiles six effects from the
+  ROM's effect table (`high_load`) and runs 3139 frames in 70 s with no
+  crash (xemu; the battle store not reached or gone: unknown).
+- **Jet Force Gemini's menus** (`XGFX_RARE_DLINMEM`): Rare's opcode 0x07
+  (n commands from memory) carried every texture rectangle's tile setup;
+  its menu text and backgrounds drew as grey boxes. The main menu now
+  draws whole in xemu (PLAY / MULTI / OPTIONS, their icons); no texture
+  miss in 100 s. Its audio (Rare's microcode) is still to look at.
+- **Diddy Kong Racing renders** (`XGFX_DKR`: Rare's DKR microcode, the
+  encodings from the DKR decomp's `f3ddkr.h`, CC0): its intro (the
+  characters on the beach) and the title's 3D flyby draw whole in xemu,
+  where they were grey boxes; its Game Select and initials screens (the
+  3D letter carousel) right, and on into a 3D scene of the game (night
+  sky, terrain, plants) with scripted input (`scen/dkrplay`). Not on the
+  console: `vdkr1` added to set 17 (title ID 4E52E856). Its audio lost
+  every SAVEBUFF near the top of RDRAM (the HLE's 4 KB span ran past 4
+  MB: `XRC_ASP_SPAN_END`); fixed, `vdkr1` rebuilt (`632f65a16d48`,
+  `hwbuild17-dkr.sh`).
+- **Regression set on the final tree** (2026-10-20 ~05:45; 14 games, 70 s,
+  xemu, default switches): every one presents (Kirby 64 (E) once stuck
+  at "Reading the ROM" with four xemus running, 2825 frames on a rerun);
+  no crash.

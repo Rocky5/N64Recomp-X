@@ -166,7 +166,7 @@ def tlb_entry(rom, entry):
     a jalr to a constant below 0x80000000, then a break. Returns (main, base,
     helper) with base = the virtual address of physical 0 (the code IPL3 copied
     to physical 0x400 runs at base + 0x400), or None."""
-    regs, helper, va, pa = {}, None, None, None
+    regs, helper, va, pa, odd = {}, None, None, None, None
     for i in range(64):
         o = 0x1000 + 4 * i
         ins = Ins(int.from_bytes(rom[o:o + 4], 'big'), entry + 4 * i)
@@ -176,9 +176,17 @@ def tlb_entry(rom, entry):
             regs[ins.rt] = ((regs.get(ins.rs, 0)) + ins.simm) & 0xFFFFFFFF
         elif ins.op == 13 and (ins.rs in regs or ins.rs == 0):
             regs[ins.rt] = regs.get(ins.rs, 0) | ins.imm
+        elif ins.op == 43 and ins.rs == 29 and ins.simm == 0x10:   # sw rt, 0x10(sp): osMapTLB's oddpaddr
+            odd = 0 if ins.rt == 0 else regs.get(ins.rt)
         elif ins.is_jal:
             if 6 in regs and 7 in regs and regs[6] < 0x80000000:
                 helper, va, pa = ins.target, regs[6], regs[7]
+                # osMapTLB(index, pagemask, vaddr, evenpaddr, oddpaddr, asid) with no even page (-1):
+                # the odd page maps the code, half the pair above vaddr (Shadowman: 1 MB pages, the
+                # odd one at 0x100000 onto physical 0; read as -1 the base came out 1, no code found).
+                # N64RX_TLB_ODD=0: the even argument whatever it is, as before
+                if pa == 0xFFFFFFFF and odd is not None and 5 in regs and os.environ.get('N64RX_TLB_ODD', '1') != '0':
+                    va, pa = (va + (((regs[5] | 0x1FFF) + 1) >> 1)) & 0xFFFFFFFF, odd
         elif ins.is_jalr:
             t = regs.get(ins.rs)
             if helper is None or t is None or t >= 0x80000000:
@@ -421,8 +429,53 @@ def _discover(img, seg, roots, funcs, starts, queue, weak, weak_calls=False):
                         weak.add(t)
                     else:
                         strong.add(t)
+        if not queue and PROBE and not weak_calls:
+            for t in _probe(img, seg, funcs):
+                if t not in starts:
+                    starts.add(t)
+                    queue.append(t)
+                    strong.add(t)
         if not queue:
             return funcs
+
+
+# Code the walks never reach: Virtual Pool 64 found 58 of its ~1900 functions, Starshot 77, their
+# game code behind a data blob or past the last function found, reached through pointers. In a run
+# of the segment no function covers, the jals aimed inside the run that land on a function's start
+# (a prologue, addiu sp, sp, -n, or the word after a jr ra and its delay slot: a leaf) are taken as
+# starts, when enough of them do: code calling code where it sits (Virtual Pool 64: 1420 of 1480).
+# N64RX_PROBE=0: only calls, gaps and roots, as before
+PROBE = os.environ.get('N64RX_PROBE', '1') != '0'
+PROBE_MIN_RUN = 0x1000     # bytes of unreached segment worth a look
+PROBE_MIN_HITS = 8         # jals in the run that land on a prologue in it
+PROBE_MIN_SHARE = 0.6      # of the jals aimed inside the run
+
+
+def _probe(img, seg, funcs):
+    """starts in the segment's unreached runs, from the jals inside them (see PROBE)"""
+    covered = sorted((f.start, f.end) for f in funcs.values())
+    runs, pc = [], seg.vram
+    for a, b in covered + [(seg.vram + seg.size, seg.vram + seg.size)]:
+        if a - pc >= PROBE_MIN_RUN:
+            runs.append((pc, a))
+        pc = max(pc, b)
+    found = []
+    for lo, hi in runs:
+        aimed, hits = set(), set()
+        for v in range(lo, hi, 4):
+            w = img.word(v)
+            if w is None or w >> 26 != 3:   # jal
+                continue
+            t = (v & 0xF0000000) | ((w & 0x3FFFFFF) << 2)
+            if not lo <= t < hi:
+                continue
+            aimed.add(t)
+            p = img.word(t)
+            if (p is not None and p >> 16 == 0x27BD and p & 0x8000) or img.word(t - 8) == 0x03E00008:
+                hits.add(t)   # a prologue, or right after a jr ra and its delay slot (a leaf's start)
+        if len(hits) >= PROBE_MIN_HITS and len(hits) >= PROBE_MIN_SHARE * len(aimed):
+            found += sorted(hits)
+    return found
 
 
 def _settle(funcs, weak=()):

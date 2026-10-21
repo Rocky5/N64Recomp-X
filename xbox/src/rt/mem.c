@@ -148,6 +148,21 @@ int xrc_mem_init(uint32_t mb) {
             xhw_logf("[MEM] KSEG1 aliased page by page at %08x", (unsigned)base);
     }
 #endif
+    /* The N64's page 0 through KUSEG (host P + 0..0xFFF) reads as zeros: a
+     * load through a NULL pointer plus a small offset, where the N64 had a
+     * stray value (Star Fox 64's audio heap reads an uninitialised entry, a
+     * bug the decomp marks; on the N64 it held some pointer), gets 0 instead
+     * of crashing; a store there still faults. The game's TLB may map the
+     * page over it. DIVERGES: the N64 would take a TLB miss there.
+     * Kill switch -DXRC_NULL_PAGE=0 (such a read is a crash, as before). */
+#ifndef XRC_NULL_PAGE
+#define XRC_NULL_PAGE 1
+#endif
+    if (XRC_NULL_PAGE) {
+        uint32_t va = (uint32_t)(uintptr_t)xrc_rdram;
+        xhw_logf("[MEM] page 0 through KUSEG (%08x) %s", (unsigned)va,
+                 xhw_alias_zero_page(va) ? "reads as zeros" : "not mapped: its reads fault");
+    }
     xrc_mmio_init();
 #ifdef XRC_WATCH
     xhw_watch_write((uint32_t)(uintptr_t)(xrc_rdram + (uint32_t)(XRC_WATCH)));   /* diagnosis: xhw_crash.c */
@@ -166,12 +181,27 @@ int xrc_mem_init(uint32_t mb) {
 #ifndef XRC_KSEG1_HEAL
 #define XRC_KSEG1_HEAL 1
 #endif
+/* A page healed again and again (its alias wiped as fast as it is made)
+ * stops being healed after XRC_KSEG1_HEAL_MAX times in a row: the access
+ * then faults with the crash card, where the console froze healing it
+ * (vmt2: the log stopped at its sixteenth heal). */
+#ifndef XRC_KSEG1_HEAL_MAX
+#define XRC_KSEG1_HEAL_MAX 64
+#endif
 int xrc_kseg1_heal(uint32_t host) {
 #if XRC_KSEG1 && XRC_KSEG1_HEAL
-    static unsigned s_healed, s_refused;
+    static unsigned s_healed, s_refused, s_same;
+    static uint32_t s_last;
     uint32_t base = (uint32_t)(uintptr_t)(xrc_rdram + 0xA0000000u), off = host - base, page, pde, pte;
     if (!xrc_rdram_host || off >= xrc_rdram_size) return 0;
     page = base + (off & ~0xFFFu);
+    s_same = page == s_last ? s_same + 1 : 0;
+    s_last = page;
+    if (s_same >= XRC_KSEG1_HEAL_MAX) {
+        if (s_same == XRC_KSEG1_HEAL_MAX)
+            xhw_logf("[MEM] KSEG1 page %08x lost %u times in a row: not healed again", (unsigned)page, s_same);
+        return 0;
+    }
     xhw_alias_why(page, &pde, &pte);
     if (xhw_alias_map(page, ((uint32_t)(uintptr_t)xrc_rdram_host & 0x7FFFFFFFu) + (off & ~0xFFFu), 4096)) {
         if (s_healed++ < 16)

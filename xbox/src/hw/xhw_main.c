@@ -234,12 +234,14 @@ __attribute__((weak)) void xhw_audio_shutdown(void) {}
 
 /* nv2a.c: the GPU at rest and pbkit shut down while interrupts still run */
 __attribute__((weak)) void xgfx_shutdown(void) {}
+void xhw_alias_shutdown(void);   /* xhw_alias.c */
 
 void xhw_quit_to_dashboard(void) {
     xhw_exit_write(s_exit_why[0] ? s_exit_why : "quit to the dashboard");
     xgfx_shutdown();
     xhw_audio_shutdown();
     xhw_pad_shutdown();
+    xhw_alias_shutdown();
     XLaunchXBE(NULL);
     for (;;) Sleep(1000);
 }
@@ -255,6 +257,7 @@ static void __attribute__((noreturn)) launch(char* path) {
     xgfx_shutdown();
     xhw_audio_shutdown();
     xhw_pad_shutdown();
+    xhw_alias_shutdown();
     XLaunchXBE(path);
     HalReturnToFirmware(HalRebootRoutine);
     for (;;) Sleep(1000);

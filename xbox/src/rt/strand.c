@@ -41,6 +41,7 @@ typedef struct Strand {
     xhw_event* ev;                   /* wakes it */
     volatile uint32_t resume_buf, resume_v;
     volatile int die;
+    volatile int parked;             /* waiting in park() */
     int has_base;
     void* base_jb[5];                /* its top: dying unwinds here (not the first strand of a thread) */
     uint32_t entry, sp, v, regs[11], fregs[12];   /* a new one: where it starts */
@@ -153,7 +154,9 @@ void xrc_strand_resumed(uint8_t* rdram, recomp_context* ctx, uint32_t buf) {
 /* wait until another strand longjmps to a buffer this one owns, then go back to that setjmp */
 static void park(Strand* me) {
     for (;;) {
+        me->parked = 1;
         xhw_event_wait(me->ev, XHW_INFINITE);
+        me->parked = 0;
         if (me->die && me->has_base) __builtin_longjmp(me->base_jb, 1);
         if (xhw_thread_self()) xhw_thread_set_level(xhw_thread_self(), xu_thr_level(me->thr));   /* osSetThreadPri meanwhile */
         if (me->resume_buf) {
@@ -181,12 +184,52 @@ static void strand_main(void* p) {
     }
     st->has_base = 1;
     xrc_ctx_init(&ctx, st->sp);
+    ctx.r28 = (gpr)(int32_t)xu_program_gp();   /* the program's gp (thread.c XRC_THREAD_GP) */
     for (i = 0; i < 11; i++) sreg(&ctx, SREGS[i], st->regs[i]);
     for (i = 0; i < 12; i++) *freg(&ctx, i) = st->fregs[i];
     ctx.r2 = (gpr)(int32_t)st->v;
     get_function((int32_t)st->entry)(xrc_rdram, &ctx);
     xhw_logf("[STRAND] the context started at %08x returned; it waits", (unsigned)st->entry);
     park(st);
+}
+
+/* Contexts nothing can resume any more are ended: a parked strand (not an
+ * N64 thread's own first one) none of whose buffers still holds the sp and
+ * ra its setjmp wrote there. Mario Party ends processes by freeing them,
+ * their buffers' memory reused by other data, never by a longjmp that
+ * starts a new context on the same buffer; each kept its strand, a host
+ * thread with a 128 KB stack, until 96 of them ("Too many coroutines" in
+ * xemu, the board start frozen on the console with 11 MB left, vmp15).
+ * Checked when fewer than STRAND_SPARE are free; the ended ones' threads
+ * unwind and free their slots a moment later. -DXRC_STRAND_GC=0: kept, as before */
+#ifndef XRC_STRAND_GC
+#define XRC_STRAND_GC 1
+#endif
+#define STRAND_SPARE 24
+static unsigned strands_free(void) {
+    unsigned i, n = 0;
+    for (i = 0; i < MAX_STRANDS; i++) n += !s_strands[i].used;
+    return n;
+}
+static void strand_gc(uint8_t* rdram) {
+    static unsigned s_ended;
+    unsigned i, j, n = 0;
+    for (i = 0; i < MAX_STRANDS; i++) {
+        Strand* st = &s_strands[i];
+        int live = 0;
+        if (!st->used || !st->has_base || !st->parked || st->die || st->resume_buf) continue;
+        for (j = 0; j < MAX_BUFS && !live; j++) {
+            const Buf* b = &s_bufs[j];
+            live = b->buf && b->owner == st && (uint32_t)MEM_W(0, b->buf) == b->sp && (uint32_t)MEM_W(4, b->buf) == b->ra;
+        }
+        if (live) continue;
+        for (j = 0; j < MAX_BUFS; j++)
+            if (s_bufs[j].owner == st) s_bufs[j].owner = NULL;
+        st->die = 1;
+        xhw_event_signal(st->ev);
+        n++;
+    }
+    if (n && s_ended++ < 8) xhw_logf("[STRAND] %u contexts nothing can resume ended (%u free before)", n, strands_free());
 }
 
 /* longjmp(buf, v) */
@@ -199,6 +242,13 @@ void xrc_longjmp_recomp(uint8_t* rdram, recomp_context* ctx) {
     Strand *to, *old = NULL;
     Buf* b;
     int i;
+    if (XRC_STRAND_GC && strands_free() < STRAND_SPARE) {
+        uint64_t t0 = xhw_time_us();
+        lock();
+        strand_gc(rdram);
+        unlock();
+        while (!strands_free() && xhw_time_us() - t0 < 100000u) xhw_sleep_ms(1);   /* the ended ones unwind */
+    }
     if (XHW_TEST_BUILD) {   /* test builds: how often contexts switch */
         static unsigned s_n;
         if (++s_n % 3000 == 0) xhw_logf("[STRAND] %u longjmps (%u new contexts), last to %08x", s_n, s_new, (unsigned)ra);

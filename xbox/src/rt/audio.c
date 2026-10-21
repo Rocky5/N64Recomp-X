@@ -48,8 +48,18 @@ static int s_up, s_on, s_id, s_silent;
 static unsigned s_tasks, s_buffers, s_tasks_iv, s_peak;
 static uint64_t s_frames_in, s_frames_dropped, s_task_us, s_stats_t0;
 
+/* the HLE's RDRAM: a span of 4 KB (DMEM's size: no transfer is longer), or
+ * up to RDRAM's end when that is nearer (Diddy Kong Racing saves its audio
+ * buffers at 0x3FF0C0, under the top of 4 MB: every SAVEBUFF there was a
+ * "bad address", dropped, before). -DXRC_ASP_SPAN_END=0: 4 KB always */
+#ifndef XRC_ASP_SPAN_END
+#define XRC_ASP_SPAN_END 1
+#endif
 static void* asp_addr(uint32_t a, void* user) {
+    uint32_t p = a & 0x1FFFFFFFu;
     (void)user;
+    if (XRC_ASP_SPAN_END && p < xrc_rdram_size && xrc_rdram_size - p < 0x1000u)
+        return xrc_host(a, xrc_rdram_size - p);
     return xrc_host(a, 0x1000);
 }
 

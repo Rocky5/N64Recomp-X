@@ -143,7 +143,7 @@ def in_data(img, rom_size):
     overlay table). The same test as for a call decides which are code."""
     out = set()
     for i, v, r, e, text, text_end in _triples(img.rom, rom_size):
-        if _taken(img, r, v):
+        if v >= 0xC0000000 or _taken(img, r, v):   # KSEG2/3: only for a function learnt there (learn.apply)
             continue
         out.add((r, v, e - r, f'a load described in ROM data at {4 * i:#x}', 3 if text else 2))
         if text:
@@ -166,8 +166,8 @@ def _triples(rom, rom_size):
     for i in range(len(ws) - 2):
         a, b, c = ws[i], ws[i + 1], ws[i + 2]
         for v, r, e in ((a, b, c), (c, a, b)):
-            if 0x80000400 <= v < 0x80800000 and not v & 3 and 0x1000 <= r < e <= rom_size and not r & 3 and \
-                    0x100 <= e - r <= 0x400000:
+            if (0x80000400 <= v < 0x80800000 or (HIGH_SEGS and 0xC0000000 <= v < 0xF0000000)) and not v & 3 and \
+                    0x1000 <= r < e <= rom_size and not r & 3 and 0x100 <= e - r <= 0x400000:
                 # (start, end, RAM, text start, text end, ...): a descriptor
                 # that says where its code is (HAL's overlay tables) names a
                 # segment even when no known code calls into it (a scene's
@@ -181,6 +181,12 @@ def _triples(rom, rom_size):
 
 
 OVERLAYS = os.environ.get('N64RX_OVERLAYS', '1') != '0'
+# loads described in ROM data to KSEG2/3 addresses (0xC0000000-0xEFFFFFFF): code the game maps
+# through its TLB where it loaded it (Paper Mario's 128 effects, each its own vram at 0xE0xxxxxx; the
+# runtime reaches their data through the game's TLB, XRC_HIGH_TLB). Most such triples are other words
+# (lwc1 and the like), so they are used only for a function the console ran there (learn.apply,
+# high_load). N64RX_HIGH_SEGS=0: KSEG0 only
+HIGH_SEGS = os.environ.get('N64RX_HIGH_SEGS', '1') != '0'
 
 
 def _taken(img, r, v):
@@ -271,3 +277,24 @@ def find(img, funcs_by_seg, rom_size):
             continue
         found.append((seg, inside, pc))
     return found
+
+
+def high_load(img, rom_size, x):
+    """the load a ROM table describes to a KSEG2/3 vram range holding x (a
+    function learnt there), as (rom, vram, size), when exactly one does: a
+    page-aligned vram (the TLB maps whole pages), at most 1 MB, and the
+    word at x in its bytes the start of a function (Paper Mario's effect
+    table names each effect's code and its graphics data at one vram)"""
+    import struct
+
+    def word(o):
+        return struct.unpack('>I', img.rom[o:o + 4])[0] if 0 <= o and o + 4 <= len(img.rom) else None
+
+    hits = set()
+    for _i, v, r, e, _t, _te in _triples(img.rom, rom_size):
+        if v < 0xC0000000 or v & 0xFFF or not v <= x < v + (e - r) or e - r > 0x100000:
+            continue
+        w, back = word(r + x - v), word(r + x - v - 8)
+        if (w is not None and w >> 16 == 0x27BD and w & 0x8000) or back == 0x03E00008 or x == v:
+            hits.add((r, v, e - r))
+    return hits.pop() if len(hits) == 1 else None

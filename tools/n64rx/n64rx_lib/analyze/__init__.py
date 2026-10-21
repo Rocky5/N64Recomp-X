@@ -9,10 +9,14 @@ one at a time at the same address from different ROM ranges). A function
 is keyed by its vram when no other segment covers that range, and by
 vram | ROM offset << 32 when its segment overlaps another (key() / vram()),
 so the same address in two overlays is two functions with two names."""
+import os
+import zlib
 from dataclasses import dataclass, field
 
 from . import funcs as F
 from . import segments as S
+
+BOOT_PLAIN = os.environ.get('N64RX_BOOT_PLAIN', '1') != '0'   # Analysis.overlays
 
 
 class AnalysisError(Exception):
@@ -29,10 +33,18 @@ class Analysis:
     notes: list = field(default_factory=list)
 
     def overlays(self):
-        """the names of the segments whose vram another segment shares"""
+        """the names of the segments whose vram another segment shares; the
+        boot segment is never one (its functions keep their plain keys and
+        names): Paper Mario DMAs code into part of its own (a learnt
+        segment at 0x8006C000), and keyed as an overlay the boot lost its
+        libultra names and the recompiler its ignore list.
+        N64RX_BOOT_PLAIN=0: the boot an overlay like any other"""
         segs = self.img.segments
-        return {s.name for s in segs for o in segs if o is not s and
-                s.vram < o.vram + o.size and o.vram < s.vram + s.size}
+        out = {s.name for s in segs for o in segs if o is not s and
+               s.vram < o.vram + o.size and o.vram < s.vram + s.size}
+        if BOOT_PLAIN:
+            out.discard('boot')
+        return out
 
     def key(self, seg, x, ovl=None):
         """the function at vram x of seg, as all_funcs() keys it"""
@@ -69,6 +81,11 @@ def analyze(rom, extra_segments=()):
     """rom: the whole ROM in z64 order. extra_segments: Segments learnt from
     earlier runs (the learning loop)."""
     entry = int.from_bytes(rom[8:12], 'big')
+    # the 7102 boot chip's IPL3 (the PAL twin of 6101) loads ROM 0x1000 at 0x80000480 whatever the header
+    # says: Lylat Wars' says 0x80000400, and read there its code's jal targets fell 0x80 past their
+    # functions (3 functions found; at 0x80000480, 5316 jals land on prologues). N64RX_IPL3_7102=0: the header's
+    if zlib.crc32(rom[0x40:0x1000]) == 0x009E9EA3 and os.environ.get('N64RX_IPL3_7102', '1') != '0':
+        entry = 0x80000480
     t = F.tlb_entry(rom, entry)   # first: its BSS clear and call to the TLB writer look like main otherwise
     if t:
         return _analyze_tlb(rom, entry, t, extra_segments)

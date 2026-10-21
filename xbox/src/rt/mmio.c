@@ -64,6 +64,20 @@ static uint32_t s_store[NPAGE][1024];   /* when a page could not be aliased (and
 static uint32_t* s_page[NPAGE];
 static uint32_t s_none;                 /* any other register: reads 0 */
 static uint32_t s_task;                 /* the RDRAM address the SP's DMA took to DMEM 0xFC0 */
+
+/* the runtime's osSpTaskLoad (ultra/sp.c): the task it was given, as if its
+ * DMA to DMEM 0xFC0 had run, for a game whose own osSpTaskStartGo the
+ * analyser did not name (Star Fox 64's): that one starts the SP through
+ * SP_STATUS here, and "no task block in DMEM" had dropped every task (no
+ * audio, no frame). 0 after the runtime's own osSpTaskStartGo ran it.
+ * Kill switch -DXRC_SP_LOAD_TASK=0 (nothing recorded, as before) */
+#ifndef XRC_SP_LOAD_TASK
+#define XRC_SP_LOAD_TASK 1
+#endif
+static int s_task_loaded;   /* s_task came from the runtime's osSpTaskLoad */
+void xrc_mmio_sp_task(uint32_t task) {
+    if (XRC_SP_LOAD_TASK) s_task = task & 0x1FFFFFFFu, s_task_loaded = task != 0;
+}
 static unsigned s_logged;
 
 #define SPS_HALT 0x1u
@@ -216,7 +230,7 @@ static uint32_t vi_line(void) {
 static void sp_dma(uint32_t len, int to_rdram) {
     uint32_t mem = R(0x04040000u) & 0x1FF8u, dram = R(0x04040004u) & 0x00FFFFF8u;
     uint32_t n = (len & 0xFF8u) + 8, count = ((len >> 12) & 0xFFu) + 1, skip = (len >> 20) & 0xFF8u, i, k;
-    if (!to_rdram && mem == 0x0FC0u) s_task = 0x80000000u | dram;   /* physical: as KSEG0 */
+    if (!to_rdram && mem == 0x0FC0u) s_task = 0x80000000u | dram, s_task_loaded = 0;   /* physical: as KSEG0 */
     for (i = 0; i < count; i++, dram += n + skip)
         for (k = 0; k < n; k += 4) {
             uint32_t* w = reg(0x04000000u + ((mem + k) & 0x1FFCu));
@@ -252,11 +266,18 @@ static void sp_status(uint32_t w) {
                 xhw_logf("[MMIO] SP start %u: type %u task block %08x", s_n, (unsigned)type, (unsigned)task);
         }
 #endif
-        if (type == M_GFXTASK) {
+        if (s_task_loaded) {
+            /* the runtime's osSpTaskLoad took it: run as its osSpTaskStartGo runs a task (done events held
+             * for this thread, DP done only after a FullSync); posted at once, Star Fox 64's scheduler
+             * lost its graphics task's done now and then and its graphics thread waited for good */
+            xu_sp_run(task);
+        } else if (type == M_GFXTASK) {
+            xu_count_task(1);
             xrc_gfx_task(task);
             xu_post_event_first(OS_EVENT_DP);
             xu_post_event_first(OS_EVENT_SP);
         } else {
+            xu_count_task(0);
             xrc_audio_task(task);
             xu_post_event_first(OS_EVENT_SP);
         }

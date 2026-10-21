@@ -31,12 +31,13 @@ __attribute__((weak)) const uint32_t xrc_guard_hash[1];
 __attribute__((weak)) const unsigned xrc_guard_count;
 __attribute__((weak)) volatile unsigned char xrc_guard_state[1];
 __attribute__((weak)) recomp_func_t* const xrc_guard_body[1];   /* where one vram has several versions */
+__attribute__((weak)) const unsigned char xrc_guard_retrace_each[1];   /* a learnt DMA overlay's: checked each retrace */
 
 #define PAGE 0x1000u   /* invalidations round to it */
 enum { UNVERIFIED = 0, VERIFIED = 1, OTHER = 2 };
 
 void xrc_interp(uint8_t* rdram, recomp_context* ctx, uint32_t entry);
-void xrc_learn_recapture(uint32_t vram);   /* learn.c */
+void xrc_learn_recapture_n(uint32_t vram, uint32_t bytes);   /* learn.c: every page the function covers */
 
 static int word(uint32_t v, uint32_t* w) {
     if ((int32_t)v >= 0) {   /* KUSEG: through the TLB */
@@ -102,10 +103,17 @@ void xrc_guard_retrace(void) {
     if (!XRC_GUARD_RETRACE || !xrc_guard_count) return;
     if (!s_multi_known) {   /* which entries share their vram, once (none: no versions) */
         s_multi_known = 1;
+        int any;
         for (i = 0; i + 1 < xrc_guard_count && xrc_guard_vram[i] != xrc_guard_vram[i + 1]; i++) {}
-        if (i + 1 < xrc_guard_count && (s_multi = (unsigned char*)calloc(xrc_guard_count, 1)) != NULL)
+        any = i + 1 < xrc_guard_count;
+        for (i = 0; i < xrc_guard_count && !any; i++) any = xrc_guard_retrace_each[i];
+        if (any && (s_multi = (unsigned char*)calloc(xrc_guard_count, 1)) != NULL) {
             for (i = 0; i + 1 < xrc_guard_count; i++)
                 if (xrc_guard_vram[i] == xrc_guard_vram[i + 1]) s_multi[i] = s_multi[i + 1] = 1;
+            /* a learnt DMA overlay's functions (n64rx's learn_* segments) too: the CPU may write
+             * another overlay over them with no DMA (Star Fox 64 decompresses its scenes) */
+            for (i = 0; i < xrc_guard_count; i++) s_multi[i] |= xrc_guard_retrace_each[i];
+        }
     }
     if (!s_multi) return;
     for (i = 0; i < xrc_guard_count; i++)
@@ -113,7 +121,9 @@ void xrc_guard_retrace(void) {
 }
 
 void xrc_guard_miss(uint8_t* rdram, recomp_context* ctx, uint32_t vram, unsigned i, recomp_func_t* body) {
+    static uint32_t s_logged_at[64];   /* each function once (the first 32 lines were one function's) */
     static unsigned s_logged;
+    unsigned k;
     recomp_func_t* other;
     if (i < xrc_guard_count && verify(i)) {
         body(rdram, ctx);
@@ -123,11 +133,12 @@ void xrc_guard_miss(uint8_t* rdram, recomp_context* ctx, uint32_t vram, unsigned
         other(rdram, ctx);
         return;
     }
-    if (s_logged < 32) {
-        s_logged++;
+    for (k = 0; k < s_logged && s_logged_at[k] != vram; k++) {}
+    if (k == s_logged && s_logged < 64) {
+        s_logged_at[s_logged++] = vram;
         xhw_logf("[GUARD] %08x: RDRAM holds other code than it was recompiled from; interpreted", (unsigned)vram);
     }
-    xrc_learn_recapture(vram);
+    xrc_learn_recapture_n(vram, i < xrc_guard_count ? xrc_guard_size[i] : 4u);
     xrc_interp(rdram, ctx, vram);
 }
 

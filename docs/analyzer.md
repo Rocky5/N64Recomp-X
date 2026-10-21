@@ -19,7 +19,7 @@ machine and stays in their build folder.
 
 | step | file | what it does |
 |---|---|---|
-| boot segment | `funcs.py` `parse_entry`, `__init__.py` | IPL3 copies 1 MB from ROM 0x1000 to the header's entrypoint (the 6103 and 6106 boot chips 1 or 2 MB below it: the entry code's own BSS and main addresses say which). The entry code is read for the BSS clear and the jump to main in the shapes the toolchains wrote: the SDK's (`lui/addiu t0` start, `lui/ori t1` size, a `sw zero` loop, `jr t2` or `j`); a start-to-end loop (`sw zero, -4(t0)` after the increment) and main called with `jal` (the entry spins after it; the entry function then ends after the call); empty clear loops skipped; the stack set and a `j`/`jal` at once with no clear (the boot segment is then IPL3's whole 1 MB). The BSS start is where the loaded segment ends. 245 of the library's 258 distinct games' entries parse; the rest are their own loaders (Acclaim's: TLB-mapped code at 0x00200000+, not supported yet). |
+| boot segment | `funcs.py` `parse_entry`, `__init__.py` | IPL3 copies 1 MB from ROM 0x1000 to the header's entrypoint (the 6103 and 6106 boot chips 1 or 2 MB below it: the entry code's own BSS and main addresses say which; the 7102's, Lylat Wars', to 0x80000480 whatever the header says, `N64RX_IPL3_7102`). The entry code is read for the BSS clear and the jump to main in the shapes the toolchains wrote: the SDK's (`lui/addiu t0` start, `lui/ori t1` size, a `sw zero` loop, `jr t2` or `j`); a start-to-end loop (`sw zero, -4(t0)` after the increment) and main called with `jal` (the entry spins after it; the entry function then ends after the call); empty clear loops skipped; the stack set and a `j`/`jal` at once with no clear (the boot segment is then IPL3's whole 1 MB). The BSS start is where the loaded segment ends. 245 of the library's 258 distinct games' entries parse; the rest are their own loaders (Acclaim's: TLB-mapped code at 0x00200000+, read by `funcs.tlb_entry`: a call to a TLB writer with the virtual and physical addresses, then a jump into the mapped code; with no even page, evenpaddr -1, the odd page half a pair above, Shadow Man's, `N64RX_TLB_ODD`). |
 | functions | `funcs.py` `discover` | recursive descent from the entry and main over every `jal`; each function walked through its branches to its last reachable instruction; `j` onto a known start is a tail call; jump tables read from `lui`/`lw`/`jr` (the `lui` may sit in a delay slot) bounded by the `sltiu` before them, or, when GCC hoisted the base out of a loop, from the last `lw`/`addu`/`lui`+`addiu` writes before the `jr` (every entry must land in the function); then the gaps between functions, and the code before a segment's first function, tried as functions (clean walks only), again from what those call, until nothing new. Dead epilogues after endless loops (`lw ra` / `addiu sp` first, no branch reaches them) fold into the function before; so does unoptimised IDO's closing `jr ra; nop` after the return statement's own (only in a segment whose `b .+8; nop` count says it is -O0 code, and never when a call, a data word or a `lui`/`addiu` pair names the address). |
 | segments | `segments.py` | every call whose arguments, by constant propagation (`lui`/`addiu`/`ori`, `addu`/`subu`, `and`/`or`, shifts, the stack slots, locals kept there by -O0 code read back), hold a ROM offset, a KSEG0 address and a size (or a ROM start and end: `dma_copy(start, end, dest)`, `dma_read(dest, start, end)`) is a candidate DMA of code; so is every (RAM, ROM start, ROM end) or (start, end, RAM) word triple anywhere in the ROM (a script's load command, an overlay table). A candidate becomes a segment when the known code calls into it, the call targets look like function starts (a frame opens, or the words before close one), and every walk from them is clean. A start and end next to each other win, then a size in its natural place (the argument after the two addresses). |
 | features | `features.py` | per function, a straight-line value tracker: calls, COP0 and FPU control registers, cache ops, TLB ops, hardware registers (VI, AI, PI, SI, SP, DP, MI by address), loads and stores at argument + offset, through pointers read from globals (and what was stored), 64-bit ops, `ddiv`/`dmult` kinds. Delay slots run before the call clobbers. |
@@ -397,6 +397,22 @@ KUSEG reads are still the biggest class (24), then the games that never
 present (55). NF2P, NF9E and NFBE shared their xemu slot with another
 test during this sweep; their rows are to be run again.
 
+**s11 and s12 (2026-10-19/20, overnight; `tools/xbox/sweep_diff.py`).**
+s11 (first boots only, the tree of 2026-10-19 ~23:40): 147 present at
+30 s. s12 (the overnight tree, `--learn 2`: 61 games that learnt
+something built again with their logs, 37 a second time): **163 of
+246**, none lost against s10. New since s10: Air Boarder 64, Beetle
+Adventure Racing, Buck Bumble, Donald Duck Goin' Quackers, Duck Dodgers,
+F-1 World Grand Prix 1 and 2, Killer Instinct Gold (one frame), Pokémon
+Stadium 2, Rayman 2, Rugrats in Paris, Spider-Man, Starshot, Tony Hawk's
+Pro Skater 1 to 3, Vigilante 8, Virtual Pool 64, World Driver
+Championship. What got them there: a zero divisor's VR4300 result
+(patches/recomp/0003), code no walk reached found from the calls aimed
+at it (`_probe`), a new thread's gp, page 0 read as zeros, the learning
+loop's rounds. Outside the sweep (its runs use the default switches):
+Lylat Wars needs Star Fox 64's thread switches; Shadow Man boots to a
+TLB miss; Diddy Kong Racing renders whole (Rare's DKR microcode).
+
 **2026-10-18.** Two rules from games that failed: a far `j` inside a big
 function is decided after the walk (`N64RX_J_LATER`; s9's six "undeclared
 label" compile failures, Mario Golf's 19 KB function), and a libultra
@@ -406,6 +422,22 @@ built without IDO's divide has its osSendMesg/osRecvMesg named
 
 ## Known gaps
 
+- **The debug libultra** (libultra_d: each call checks its arguments and
+  calls `__osError(code, n, ...)`; -O0 code, arguments spilled to the
+  stack). Mischief Makers ships it: the rules, written for the optimised
+  build (leaf functions, sizes), miss its osCreateMesgQueue,
+  osSetEventMesg and osContInit (its main thread waits for good on the SI
+  event its own osSetEventMesg set up), and its `__osError` (0x20 bytes
+  at 0x800A5AC0, a jump through a handler pointer) was named
+  `__osEnqueueAndYield` with the exception assembly after it counted as
+  its body. One of the 28 games of s12 that run, learn nothing and never
+  present; the others not looked at yet. Next: find `__osError` by its
+  shape and read past its calls (and the -O0 sizes) in the rules.
+- The 25 other games of that group name their libultra. One looked at:
+  Star Wars Episode I Racer (8 MB, from `_wants_8mb`) clears its three
+  640x480 framebuffers above 4 MB, sets its video mode, then its main
+  thread wakes on every retrace and never makes a graphics task, with
+  only two of its threads started (open).
 - Code loaded with computed addresses (overlay tables, compressed code) is
   only found when the game runs: the safety net runs it and the learning
   loop recompiles it next build (above). Two overlays at one address are

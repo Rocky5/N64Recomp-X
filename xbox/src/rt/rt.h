@@ -37,6 +37,7 @@ void xrc_tlb_init(void);   /* the crash handler's fixup for misses */
 void xrc_mmio_init(void);
 void xrc_trace_init(void);   /* trace.c: a trace build's functions in the crash report */
 void xrc_mmio_vi(void);
+void xrc_mmio_sp_task(uint32_t task);   /* osSpTaskLoad's task, for a raw SP start (0: none) */
 int xrc_mmio_is(uint32_t vaddr);
 uint32_t xrc_mmio_read(uint32_t vaddr);
 void xrc_mmio_write(uint32_t vaddr, uint32_t v);
@@ -84,5 +85,7 @@ void xrc_learn_inval(uint32_t ram, uint32_t size);
 
 /* hooks.c */
 void xrc_fatal_vram(const char* what, uint32_t vram, uint32_t extra) __attribute__((noreturn));
+
+uint32_t xu_program_gp(void);   /* ultra/thread.c: the gp the game's threads were created with (XRC_THREAD_GP) */
 
 #endif

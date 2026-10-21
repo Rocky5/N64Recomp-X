@@ -87,27 +87,69 @@ static int reserve(uint32_t va, uint32_t bytes) {
     return 1;
 }
 
-/* the page may be taken: unmapped, or (kernel space) an upper-half frame */
+static uint32_t s_zero_frame;   /* xhw_alias_zero_page's frame: a mapping of it may be replaced */
+
+/* the page may be taken: unmapped, our page of zeros, or (kernel space) an upper-half frame */
 static int page_free(uint32_t va) {
     uint32_t pde = *pde_of(va), pte;
     if (!(pde & PTE_P)) return 1;
     if (pde & PDE_PS) return va >= 0x80000000u && (pde & 0xFFC00000u) >= LOW_TOP;
     pte = *pte_of(va);
-    return !(pte & PTE_P) || (va >= 0x80000000u && (pte & 0xFFFFF000u) >= LOW_TOP);
+    return !(pte & PTE_P) || (s_zero_frame && (pte & 0xFFFFF000u) == s_zero_frame) ||
+           (va >= 0x80000000u && (pte & 0xFFFFF000u) >= LOW_TOP);
 }
 
-/* a page table for va's 4 MB region; splits a large page. 0 if none could
- * be had. The page comes from the kernel with interrupts on; only the PDE
- * write and the flush run with them off. */
-static int table_for(uint32_t va) {
+/* Kernel space past the physical map (0xA0000000 up: the KSEG1 alias and the
+ * RCP's register pages) is aliased only through page tables of our own. A
+ * table already there is the kernel's, and its page was found holding other
+ * things on the console: Majora's Mask's 8 MB window at physical 0x03631000
+ * held the table of 0xA3800000 (at 0x03A30000), so the game's own stores
+ * became its PTEs (values like 80762388) and an uncached store faulted on a
+ * page the kernel "held" (vmm14); Mario Tennis's table there read 0 a run of
+ * pages at a time, and healing them looped with the boot frozen (vmt2). Such
+ * a table is adopted: a copy made in a page of ours, the PDE pointed at it.
+ * -DXHW_ALIAS_OWN_TABLES=0: the table there is used, as before */
+#ifndef XHW_ALIAS_OWN_TABLES
+#define XHW_ALIAS_OWN_TABLES 1
+#endif
+static uint32_t s_own_pt[1024];   /* per 4 MB region: the physical page of our table there, 0 none */
+/* An adopted table starts empty: past the physical map nothing of the
+ * kernel's lives there (xemu has no table there at all); on red the only
+ * tables found were ours, left by an earlier XBE, whose page had been
+ * reused, so their entries are whatever that page holds now (copied, they
+ * were taken as pages in use, or as aliases onto random frames).
+ * -DXHW_ALIAS_ADOPT_COPY=1: copied */
+#ifndef XHW_ALIAS_ADOPT_COPY
+#define XHW_ALIAS_ADOPT_COPY 0
+#endif
+static unsigned s_adopt_had;   /* present entries an adopted table held (not copied) */
+static uint32_t s_old_pde[1024];  /* what the PDE held before ours (0: nothing) */
+static unsigned s_nadopt;
+static int owned(uint32_t va) {
+    uint32_t pt = s_own_pt[va >> 22], pde = *pde_of(va);
+    return pt && (pde & PTE_P) && !(pde & PDE_PS) && (pde & 0xFFFFF000u) == pt;
+}
+
+/* a page table for va's 4 MB region; splits a large page (and, with `adopt`,
+ * copies a table of the kernel's into one of ours). 0 if none could be had.
+ * The page comes from the kernel with interrupts on; only the PDE write and
+ * the flush run with them off. */
+static int table_for_ex(uint32_t va, int adopt) {
     volatile uint32_t* pde = pde_of(va);
     uint32_t old = *pde, *pt, i, f;
-    if ((old & PTE_P) && !(old & PDE_PS)) return 1;
+    adopt = adopt && XHW_ALIAS_OWN_TABLES && !owned(va);
+    if ((old & PTE_P) && !(old & PDE_PS) && !adopt) return 1;
     pt = (uint32_t*)MmAllocateContiguousMemoryEx(4096, 0, 0xFFFFFFFFu, 4096, PAGE_READWRITE);
     if (!pt) return 0;
-    if (old & PTE_P)   /* split: the same frames, the low flags (G stays bit 8) */
+    if ((old & PTE_P) && (old & PDE_PS))   /* split: the same frames, the low flags (G stays bit 8) */
         for (i = 0; i < 1024; i++) pt[i] = ((old & 0xFFC00000u) + (i << 12)) | (old & 0x17Fu & ~PDE_PS);
-    else
+    else if ((old & PTE_P) && XHW_ALIAS_ADOPT_COPY)   /* adopt: the entries there as they are */
+        for (i = 0; i < 1024; i++) pt[i] = *pte_of((va & 0xFFC00000u) + (i << 12));
+    else if (old & PTE_P) {   /* adopt empty: count what was there, for the log */
+        s_adopt_had = 0;
+        for (i = 0; i < 1024; i++) s_adopt_had += (*pte_of((va & 0xFFC00000u) + (i << 12)) & PTE_P) != 0;
+        memset(pt, 0, 4096);
+    } else
         memset(pt, 0, 4096);
     f = irq_off();
     if (*pde != old) {   /* changed meanwhile: keep the one there */
@@ -117,8 +159,36 @@ static int table_for(uint32_t va) {
     }
     *pde = ((uint32_t)MmGetPhysicalAddress(pt) & 0xFFFFF000u) | PTE_P | PTE_RW | PTE_A;
     for (i = 0; i < 1024; i++) invlpg((va & 0xFFC00000u) + (i << 12));
+    s_own_pt[va >> 22] = (uint32_t)MmGetPhysicalAddress(pt) & 0xFFFFF000u;
+    s_old_pde[va >> 22] = old;
     irq_restore(f);
+    if ((old & PTE_P) && !(old & PDE_PS) && s_nadopt++ < 8)
+        xhw_logf("[MEM] alias: a page table found at %08x (page %08x, %u entries present) replaced by one of ours "
+                 "(%08x)%s", (unsigned)(va & 0xFFC00000u), (unsigned)(old & 0xFFFFF000u), s_adopt_had,
+                 (unsigned)((uint32_t)MmGetPhysicalAddress(pt) & 0xFFFFF000u), XHW_ALIAS_ADOPT_COPY ? ", copied" : "");
     return 1;
+}
+static int table_for(uint32_t va) { return table_for_ex(va, 0); }
+
+/* Before the XBE is left (xhw_main.c): the page tables made where there was
+ * none are taken out of the page directory. Page directory entries outlive
+ * a quick reboot on the console, the tables' pages do not: the next XBE
+ * (another game here, the dashboard) got the page under a table left behind
+ * (Majora's Mask after Mario Tennis: its RDRAM window held Mario Tennis's
+ * table at 0x03A30000). A region that had an entry before ours (a split
+ * large page, an adopted table) gets that entry back as it was. */
+void xhw_alias_shutdown(void) {
+    uint32_t r, i, f = irq_off();
+    for (r = 0; r < 1024; r++) {
+        uint32_t va = r << 22;
+        if (!s_own_pt[r] || !owned(va)) continue;
+        /* a split large page gets its entry back; an adopted table (an earlier
+         * XBE's, its page long reused) is not handed on to the next one */
+        *pde_of(va) = (s_old_pde[r] & PTE_P) && ((s_old_pde[r] & PDE_PS) || XHW_ALIAS_ADOPT_COPY) ? s_old_pde[r] : 0;
+        for (i = 0; i < 1024; i++) invlpg(va + (i << 12));
+        s_own_pt[r] = 0;
+    }
+    irq_restore(f);
 }
 
 /* hold a user-space range for later aliasing, before anything else can be
@@ -138,10 +208,11 @@ int xhw_alias_map_ro(uint32_t va, uint32_t pa, uint32_t bytes) { return map_flag
 static int map_flags(uint32_t va, uint32_t pa, uint32_t bytes, uint32_t flags) {
     uint32_t off, f;
     if (!range_ok(va, bytes) || (pa & 0xFFFu) || !reserve(va, bytes)) return 0;
+    /* the tables first: an adopted one is what page_free then reads */
+    for (off = 0; off < bytes; off = (((va + off) & ~0x3FFFFFu) + 0x400000u) - va)
+        if (!table_for_ex(va + off, va + off >= 0xA0000000u && va + off < PTE_BASE)) return 0;   /* a table made stays */
     for (off = 0; off < bytes; off += 4096)
         if (!page_free(va + off)) return 0;
-    for (off = 0; off < bytes; off = (((va + off) & ~0x3FFFFFu) + 0x400000u) - va)
-        if (!table_for(va + off)) return 0;   /* a table made stays: empty, harmless */
     f = irq_off();
     for (off = 0; off < bytes; off += 4096) {
         uint32_t v = va + off;
@@ -241,6 +312,17 @@ void* xhw_alias_page(uint32_t va) {
         return NULL;
     }
     return p;
+}
+
+int xhw_alias_zero_page(uint32_t va) {
+    void* p;
+    if (!s_zero_frame) {
+        p = MmAllocateContiguousMemoryEx(4096, 0, 0xFFFFFFFFu, 4096, PAGE_READWRITE);
+        if (!p) return 0;
+        memset(p, 0, 4096);
+        s_zero_frame = (uint32_t)MmGetPhysicalAddress(p) & 0xFFFFF000u;
+    }
+    return xhw_alias_map_ro(va, s_zero_frame, 4096);
 }
 
 /* diagnosis: va's page directory entry and, under a page table, its PTE (0 there for a large page) */

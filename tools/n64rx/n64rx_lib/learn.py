@@ -21,6 +21,7 @@ import re
 from dataclasses import dataclass, field
 
 from .analyze import funcs as F
+from .analyze import segments as S
 
 RDRAM8 = re.compile(r'^(?:.*\[LEARN\]\s+)?rdram\s+8\s*$')
 KUSEG_MULTI = re.compile(r'^(?:.*\[LEARN\]\s+)?kuseg_versions\s+([0-9A-Fa-f]+)\s*$')
@@ -38,20 +39,31 @@ class Learnt:
     high: set = field(default_factory=set)      # 1 MB KSEG2/3 regions the TLB mapped (the host never can: XRC_HIGH_TLB)
     alts: dict = field(default_factory=dict)    # page vram -> other code seen there, most often first (_choose)
     seen: dict = field(default_factory=dict)    # page vram -> {bytes: [times, first, page record]}
+    groups: list = field(default_factory=list)  # (function vram, bytes from it to its last page's end), one moment
     kuseg_multi: set = field(default_factory=set)   # TLB-mapped pages that held other code at other times
     reloc: set = field(default_factory=set)         # link addresses of overlays the game relocated (zovl.py)
     reloc_at: set = field(default_factory=set)      # (ram, length) where it relocated them
+    func_dma: dict = field(default_factory=dict)    # vram -> {the DMA that put its code there when it ran}
+    func_nodma: set = field(default_factory=set)    # vram logged with no DMA over it (the CPU put the code there)
 
     def __bool__(self):
         return bool(self.funcs or self.dmas or self.code or self.kuseg or self.high or self.rdram_mb or self.reloc)
 
 
+# a learnt function goes to the overlay of the DMA logged with it (the one RDRAM held when it ran), not
+# the newest DMA over its address in the whole log: Paper Mario loads hundreds of maps at 0x80240000, and
+# a start learnt in one map split a function of another (a crash at frame 691). N64RX_FUNC_DMA=0: the newest
+FUNC_DMA = os.environ.get('N64RX_FUNC_DMA', '1') != '0'
 # kill switches: N64RX_LEARN_MAJORITY=0 keeps the first capture of a page (as before); N64RX_CODE_VERSIONS=0
-# keeps one version of captured code where the game loads several at one address (Mario Tennis's scenes)
+# keeps one version of captured code where the game loads several at one address (Mario Tennis's scenes);
+# N64RX_LEARN_GROUPS=0 builds versions page by page only (a group record's pages count as pages, as before)
+GROUPS = os.environ.get('N64RX_LEARN_GROUPS', '1') != '0'
+GROUP = 0x40000000   # in a record's size word: its pages were saved at one moment (learn.c save_rec)
 MAJORITY = os.environ.get('N64RX_LEARN_MAJORITY', '1') != '0'
 VERSIONS = os.environ.get('N64RX_CODE_VERSIONS', '1') != '0'
 ALT_MIN = 256    # words of 1024 a page's other version differs in to count as other code (not data beside it)
 ALT_MAX = 3      # versions kept beside the chosen one
+GROUP_MAX = 24   # versions from group records (pages saved at one moment, those pages alone) per span
 
 
 def _code_records(data, out):
@@ -60,10 +72,18 @@ def _code_records(data, out):
     while i + 8 <= len(data):
         v = int.from_bytes(data[i:i + 4], 'big')
         n = int.from_bytes(data[i + 4:i + 8], 'big')
+        group, n = bool(n & GROUP), n & ~GROUP
         if not n or i + 8 + n > len(data):
             break
         b = bytes(data[i + 8:i + 8 + n])
-        if MAJORITY and not (v & 0xFFF) and not (n & 0xFFF):   # pages: every version counted (_choose)
+        if group:   # a function's bytes at one moment (learn.c xrc_learn_recapture_n): one version of it
+            if GROUPS and (v, b) not in out.groups:
+                out.groups.append((v, b))
+            for p in range((v + 0xFFF) & ~0xFFF, v + n - 0xFFF, 0x1000):   # its whole pages count as pages too
+                if MAJORITY:
+                    e = out.seen.setdefault(p, {}).setdefault(b[p - v:p - v + 0x1000], [0, len(out.seen), True])
+                    e[0] += 1
+        elif MAJORITY and not (v & 0xFFF) and not (n & 0xFFF):   # pages: every version counted (_choose)
             for off in range(0, n, 0x1000):
                 e = out.seen.setdefault(v + off, {}).setdefault(b[off:off + 0x1000], [0, len(out.seen), n == 0x1000])
                 e[0] += 1
@@ -121,6 +141,7 @@ def read(paths):
             _code_records(side.read_bytes(), out)
         text = p.read_text(encoding='utf-8', errors='replace')
         _code_from_log(text, out)
+        prev_dma = None   # learn.c log_one: the DMA that put a function's code there, the line before it
         for line in text.splitlines():
             m = KUSEG_MULTI.match(line.strip())
             if m:
@@ -142,12 +163,20 @@ def read(paths):
             if kind == 'func' and x & 3 == 0 and not 0x80800000 <= x < 0xC0000000:   # KSEG0, or TLB-mapped
                 n, c = out.funcs.get(x, (0, 0))
                 out.funcs[x] = (max(n, y), c or (int(z, 16) if z else 0))
+                if prev_dma and prev_dma[1] <= x < prev_dma[1] + prev_dma[2]:
+                    out.func_dma.setdefault(x, set()).add(prev_dma)
+                else:
+                    out.func_nodma.add(x)
+            prev_dma = None
+            if kind == 'func':
+                pass
             elif kind == 'kuseg' and x < 0x80000000:
                 out.kuseg[x & ~0xFFFFF] = out.kuseg.get(x & ~0xFFFFF, 0) | (y & 1)
             elif kind == 'kuseg' and x >= 0xC0000000:
                 out.high.add(x & ~0xFFFFF)
             elif kind == 'dma' and z and 0 < int(z, 16) <= 0x800000:
                 d = (x, (y & 0x1FFFFFFF) | 0x80000000, int(z, 16))
+                prev_dma = d
                 if d not in out.dmas:
                     out.dmas.append(d)
     _choose(out)
@@ -208,11 +237,21 @@ def apply(a, learnt, rom_len):
     runs = _rom_backed(a, runs, rom_len, notes)
     _table_sources(a, runs, notes)   # before the walks: they read jump tables there
     runs, spans = _version_spans(runs, learnt.alts)
+    pairs = []   # (vram, the DMA whose overlay holds it, the log had none): the one it ran in, as logged
     for x in sorted(learnt.funcs):
-        d = next((d for d in reversed(learnt.dmas) if d[1] <= x < d[1] + d[2]), None)
-        # where overlays share the address, the one the newest DMA put there
-        seg = next((s for s in a.img.segments if s.has(x) and d and s.rom - s.vram == d[0] - d[1]), None) or \
-            next((s for s in a.img.segments if s.has(x) and not d), None)
+        if FUNC_DMA and learnt.func_dma.get(x):
+            pairs += [(x, d, False) for d in sorted(learnt.func_dma[x])]
+        elif FUNC_DMA and x in learnt.func_nodma:
+            pairs.append((x, None, True))
+        else:   # where overlays share the address, the one the newest DMA put there
+            pairs.append((x, next((d for d in reversed(learnt.dmas) if d[1] <= x < d[1] + d[2]), None), False))
+    for x, d, nodma in pairs:
+        if nodma:   # the CPU put its code there: a segment only where it is the one code at that address
+            holders = [s for s in a.img.segments if s.has(x)]
+            seg = holders[0] if len(holders) == 1 else None
+        else:
+            seg = next((s for s in a.img.segments if s.has(x) and d and s.rom - s.vram == d[0] - d[1]), None) or \
+                next((s for s in a.img.segments if s.has(x) and not d), None)
         if seg is None and d is None:   # code no ROM DMA put there: the bytes the console saved
             blk = next((v for v in runs if v <= x < v + len(runs[v])), None)
             if blk is not None:
@@ -227,6 +266,25 @@ def apply(a, learnt, rom_len):
                     a.funcs[seg.name] = {}
                     notes.append(f'{name}: {len(data):#x} bytes at {blk:08X} from RDRAM (learnt: no ROM DMA put '
                                  f'them there; the recompiler reads them past the ROM\'s end, at {off:#x})')
+        if seg is None and x >= 0xC0000000 and S.HIGH_SEGS:   # mapped through the TLB: its ROM table entry
+            h = S.high_load(a.img, rom_len, x)
+            if h is not None:
+                seg = next((s for s in a.img.segments if s.rom == h[0] and s.vram == h[1]), None)
+                if seg is None:
+                    seg = F.Segment(f'seg_{h[1]:08X}', h[0], h[1], h[2])
+                    a.img.segments.append(seg)
+                    a.funcs[seg.name] = {}
+                    notes.append(f'{seg.name}: ROM {h[0]:#x} at {h[1]:08X}, {h[2]:#x} bytes (a load described in ROM '
+                                 f'data; learnt: the console ran {x:08X} there, through its TLB)')
+        if seg is None and d is not None and d[0] + d[2] <= rom_len:
+            # the same load the analyser found, longer (Mortal Kombat 4's 0x80132000: found 0x884A0 bytes,
+            # the console saw 0xD98A0 and ran code past the first's end): that segment grown, not a twin
+            # with the same ROM offset and vram (their functions' names collided at the link)
+            twin = next((s for s in a.img.segments if s.rom == d[0] and s.vram == d[1] and s.size < d[2]), None)
+            if twin is not None:
+                notes.append(f'{twin.name}: grown from {twin.size:#x} to {d[2]:#x} bytes (learnt: the DMA the console saw)')
+                twin.size = d[2]
+                seg = twin
         if seg is None:
             if d is None or d[0] + d[2] > rom_len:
                 notes.append(f'learnt {x:08X}: no segment and no DMA covers it (skipped)')
@@ -247,8 +305,13 @@ def apply(a, learnt, rom_len):
         captured = name.startswith('code_')   # one overlay's bytes: calls into it are weak (funcs.discover)
         roots = [x for x, f in have.items() if f.how != 'gap' and (f.how == 'entry' or not captured)] + new
         # a start learnt where the game loads other code at other times (Mario Tennis's scenes) may be
-        # another version's: a root only where these bytes look like one starts, else weak
-        weak = [x for x in new if not _plausible(a.img.rom, seg.rom + x - seg.vram)] if captured and STARTS else []
+        # another version's: a root only where these bytes look like one starts, else weak. The same for
+        # a DMA overlay's (learn_*): Castlevania: Legacy of Darkness loads its area overlays at one
+        # address, and another one's start at 0x802E5500 cut func_802E54B4 at its jalr's delay slot,
+        # whose recompiled half returned without popping its frame (sp 0x18 low, a crash a few calls up).
+        # N64RX_LEARN_STARTS_ALL=0: captured code only, as before
+        check = captured or os.environ.get('N64RX_LEARN_STARTS_ALL', '1') != '0'
+        weak = [x for x in new if not _plausible(a.img.rom, seg.rom + x - seg.vram)] if check and STARTS else []
         a.funcs[name] = F.discover(a.img, seg, roots, weak=weak, weak_calls=captured)
         notes.append(f'{name}: {len(new)} learnt functions ({", ".join(f"{x:08X}" for x in new[:8])}'
                      f'{"..." if len(new) > 8 else ""}), {len(a.funcs[name])} functions now')
@@ -300,11 +363,35 @@ def _versions(a, learnt, runs, spans, notes):
             continue
         base = runs[lo]
         cands = sorted(set(a.funcs.get(seg0.name, {})) | {x for x in learnt.funcs if lo <= x < hi})
+        # pages saved at one moment (a function's span the guard found changed, learn.c): a version of
+        # those pages alone, where the page-by-page versions below can pair one scene's page with
+        # another's; only its pages (a whole span a group would copy Mario Tennis's 0x62000 bytes of
+        # scene code each time: 7 MB more image for eight groups)
+        done = []
+        for g_lo, g_data in learnt.groups:
+            if not lo <= g_lo < hi or len(done) >= GROUP_MAX:
+                continue
+            data = g_data[:hi - g_lo]
+            if data == base[g_lo - lo:g_lo - lo + len(data)] or (g_lo, data) in done:
+                continue
+            done.append((g_lo, data))
+            off = (len(a.img.rom) + 0xF) & ~0xF
+            a.img.rom = bytes(a.img.rom) + bytes(off - len(a.img.rom)) + data
+            seg = F.Segment(f'code_{g_lo:08X}_g{sum(1 for d in done if d[0] == g_lo)}', off, g_lo, len(data))
+            a.img.segments.append(seg)
+            # the function the guard found changed, and what it calls there (no other start is guessed)
+            a.funcs[seg.name] = F.discover(a.img, seg, [g_lo], weak_calls=True)
+            notes.append(f'{seg.name}: another version of the function at {g_lo:08X} saved at one moment '
+                         f'({len(data):#x} bytes), {len(a.funcs[seg.name])} functions, at {off:#x}')
+        datas = []
         for j in range(1, ALT_MAX + 1):
             data = b''.join(learnt.alts[p][j - 1] if len(learnt.alts.get(p, ())) >= j else base[p - lo:p - lo + 0x1000]
                             for p in range(lo, hi, 0x1000))
             if data == base:
                 break
+            if data not in datas:
+                datas.append(data)
+        for j, data in enumerate(datas, 1):
             off = (len(a.img.rom) + 0xF) & ~0xF
             a.img.rom = bytes(a.img.rom) + bytes(off - len(a.img.rom)) + data
             seg = F.Segment(f'code_{lo:08X}_v{j}', off, lo, len(data))

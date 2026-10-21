@@ -88,6 +88,9 @@ typedef struct {
     void* jb[5];                /* thread_body's restart point (__builtin_setjmp) */
     recomp_context* ctx;        /* thread_body's: its sp for interp.c's exception code */
     volatile unsigned sleeps;   /* times it went to sleep (xu_send's yield) */
+    uint32_t gp;                /* its creator's gp (XRC_THREAD_GP) */
+    void* starter;              /* the Thr that started it (XRC_START_DEFER) */
+    unsigned starter_sleeps;    /* its sleeps then */
 } Thr;
 static Thr s_thr[MAX_THREADS];
 static volatile int s_started;   /* game threads the runtime runs (osStartThread, a dispatch: xu_start_dispatched) */
@@ -267,11 +270,54 @@ static void stop_wait(Thr* me) {
     wr16(me->t + TH_STATE, OS_STATE_RUNNING);
 }
 
+/* A thread started by a higher N64 priority that shares its kernel level
+ * waits to begin until that thread has slept once (or 200 ms): libultra
+ * runs the higher alone, and boot code goes on after its osStartThread
+ * calls expecting the threads it started to wait. Star Fox 64's main thread
+ * (100) starts its graphics thread (40), then makes the message queues; the
+ * graphics thread, run beside it, sent its first DMA's message into a
+ * queue that was then made again, and waited on it for good.
+ * -DXRC_START_DEFER=1 to use it; 0 (the default for now): the new thread
+ * runs at once, as before. A lower kernel level is not enough either: a
+ * host block in the starter (a log line, the lock) lets any lower level run,
+ * and with XRC_RANK_LEVELS (every priority its own level) Star Fox 64's
+ * graphics, timer and serial threads all slept on queues main then made
+ * again. -DXRC_START_DEFER=2: the wait whatever the levels */
+#ifndef XRC_START_DEFER
+#define XRC_START_DEFER 0   /* off until tested on more games (Star Fox 64: xemu) */
+#endif
+static void start_defer(Thr* d) {
+    Thr* s = (Thr*)d->starter;
+    uint64_t t0;
+    if (!XRC_START_DEFER || !s || !s->t || !d->t) return;
+    if (pri_of(s) <= pri_of(d)) return;
+    if (XRC_START_DEFER < 2 && xu_level_of(pri_of(s)) != xu_level_of(pri_of(d))) return;
+    t0 = xhw_time_us();
+    /* or it lowers its priority below this one's (an idle thread that drops to 0 and spins) */
+    while (s->sleeps == d->starter_sleeps && !s->wait && !s->stopped && !s->dead && pri_of(s) > pri_of(d) &&
+           xhw_time_us() - t0 < 200000u)
+        xhw_yield();
+}
+
+/* A new thread starts with its creator's gp: code built with gp-relative
+ * data (Starshot's `sw v0, 0xFC0(gp)`, its entry code setting gp to
+ * 0x800B8500 before main) wrote through gp 0, page 0 of KUSEG, in its first
+ * thread. gp is one value for the whole program in N64 games; libultra
+ * leaves it alone in a new thread's context, so the threads run with the
+ * gp the entry code set. Strands (strand.c) take the last one a thread was
+ * created with (xu_program_gp). -DXRC_THREAD_GP=0: gp 0, as before */
+#ifndef XRC_THREAD_GP
+#define XRC_THREAD_GP 1
+#endif
+static uint32_t s_program_gp;
+uint32_t xu_program_gp(void) { return XRC_THREAD_GP ? s_program_gp : 0u; }
+
 static void thread_body(void* p) {
     Thr* d = (Thr*)p;
     recomp_context ctx;
     if (s_tls == 0xFFFFFFFFu) s_tls = xhw_tls_alloc();
     xhw_tls_set(s_tls, d);
+    start_defer(d);
     if (XRC_THREAD_RESUME && __builtin_setjmp(d->jb)) {   /* created again (stop_wait) */
         d = (Thr*)xhw_tls_get(s_tls);
         xhw_logf("[OS] thread %d started again: entry %08x", (int)(int32_t)rd32(d->t + TH_ID), (unsigned)d->entry);
@@ -279,6 +325,7 @@ static void thread_body(void* p) {
     d->fresh = 0;
     running_is(d->t);
     xrc_ctx_init(&ctx, d->sp);
+    if (XRC_THREAD_GP) ctx.r28 = (gpr)(int32_t)d->gp;
     d->ctx = &ctx;
     ctx.r4 = (gpr)(int32_t)d->arg;
     set_cop1_cs(0);
@@ -315,6 +362,8 @@ ULTRA(osCreateThread) {
     if (d->kt && XRC_THREAD_RESUME) d->fresh = 1;   /* the old one is stopped: starts over */
     d->entry = ARG(2);
     d->arg = ARG(3);
+    d->gp = (uint32_t)ctx->r28;
+    if (d->gp) s_program_gp = d->gp;
     /* libultra starts the thread 16 bytes below the sp it is given
      * (osCreateThread: context.sp = sp - 16): the four argument words a
      * MIPS callee may store above its own frame. Without them a thread's
@@ -344,6 +393,8 @@ ULTRA(osStartThread) {
         pri = (int)(int32_t)rd32(t + TH_PRIORITY);
         wr16(t + TH_STATE, OS_STATE_RUNNABLE);
         rank_update(pri);
+        d->starter = me;
+        d->starter_sleeps = me->sleeps;
         d->kt = xhw_thread_spawn(thread_body, d, xu_level_of(pri), HOST_STACK);
         if (!d->kt) xrc_fatal_vram("osStartThread: no kernel thread", t, 0);
         s_started++;
@@ -563,7 +614,22 @@ void xu_pause_unlocked(uint32_t ms) {
 /* ---- message queues ---- */
 ULTRA(osCreateMesgQueue) {
     uint32_t mq = ARG(0);
+    static unsigned s_again;
+    int i;
     (void)rdram;
+    /* a queue made again over messages or a sleeper: a thread used it before
+     * its maker got there (the boot race of threads run beside their starter) */
+    if ((int32_t)rd32(mq + MQ_VALIDCOUNT) > 0 && (int32_t)rd32(mq + MQ_VALIDCOUNT) <= (int32_t)rd32(mq + MQ_MSGCOUNT) &&
+        rd32(mq + MQ_MSG) == ARG(1) && s_again < 8) {
+        s_again++;
+        xhw_logf("[OS] queue %08x made again over %d message(s): a thread sent before its maker made it",
+                 (unsigned)mq, (int)(int32_t)rd32(mq + MQ_VALIDCOUNT));
+    }
+    for (i = 0; i < s_nthr && s_again < 8; i++)
+        if (s_thr[i].t && !s_thr[i].dead && (s_thr[i].wait & ~1u) == mq) {
+            s_again++;
+            xhw_logf("[OS] queue %08x made again with N64 thread %08x asleep on it", (unsigned)mq, (unsigned)s_thr[i].t);
+        }
     wr32(mq + MQ_MTQUEUE, 0);
     wr32(mq + MQ_FULLQUEUE, 0);
     wr32(mq + MQ_VALIDCOUNT, 0);
@@ -718,9 +784,16 @@ ULTRA(osSetEventMesg) {
     uint32_t e = ARG(0);
     (void)rdram;
     if (e < OS_NUM_EVENTS) {
-        s_events[e].mq = ARG(1);
-        if (e == OS_EVENT_VI && XRC_VI_ON_EVENT) xu_vi_start();   /* a game's own VI manager: the retraces it waits for */
+        /* the message before the queue, under the lock, and the retraces after
+         * both: the VI thread posting between them sent the queue a NULL
+         * message (Mario Tennis's own VI manager read one and crashed at its
+         * first retrace in release builds, vmt2) */
+        xu_lock();
         s_events[e].msg = ARG(2);
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        s_events[e].mq = ARG(1);
+        xu_unlock();
+        if (e == OS_EVENT_VI && XRC_VI_ON_EVENT) xu_vi_start();   /* a game's own VI manager: the retraces it waits for */
         if (XHW_TEST_BUILD) xhw_logf("[OS] osSetEventMesg %d: queue %08x message %08x", e, (unsigned)ARG(1),
                                      (unsigned)ARG(2));
     }
