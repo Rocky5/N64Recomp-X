@@ -10,7 +10,8 @@ formats) for the functions the analysis does not have. Nothing leaves the
 build folder; the files are facts and the RDRAM pages the CPU wrote, as the
 console's learn files are.
 
-N64RX_DRYBOOT=1 to use it (0, the default, until a console set has run
+N64RX_DRYBOOT_SCRIPT=<autopad.txt>: the input from a script (docs/testing.md's
+format) instead of the START/A schedule. N64RX_DRYBOOT=1 to use it (0, the default, until a console set has run
 builds made with it); N64RX_DRYBOOT_FRAMES: how long (1800 frames, 30 s of
 game time: a few seconds here)."""
 import hashlib
@@ -79,6 +80,9 @@ def run(rom, a, pack, bdir, prog, log):
            '--rdram', str(pack.rdram_mb if pack and pack.rdram_mb in (4, 8) else 4),
            '--known', str(known), '--frames', frames,
            '--eep', '16' if pack and getattr(pack, 'save_type', '') == 'eep16k' else '4']
+    script = os.environ.get('N64RX_DRYBOOT_SCRIPT')   # an autopad script for its input, instead of the schedule
+    if script:
+        cmd += ['--script', script]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     except subprocess.TimeoutExpired:

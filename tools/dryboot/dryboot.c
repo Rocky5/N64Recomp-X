@@ -197,12 +197,70 @@ static void pi_dma(void) {   /* PI_WR_LEN: the cartridge to RDRAM */
  * for 4 (title screens and menus give way to the game, whose code then loads: Mario Tennis's
  * matches); none before it (the boot), none with --press 0 */
 static uint32_t s_press_from = 90;
+static int s_press_mode;   /* --press-mode 1: START once, then A only */
 static unsigned s_pad_reads, s_pad_pressed, s_pif_runs, s_pif_cmds[256];
+/* --script: an autopad script (docs/testing.md "Scripted input": `t<ms> BUTTONS [for <ms>]` or
+ * `<frame> BUTTONS [for <frames>]`, ms at 60 frames a second from the boot), the Xbox buttons in the
+ * port's default layout: A, B, START, X as B, LT as Z, RT as R, the d-pad as the stick at full
+ * tilt; BACK, WHITE, BLACK and SHOT are the port's own and do nothing here */
+#define MAX_EVENTS 1024
+static struct { uint32_t from, to; uint16_t buttons; int8_t x, y; } s_ev[MAX_EVENTS];
+static unsigned s_nev;
+static int8_t s_stick_x, s_stick_y;
+static void script_load(const char* path) {
+    FILE* f = fopen(path, "r");
+    char line[256];
+    if (!f) { fprintf(stderr, "dryboot: cannot read the script %s\n", path); return; }
+    while (fgets(line, sizeof line, f) && s_nev < MAX_EVENTS) {
+        char* t = strtok(line, " \t\r\n");
+        int ms;
+        uint32_t at, len = 6;
+        uint16_t b = 0;
+        int8_t x = 0, y = 0;
+        if (!t || t[0] == '#') continue;
+        ms = t[0] == 't';
+        at = (uint32_t)strtoul(t + ms, NULL, 10);
+        while ((t = strtok(NULL, " \t\r\n")) != NULL) {
+            if (!strcmp(t, "for")) {
+                if ((t = strtok(NULL, " \t\r\n")) != NULL) len = (uint32_t)strtoul(t, NULL, 10);
+                break;
+            }
+            if (!strcmp(t, "A")) b |= 0x8000;
+            else if (!strcmp(t, "B") || !strcmp(t, "X")) b |= 0x4000;
+            else if (!strcmp(t, "START")) b |= 0x1000;
+            else if (!strcmp(t, "L")) b |= 0x2000;   /* the left trigger: Z */
+            else if (!strcmp(t, "R")) b |= 0x0010;
+            else if (!strcmp(t, "LEFT") || !strcmp(t, "SL")) x = -80;
+            else if (!strcmp(t, "RIGHT") || !strcmp(t, "SR")) x = 80;
+            else if (!strcmp(t, "UP") || !strcmp(t, "SU")) y = 80;
+            else if (!strcmp(t, "DOWN") || !strcmp(t, "SD")) y = -80;
+        }
+        if (ms) at = at * 60u / 1000u, len = len * 60u / 1000u;
+        if (!len) len = 1;
+        s_ev[s_nev].from = at, s_ev[s_nev].to = at + len, s_ev[s_nev].buttons = b, s_ev[s_nev].x = x, s_ev[s_nev].y = y;
+        s_nev++;
+    }
+    fclose(f);
+}
+
 static uint16_t pad_buttons(void) {
     uint32_t f;
+    if (s_nev) {
+        uint16_t b = 0;
+        unsigned i;
+        s_stick_x = s_stick_y = 0;
+        for (i = 0; i < s_nev; i++)
+            if (s_frames >= s_ev[i].from && s_frames < s_ev[i].to) {
+                b |= s_ev[i].buttons;
+                if (s_ev[i].x) s_stick_x = s_ev[i].x;
+                if (s_ev[i].y) s_stick_y = s_ev[i].y;
+            }
+        return b;
+    }
     if (!s_press_from || s_frames < s_press_from) return 0;
     f = s_frames - s_press_from;
     if (f % 45 >= 4) return 0;
+    if (s_press_mode == 1) return f / 45 == 0 ? 0x1000 : 0x8000;   /* START once, then A */
     return (f / 45) % 4 == 0 ? 0x1000 : 0x8000;   /* START, A */
 }
 
@@ -228,7 +286,7 @@ static void pif_run(void) {
             else if (ch == 0 && cmd == 0x01 && rx >= 4) {   /* the buttons: the press schedule's (--press) */
                 uint16_t b = pad_buttons();
                 s_pad_reads++, s_pad_pressed += b != 0;
-                res[0] = (uint8_t)(b >> 8), res[1] = (uint8_t)b, res[2] = 0, res[3] = 0;
+                res[0] = (uint8_t)(b >> 8), res[1] = (uint8_t)b, res[2] = (uint8_t)s_stick_x, res[3] = (uint8_t)s_stick_y;
             }
             else if (ch == 4 && (cmd == 0x00 || cmd == 0xFF) && rx >= 3)
                 res[0] = 0x00, res[1] = s_eep16 ? 0xC0 : 0x80, res[2] = 0x00;   /* the EEPROM's type */
@@ -1277,7 +1335,8 @@ static uint32_t* load_known(const char* path, size_t* n) {
 
 static int usage(void) {
     fprintf(stderr, "usage: dryboot <rom.z64> <out dir> --entry X --boot-size N [--cic N] [--tv 0|1|2] [--rdram 4|8]\n"
-                    "               [--known file] [--frames N] [--press frame|0] [--eep 4|16] [--dump addr bytes file] [-v]\n");
+                    "               [--known file] [--frames N] [--press frame|0] [--script autopad.txt] [--eep 4|16]\n"
+                    "               [--dump addr bytes file] [-v]\n");
     return 1;
 }
 
@@ -1303,6 +1362,8 @@ int main(int argc, char** argv) {
         else if (!strcmp(a, "--known")) known_path = v;
         else if (!strcmp(a, "--frames")) frames = (uint32_t)strtoul(v, NULL, 10);
         else if (!strcmp(a, "--press")) s_press_from = (uint32_t)strtoul(v, NULL, 10);
+        else if (!strcmp(a, "--press-mode")) s_press_mode = (int)strtoul(v, NULL, 10);
+        else if (!strcmp(a, "--script")) script_load(v);
         else if (!strcmp(a, "--eep")) s_eep16 = strtoul(v, NULL, 10) == 16;
         else if (!strcmp(a, "--dump") && i + 3 < (uint32_t)argc) {   /* --dump <addr> <bytes> <file>: RDRAM after the run */
             dump_at = (uint32_t)strtoul(v, NULL, 16) & 0x1FFFFFFFu;
