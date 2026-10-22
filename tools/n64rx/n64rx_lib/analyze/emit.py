@@ -189,7 +189,12 @@ def write_syms(a: Analysis, nm, path):
         lines += ['[[section]]', f'name = ".{seg.name}"', f'rom = 0x{seg.rom:08X}', f'vram = 0x{seg.vram:08X}',
                   f'size = 0x{seg.size:X}', '', 'functions = [']
         for x in sorted(fs):
-            lines.append(f'    {{ name = "{nm[a.key(seg, x, ovl)]}", vram = 0x{x:08X}, size = 0x{_size(a, seg, fs[x], fs):X} }},')
+            # no further than the image: a captured page's last function that goes on into the next page (Indiana
+            # Jones's TLB-mapped code from the dry boot, the last block appended) made N64Recomp refuse the whole
+            # symbol file ("out of bounds of the provided rom"); the rest as before
+            size = min(_size(a, seg, fs[x], fs), len(a.img.rom) - (seg.rom + x - seg.vram))
+            if size > 0:
+                lines.append(f'    {{ name = "{nm[a.key(seg, x, ovl)]}", vram = 0x{x:08X}, size = 0x{size:X} }},')
         lines += [']', '']
         if getattr(seg, 'relocs', None):   # a relocatable overlay (zovl.py): N64Recomp reads RELOC_HI16/LO16 for these
             lines += ['relocs = [']
