@@ -351,6 +351,7 @@ static void test_flash(void) {
     flash_cmd(0xA5000000u | 0x100);
     flash_cmd(0xF0000000u);
     CHECK(xu_pi_save_dma(0xA8000000u + 0x100 * 128, 0x80220000u, 128, 0) == 1, "domain 2 is the save");
+    CHECK(!xu_cart_is_save(0x05000540u) && !xu_cart_is_save(0x06000000u), "the 64DD's windows are not the save");
     CHECK(rd8(0x80220000u) == 0xFF && rd8(0x80220005u) == (uint8_t)~5, "PI DMA read of page 0x100");
     /* chip erase */
     flash_cmd(0x3C000000u);

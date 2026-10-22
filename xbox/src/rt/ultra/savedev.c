@@ -348,9 +348,17 @@ static uint8_t* s_img;
 static uint8_t s_status, s_page[128];
 static uint32_t s_erase_off, s_erase_len;
 
+/* SRAM and FlashRAM answer at 0x08000000 (XU_CART_BASE) and up; 0x05000000-
+ * 0x07FFFFFF is the 64DD's (its registers, its IPL ROM), which a game reads
+ * to find one: the save image (at a wrapped offset) answered there, now the
+ * PI's open bus does, as on a console without a 64DD (review 5b.20).
+ * -DXRC_SAVE_64DD=1: from 0x05000000, as before */
+#ifndef XRC_SAVE_64DD
+#define XRC_SAVE_64DD 0
+#endif
 int xu_cart_is_save(uint32_t phys) {
     phys &= 0x1FFFFFFFu;
-    return phys >= 0x05000000u && phys < 0x10000000u;
+    return phys >= (XRC_SAVE_64DD ? 0x05000000u : XU_CART_BASE) && phys < 0x10000000u;
 }
 
 int xu_cart_kind(void) { return s_cart; }

@@ -92,7 +92,7 @@ enum { XU_CART_UNKNOWN, XU_CART_SRAM, XU_CART_FLASH };
 #define XU_FLASH_TYPE 0x11118001u
 #define XU_FLASH_MAKER 0x00C2001Du   /* Macronix (libultra's NEW_FLASH: page addresses in bytes) */
 
-int xu_cart_is_save(uint32_t phys);   /* a domain-2 address (0x05000000..0x0FFFFFFF) */
+int xu_cart_is_save(uint32_t phys);   /* a save address (0x08000000..0x0FFFFFFF; savedev.c) */
 int xu_cart_kind(void);
 /* bytes and words at a physical domain-2 address, in the cartridge's order */
 void xu_cart_read(uint32_t phys, uint8_t* dst, uint32_t n);
