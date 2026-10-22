@@ -17,6 +17,8 @@ from .features import features
 
 # kill switch: N64RX_XJAL_INTERP=0 leaves a function with a jal into another's body recompiled
 XJAL = os.environ.get('N64RX_XJAL_INTERP', '1') != '0'
+# kill switch: N64RX_XBAL=0 leaves a bal/bgezal/bltzal into a function's body to N64Recomp's static
+XBAL = os.environ.get('N64RX_XBAL', '1') != '0'
 # patches/recomp/0002: a jal to an address where this segment has no function (another overlay's, a
 # function's body, or code no segment holds) is called through the runtime's lookup instead of
 # interpreting its caller. N64RX_LOOKUP_JAL=0: the caller interpreted, as before
@@ -274,19 +276,25 @@ def cross_funcs(a: Analysis, live, nm, replaced, lookups=None):
                     t = ins.branch_target
                 elif ins.is_j:
                     t = ins.target
-                elif ins.op == 3 and XJAL:
+                elif (ins.op == 3 or (ins.is_link_branch and XBAL)) and XJAL:
                     # a jal into another function's body: N64Recomp makes the target a
                     # static function running to the next symbol, whose branches past it
                     # are labels it lacks (Mario Tennis's captured overlays, pages of two
-                    # scenes at one vram). N64RX_XJAL_INTERP=0: as before
-                    t = ins.target
+                    # scenes at one vram). N64RX_XJAL_INTERP=0: as before. A bal/bgezal/
+                    # bltzal is a call too, and N64Recomp makes a static at its target the
+                    # same way (Resident Evil 2's and both Ken Griffey games' hand-written
+                    # routine: a bal at 0x800B66B8 into the body of 0x800B682C). That code
+                    # also reads ra as a value after a bltzal $zero (addiu t3, ra, 0x184),
+                    # which compiled code never sets: the caller is interpreted, not called
+                    # through the lookup. N64RX_XBAL=0: not checked
+                    t = ins.branch_target if ins.is_link_branch else ins.target
                     k = bisect.bisect_right(starts, t) - 1
                     inside = k >= 0 and spans[k][0] < t < spans[k][1]
                     # or, in code captured from RDRAM, to no function at all: one version's
                     # call where that version has no start (learn._plausible kept another's out)
                     loose = seg.name.startswith('code_') and not (k >= 0 and spans[k][0] == t)
                     if seg.has(t) and (inside or loose):
-                        if LOOKUP_JAL and lookups is not None:
+                        if LOOKUP_JAL and lookups is not None and not ins.is_link_branch:
                             lookups.add(t)   # patches/recomp/0002: whatever the game has there when it runs
                             continue
                         out[kx] = nm[kx]

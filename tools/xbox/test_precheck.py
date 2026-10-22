@@ -103,6 +103,26 @@ with tempfile.TemporaryDirectory() as d:
     t = (g / 'funcs_0.c').read_text(encoding='utf-8')
     check('    XRC_SETJMP(rdram, ctx);\n' in t and 'n64_setjmp_x(rdram, ctx);' in t, 'the call made XRC_SETJMP')
 
+# a bal into another function's body (Resident Evil 2's captured code): N64Recomp would make a static there
+# whose branches past its end are labels it lacks, and the routine reads ra as a value: the caller is interpreted
+RA_ = 31
+fa = [i_(1, 0, 17, 5), NOP, jr(RA_), NOP]   # 0x80001000: bal 0x80001018 (into fb's body)
+fb = [NOP, NOP, NOP, jr(RA_), NOP, NOP]     # 0x80001010
+rom = struct.pack(f'>{len(fa) + len(fb)}I', *(fa + fb))
+seg = F(name='code_80001000', rom=0, vram=0x80001000, has=lambda t: 0x80001000 <= t < 0x80001000 + len(rom))
+funcs = {0x80001000: F(start=0x80001000, end=0x80001010), 0x80001010: F(start=0x80001010, end=0x80001028)}
+an = F(img=F(segments=[seg], rom=rom), funcs={seg.name: funcs}, entry=0x80000400,
+       key=lambda s, v, o: v, overlays=lambda: {})
+live = set(funcs)
+nm = {x: f'func_{x:08X}' for x in funcs}
+look = set()
+check(emit.cross_funcs(an, live, nm, set(), look) == {0x80001000: 'func_80001000'} and look == set(),
+      f'bal into a body: the caller interpreted ({look})')
+fa[0] = i_(1, 0, 17, 3)   # bal 0x80001010: fb's start, an ordinary call
+an.img.rom = struct.pack(f'>{len(fa) + len(fb)}I', *(fa + fb))
+look = set()
+check(emit.cross_funcs(an, live, nm, set(), look) == {} and look == set(), 'bal to a start: nothing')
+
 # a KSEG2/3 TLB mapping on the console (Paper Mario's effects): the next build translates it (XRC_HIGH_TLB)
 with tempfile.TemporaryDirectory() as d:
     lg = pathlib.Path(d) / 'run.log'
