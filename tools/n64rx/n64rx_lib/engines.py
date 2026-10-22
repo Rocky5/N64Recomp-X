@@ -251,7 +251,11 @@ class Docker:
         """the whole pipeline inside the image, with the native engine there"""
         root = str(ROOT)
         user = [] if IS_WINDOWS else ['--user', f'{os.getuid()}:{os.getgid()}']   # the output stays the user's
-        cmd = [self.docker, 'run', '--rm', *user, '-e', 'HOME=/tmp', '-v', f'{root}:/src', '-v', f'{rom_dir}:/rom:ro',
+        # the user's N64RX_* settings and XBOX_CFLAGS go in too: only HOME did, so N64RX_CFLAGS, the
+        # analyser's switches and N64RX_DRYBOOT were dropped inside (docs/review-2026-10.md 3.r6)
+        env = [a for k, v in sorted(os.environ.items()) if k.startswith('N64RX_') or k == 'XBOX_CFLAGS'
+               for a in ('-e', f'{k}={v}')]
+        cmd = [self.docker, 'run', '--rm', *user, '-e', 'HOME=/tmp', *env, '-v', f'{root}:/src', '-v', f'{rom_dir}:/rom:ro',
                '-v', f'{out_dir}:/out', '-w', '/src', image_name(), 'python3', 'tools/n64rx/n64rx.py', *args]
         return run_logged(cmd, log)
 

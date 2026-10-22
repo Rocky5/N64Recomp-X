@@ -26,7 +26,9 @@ from .analyze import segments as S
 RDRAM8 = re.compile(r'^(?:.*\[LEARN\]\s+)?rdram\s+8\s*$')
 KUSEG_MULTI = re.compile(r'^(?:.*\[LEARN\]\s+)?kuseg_versions\s+([0-9A-Fa-f]+)\s*$')
 RELOC = re.compile(r'^(?:.*\[LEARN\]\s+)?reloc\s+([0-9A-Fa-f]+)(?:\s+([0-9A-Fa-f]+)\s+([0-9A-Fa-f]+))?\s*$')   # an overlay the game relocated (zovl.py): its link vram, where, how long
-LINE = re.compile(r'^(?:.*\[LEARN\]\s+)?(func|dma|kuseg)\s+([0-9A-Fa-fx]+)\s+([0-9A-Fa-fx]+)(?:\s+(?:from\s+)?([0-9A-Fa-fx]+))?\s*$')
+# (hex with an optional 0x: a bare "x" no longer matches, which raised ValueError: review 3.r8)
+HEX = r'(?:0[xX])?[0-9A-Fa-f]+'
+LINE = re.compile(rf'^(?:.*\[LEARN\]\s+)?(func|dma|kuseg)\s+({HEX})\s+({HEX})(?:\s+(?:from\s+)?({HEX}))?\s*$')
 
 
 @dataclass
@@ -45,6 +47,9 @@ class Learnt:
     reloc_at: set = field(default_factory=set)      # (ram, length) where it relocated them
     func_dma: dict = field(default_factory=dict)    # vram -> {the DMA that put its code there when it ran}
     func_nodma: set = field(default_factory=set)    # vram logged with no DMA over it (the CPU put the code there)
+    # (the lists' members as sets: the dedupe was a list scan, 16,000 records 1.6 s: review 3.r8)
+    _dma_set: set = field(default_factory=set, repr=False)
+    _group_set: set = field(default_factory=set, repr=False)
 
     def __bool__(self):
         return bool(self.funcs or self.dmas or self.code or self.kuseg or self.high or self.rdram_mb or self.reloc)
@@ -77,7 +82,8 @@ def _code_records(data, out):
             break
         b = bytes(data[i + 8:i + 8 + n])
         if group:   # a function's bytes at one moment (learn.c xrc_learn_recapture_n): one version of it
-            if GROUPS and (v, b) not in out.groups:
+            if GROUPS and (v, b) not in out._group_set:
+                out._group_set.add((v, b))
                 out.groups.append((v, b))
             for p in range((v + 0xFFF) & ~0xFFF, v + n - 0xFFF, 0x1000):   # its whole pages count as pages too
                 if MAJORITY:
@@ -115,6 +121,7 @@ def _choose(out):
 def _code_from_log(text, out):
     """a test build's serial log: [LEARNCODE] BEGIN n, base64 lines, END"""
     import base64
+    import binascii
     buf, inside = [], False
     for line in text.splitlines():
         j = line.find('[LEARNCODE] ')
@@ -125,7 +132,10 @@ def _code_from_log(text, out):
             buf, inside = [], True
         elif rest == 'END':
             if inside:
-                _code_records(base64.b64decode(''.join(buf)), out)
+                try:
+                    _code_records(base64.b64decode(''.join(buf)), out)
+                except (ValueError, binascii.Error):   # a cut or garbled block: skipped (review 3.r8)
+                    pass
             inside = False
         elif inside:
             buf.append(rest)
@@ -177,7 +187,8 @@ def read(paths):
             elif kind == 'dma' and z and 0 < int(z, 16) <= 0x800000:
                 d = (x, (y & 0x1FFFFFFF) | 0x80000000, int(z, 16))
                 prev_dma = d
-                if d not in out.dmas:
+                if d not in out._dma_set:
+                    out._dma_set.add(d)
                     out.dmas.append(d)
     _choose(out)
     _drop_kuseg_multi(out)

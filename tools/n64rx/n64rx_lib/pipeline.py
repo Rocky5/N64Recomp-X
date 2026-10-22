@@ -645,7 +645,7 @@ const XrcGame xrc_game = {{
     .sections = section_table,
     .num_sections = ARRLEN(section_table),
     .icon = xrc_icon_64,
-    .code = {c_str(pack.code)},
+    .code = {c_str(''.join(ch if ' ' <= ch <= '~' else '_' for ch in pack.code))},
     .rom_size = {pack.rom_size}u,
     .sha1 = {{ {''.join(c_str(h) + ', ' for h in pack.sha1[:3])}0 }},
     .eeprom_bytes = {EEPROM.get(pack.save_type, 0)}u,
@@ -849,7 +849,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     folder = output_folder(out_root, folder_name(pack.title))
     shutil.copy2(xbe, folder / 'default.xbe')
     r = subprocess.run([sys.executable, str(ROOT / 'tools/xbox/xbe_sections.py'), str(folder / 'default.xbe'),
-                        '--title-id', pack.title_id_hex, '--name', pack.title, '--icon', str(pack.icon),
+                        '--title-id', pack.title_id_hex, f'--name={pack.title}', '--icon', str(pack.icon),
                         '--tbn', str(folder / 'default.tbn')]
                        # the ROM as a $ROM section the kernel never loads (PLAN.md 3.5); --rom-beside: a file
                        + ([] if rom_beside else ['--rom', str(rom_file)]), capture_output=True, text=True)
