@@ -58,6 +58,9 @@ void xrc_trace_vram(uint32_t vram) { (void)vram; }   /* trace.c: nothing to reco
 void xhw_sleep_ms(uint32_t ms) { (void)ms; }
 xhw_thread* xhw_thread_self(void) { return (xhw_thread*)0; }
 uint64_t xhw_time_us(void) { return 0; }
+static uint64_t s_count;   /* ultra/time.c: a counter that runs (each read moves it on) */
+uint64_t xu_count64(void) { return s_count += 100; }
+void xu_count_set32(uint32_t v) { s_count = (s_count & ~0xFFFFFFFFull) | v; }
 int xhw_perf_detail(void) { return 0; }
 void xhw_perf_add(int bucket, uint64_t us) { (void)bucket, (void)us; }
 int xu_fault_wait(uint32_t vaddr, int store) { (void)vaddr; (void)store; return 0; }   /* ultra/thread.c */
@@ -244,6 +247,15 @@ static void t_branch(void) {
     CHECK("learn outer caller", s_learnt[2].caller, 0x80000500u);
 }
 
+/* mfc0 Count reads the runtime's counter, which runs (review 5b.4: a frozen shadow spun a delay loop) */
+#define C0(sub, rt, rd) ((uint32_t)((16u << 26) | ((sub) << 21) | ((rt) << 16) | ((rd) << 11)))
+static void t_count(void) {
+    fresh();
+    RUN(C0(0, t0, 9) /* mfc0 t0, Count */, C0(0, t1, 9), C0(4, t2, 9) /* mtc0 t2, Count */, C0(0, t3, 9), JR_RA, NOP);
+    CHECK("Count runs", REG(t1) != REG(t0), 1);
+    CHECK("mtc0 Count sets it", (uint32_t)REG(t3) - (uint32_t)REG(t2) <= 1000u, 1);
+}
+
 static void t_fpu(void) {
     fresh();
     C.r8 = 7, C.r9 = (gpr)(int32_t)0xC0300000u /* -2.75f */;
@@ -379,6 +391,7 @@ int main(void) {
     t_int();
     t_64();
     t_branch();
+    t_count();
     t_fpu();
     t_misc();
     t_refill();

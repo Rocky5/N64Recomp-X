@@ -269,6 +269,11 @@ static void divu32(St* st, uint32_t a, uint32_t b) {
 #ifndef XRC_TLBWR_RANDOM
 #define XRC_TLBWR_RANDOM 1
 #endif
+#ifndef XRC_INTERP_COUNT
+#define XRC_INTERP_COUNT 1
+#endif
+uint64_t xu_count64(void);         /* ultra/time.c */
+void xu_count_set32(uint32_t v);
 static uint32_t s_cop0[32];
 static uint32_t s_random = 31;
 
@@ -461,6 +466,11 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
     case 14: SET(rt, s ^ uimm); return;
     case 15: SET(rt, SX32(uimm << 16)); return;
     case 16:   /* COP0: Status is the runtime's; the rest a shadow, the TLB tlb.c's */
+        /* Count is the runtime's counter: a shadow froze it, and a game's own
+         * delay loop (`while (Count - t0 < n)`) spun until STEP_LIMIT (review
+         * 5b.4). -DXRC_INTERP_COUNT=0: the shadow, as before */
+        if (rs == 0 && rd == 9 && XRC_INTERP_COUNT) { SET(rt, SX32((uint32_t)xu_count64())); return; }
+        if (rs == 4 && rd == 9 && XRC_INTERP_COUNT) { xu_count_set32((uint32_t)t); return; }
         if (rs == 0) { SET(rt, SX32(rd == 12 && !st->exc ? (uint32_t)cop0_status_read(ctx) : s_cop0[rd])); return; }
         if (rs == 4) {
             if (rd == 12 && !st->exc) cop0_status_write(ctx, (gpr)t);

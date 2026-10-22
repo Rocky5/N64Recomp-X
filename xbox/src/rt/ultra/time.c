@@ -30,11 +30,16 @@ ULTRA(osSetTime) {
     s_offset = (int64_t)(xu_arg64(ctx, 0) - clock_count());
 }
 
+/* the counter's low word set (osSetCount; interp.c's mtc0 Count) */
+void xu_count_set32(uint32_t v) {
+    uint64_t now = xu_count64();
+    s_offset += (int64_t)(((now & ~0xFFFFFFFFull) | v) - now);
+}
+
 /* osSetCount(u32) (some libultras export it): the low word of the counter */
 ULTRA(osSetCount) {
-    uint64_t now = xu_count64();
     (void)rdram;
-    s_offset += (int64_t)(((now & ~0xFFFFFFFFull) | ARG(0)) - now);
+    xu_count_set32(ARG(0));
 }
 
 /* A periodic timer that fell more than one interval behind (the thread held

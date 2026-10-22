@@ -128,6 +128,7 @@ xhw_thread* xu_spawn(void (*fn)(void*), void* arg, int level, uint32_t stack);
 
 /* time.c */
 uint64_t xu_count64(void);   /* the CPU counter: 46.875 MHz from the ACPI clock */
+void xu_count_set32(uint32_t v);   /* its low word set (osSetCount, an interpreted mtc0 Count) */
 
 /* vi.c */
 unsigned xu_retrace(void);
