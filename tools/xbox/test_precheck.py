@@ -3,6 +3,7 @@
 (analyze/emit.py recomp_hazards) and how captured RDRAM blocks join
 (learn.py _code_runs), on hand-assembled words: no ROM. The jump-table
 finder mirrors N64Recomp's analysis.cpp: lui, an addu of the index, lw, jr."""
+import os
 import pathlib
 import sys
 
@@ -143,6 +144,21 @@ check(sp == {} and an.img.rom[0x1000:0x1020] == code, 'plausible ROM code kept')
 lt.dmas = [(0x2000, 0x80001000, 0x20)]
 an = F(img=F(segments=[seg], rom=rom), funcs={'boot': {}})
 check(learn._decompressed_code(an, lt, {0x80001000: code}, len(rom), []) == {}, 'a logged DMA there: kept')
+
+# an Expansion Pak probe by hand (Armorines: bump the word at 0x80400000, read it back): 8 MB
+S0, S1 = 16, 17
+probe_ws = [lui(S1, 0x8040), lw(S0, 0, S1), addiu(S0, S0, 1), sw(S0, 0, S1), jr(RA_), NOP]
+rom = struct.pack(f'>{len(probe_ws)}I', *probe_ws)
+seg = F(name='main', rom=0, vram=0x80001000, size=len(rom), has=lambda t: 0x80001000 <= t < 0x80001000 + len(rom))
+an = F(img=F(segments=[seg], rom=rom), funcs={'main': {0x80001000: F(start=0x80001000, end=0x80001000 + len(rom))}},
+       entry=0x80009000)
+check(romonly._wants_8mb(an), 'a probe of 0x80400000: 8 MB')
+os.environ['N64RX_PROBE_8MB'] = '0'
+check(not romonly._wants_8mb(an), 'N64RX_PROBE_8MB=0: 4 MB')
+del os.environ['N64RX_PROBE_8MB']
+probe_ws[3] = NOP   # a load alone (a heap's end compared, not a probe)
+an.img.rom = struct.pack(f'>{len(probe_ws)}I', *probe_ws)
+check(not romonly._wants_8mb(an), 'a load alone: 4 MB')
 
 # a KSEG2/3 TLB mapping on the console (Paper Mario's effects): the next build translates it (XRC_HIGH_TLB)
 with tempfile.TemporaryDirectory() as d:

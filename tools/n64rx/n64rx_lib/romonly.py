@@ -288,11 +288,23 @@ def _wants_8mb(a):
                     return True
                 elif ins.op in (2, 3) or (ins.op == 0 and ins.funct in (8, 9)):   # the first call or jump ends it
                     break
+    # a probe of the Expansion Pak by hand: lui rX, 0x8040, then a load and a store through rX + 0
+    # (Armorines bumps the word at 0x80400000 and reads it back after a cache flush). On a 4 MB build
+    # that word is the runtime's own memory past RDRAM, so the probe "finds" 8 MB, the game records 8
+    # in its own global (not osMemSize: its osInitialize is the runtime's) and clears its heap up to
+    # 0x80780000 over the host's memory: the console resets with no card. With 8 MB it has the Pak,
+    # as a console with one. N64RX_PROBE_8MB=0: as before
+    probe = os.environ.get('N64RX_PROBE_8MB', '1') != '0'
     for seg in a.img.segments:
         for f in a.funcs.get(seg.name, {}).values():
             ws = words(a.img.rom, seg.rom + (f.start - seg.vram), (f.end - f.start) // 4)
             for i, w in enumerate(ws):
                 ins = Ins(w, 0)
+                if probe and ins.op == 15 and ins.imm == 0x8040 and ins.rt:
+                    near = [Ins(x, 0) for x in ws[i + 1:i + 16]]
+                    if any(n.op == 35 and n.rs == ins.rt and n.imm == 0 for n in near) and \
+                            any(n.op == 43 and n.rs == ins.rt and n.imm == 0 for n in near):
+                        return True
                 if ins.op != 35 or ins.imm != 0x318:
                     continue
                 near = [Ins(x, 0) for x in ws[max(0, i - 6):i + 6]]
