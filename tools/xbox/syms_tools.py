@@ -65,6 +65,13 @@ def run_splat(decomp, rom, version, work, python):
     cfg = decomp / 'config' / version
     yml = next(cfg.glob('*.yaml'))
     if work.exists():
+        # only a work folder of its own (it holds config/ and nothing that is not splat's), never any path
+        # --work names (docs/review-2026-10.md 3.r5)
+        if not (work / 'config').is_dir() or any(p.name not in ('config', 'asm', 'assets', 'build', 'undefined_syms_auto.txt',
+                                                                'undefined_funcs_auto.txt', 'splat.yaml', 'baserom.z64')
+                                                 and not p.name.endswith(('.ld', '.yaml', '.z64', '.txt'))
+                                                 for p in work.iterdir()):
+            raise SystemExit(f'{work}: not a splat work folder of this tool; remove it yourself or pick another --work')
         shutil.rmtree(work)
     (work / 'config').mkdir(parents=True)
     shutil.copytree(cfg, work / 'config' / version)

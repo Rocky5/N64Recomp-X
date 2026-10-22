@@ -43,7 +43,7 @@ USER = os.environ.get("MX_FTP_USER", "xbox")
 PASS = os.environ.get("MX_FTP_PASS", "xbox")
 APP = os.environ.get("MX_APP", "/F/Applications/N64Recomp-X")
 UDATA = "/E/UDATA/" + os.environ.get("MX_TITLE_ID", "4E520000")
-LOGS = re.compile(r"^(shot\d+\.bmp|boot(\d|_prev)?\.log|lastexit\.txt|trace\.log|crash\.log|hang\.log|prof\.bin)$")
+LOGS = re.compile(r"^(shot\d+\.bmp|boot(\d|_prev|_[^/]+)?\.log|lastexit\.txt|trace\.log|crash\.log|hang(_[^/]+)?\.log|prof\.bin)$")
 FILES = {"default.xbe": APP, "default.tbn": APP, "TitleImage.xbx": UDATA, "TitleMeta.xbx": UDATA}
 
 
@@ -128,6 +128,9 @@ def upload_dir(f, folder, items):
 
 def deploy(v):
     src = HW / f"stage-{ver(v)}"
+    missing = [n for n in FILES if not (src / n).is_file()]
+    if missing:   # before anything on the console is touched: a wrong name lost the logs, then failed (review 3.r5)
+        sys.exit(f"{src}: not staged: {', '.join(missing)} (nothing on the console was changed)")
     f = connect()
     mkdirs(f, APP)
     mkdirs(f, UDATA)
