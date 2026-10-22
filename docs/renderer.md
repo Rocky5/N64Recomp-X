@@ -133,6 +133,20 @@ where the VR4300 did not: the next thing to look at). Read through the
 DKR path since 2026-10-20 (`XGFX_DKR`) its menu background draws; its
 letters do not.
 
+Found 2026-10-22, the second: our FPU code. The dry boot (the game's own
+MIPS on the PC) made the same matrices at the same addresses whole
+(`[1, -1, -1, -1, 0, 1, ...]` where xemu had `0x8000` in the first row and
+two more). Its view matrix (0x800FAF78) comes from hand-written code that
+uses odd FPRs as singles of their own (`mov.s $f3, $f0`, `mul.s $f9, $f3,
+$f6`, `swc1 $f17`), which is MIPS III's float mode: Rare's osCreateThread
+gives each thread Status.FR (`0x0400FF03`; a negative id an FR = 0 thread).
+The generator's moves reach an odd FPR as the even one's high word (FR = 0),
+so each odd-register store wrote another register's word. With the float
+mode followed per context (`XRC_FR`, `docs/testing.md`) the matrix in xemu
+is the dry boot's, word for word (test build, 6 dumped tasks, 0 of 2
+matrices with `0x8000` against 2 of 2 with `N64RX_FR=0`). Whether its
+letters now draw is not checked yet.
+
 RDP rules added 2026-10-17 (each with its switch in `docs/testing.md`):
 - the screen's size is the width of the buffer the game swaps to (its
   `osViSwapBuffer` addresses) and 3/4 of it, or the VI mode's rows when

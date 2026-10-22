@@ -24,7 +24,7 @@
  * 32-bit build and the recompiled code sees the low words it expects. The
  * FPRs are the context's, reached exactly as the generated code reaches
  * them (N64Recomp's cgenerator.cpp): .s on fN.fl, .d on fN.d, the 32-bit
- * moves and conversions (mtc1, lwc1, cvt.w ...) through f_odd for an odd
+ * moves and conversions (mtc1, lwc1, cvt.w ...) through f_odd (XRC_FODD: FR) for an odd
  * register, the 64-bit ones on fN.u64. The arithmetic is the generated
  * code's too (recomp.h's helpers, the same triple): the FCR31 rounding mode
  * is MXCSR and the x87 control word (set_cop1_cs), round.w is lround (half
@@ -131,7 +131,7 @@ static inline float* fS(recomp_context* ctx, int n) { return &(&ctx->f0)[n].fl; 
 static inline double* fD(recomp_context* ctx, int n) { return &(&ctx->f0)[n].d; }
 static inline uint64_t* fL(recomp_context* ctx, int n) { return &(&ctx->f0)[n].u64; }
 static inline uint32_t* fW(recomp_context* ctx, int n) {
-    return (n & 1) ? &ctx->f_odd[(n - 1) * 2] : &(&ctx->f0)[n].u32l;
+    return (n & 1) ? &XRC_FODD(ctx)[(n - 1) * 2] : &(&ctx->f0)[n].u32l;   /* FR as the context has it (recomp.h) */
 }
 
 /* fn 8..15 (round/trunc/ceil/floor, .l then .w) and 36/37 (cvt.w/.l) of .s
@@ -829,6 +829,7 @@ int xrc_interp_refill(uint32_t vaddr, int store) {
 #if !XRC_FODD_ARRAY
     ctx.f_odd = &ctx.f0.u32h;
 #endif
+    xrc_ctx_fr(&ctx, XRC_FR != 0);
     sp = xu_self_sp();
     ctx.r29 = (gpr)(int32_t)((sp ? sp : 0x80000400u) - 0x400u);
     s_cop0[8] = vaddr;                                                    /* BadVAddr */

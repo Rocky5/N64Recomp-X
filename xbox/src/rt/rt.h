@@ -51,10 +51,17 @@ uint32_t xrc_ovl_function_count(void);
 /* a fresh context for a thread or the boot code: everything zero, sp set,
  * interrupts on, and f_odd at f0's high word (the generated code reaches an
  * odd FPR as the high half of the even one below it: COP1 with FR = 0, as
- * O32 code runs) */
+ * O32 code runs; FR = 1 instead in a game whose threads have it, XRC_FR) */
 #ifndef XRC_STATUS_INIT
 #define XRC_STATUS_INIT 0x2000FF01u
 #endif
+/* a context's float mode (recomp.h XRC_FODD): Status.FR and mips3_float_mode
+ * together; nothing in a game whose threads never set FR (XRC_FR 0) */
+static inline void xrc_ctx_fr(recomp_context* ctx, int fr) {
+    if (!XRC_FR) return;
+    ctx->mips3_float_mode = (uint8_t)(fr != 0);
+    ctx->status_reg = fr ? ctx->status_reg | 0x04000000u : ctx->status_reg & ~0x04000000u;
+}
 static inline void xrc_ctx_init(recomp_context* ctx, uint32_t sp) {
     memset(ctx, 0, sizeof *ctx);
     ctx->r29 = (gpr)(int32_t)sp;
@@ -67,6 +74,7 @@ static inline void xrc_ctx_init(recomp_context* ctx, uint32_t sp) {
     ctx->f_odd = &ctx->f0.u32h;
 #endif
     ctx->mips3_float_mode = 0;
+    xrc_ctx_fr(ctx, XRC_FR != 0);   /* the boot code: FR as the IPL leaves it, in a game that uses it */
 }
 
 /* learn.c: the safety net (PLAN.md 3.14 step 5). -DXRC_SAFETY_NET=0: a call

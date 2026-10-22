@@ -41,8 +41,26 @@ def test_cont_max():
     return len(bad)
 
 
+def test_thread_fr():
+    """saves.thread_fr: the Status word osCreateThread stores at 0x118 of the
+    new context (recomp.h XRC_FR)"""
+    bad = []
+    if saves.thread_fr(words(0x340DFF03, 0x00000000, 0xAC8D0118)) != 0:   # li t5, 0xFF03 (libultra's)
+        bad.append("libultra's SR_IMASK | SR_EXL | SR_IE")
+    if saves.thread_fr(words(0x3C0D0400, 0x00000000, 0x35ADFF03, 0xAC8D0118, 0x03E00008)) != 1:   # lui 0x0400 too
+        bad.append('FR for every thread')
+    if saves.thread_fr(words(0x3C0D0400, 0x35ADFF03, 0xAC8D0118, 0x04A10003, 0x3C01FBFF, 0x3421FFFF,
+                             0x01A15824, 0xAC8B0118)) != 2:   # Rare's: the mask without FR for a negative id
+        bad.append("Rare's negative id")
+    if saves.thread_fr(words(0x3C0D0400, 0x35ADFF03, 0xAC8D0100)) != 0:   # another field
+        bad.append('a store to another field')
+    for b in bad:
+        print(f'  FAIL thread_fr: {b}')
+    return len(bad)
+
+
 def main():
-    nbad = test_cont_max()
+    nbad = test_cont_max() + test_thread_fr()
     rc = hostcc.run(['tests/xbox/test_saves.c', 'xbox/src/rt/ultra/savedev.c', 'xbox/src/rt/ultra/pfs.c',
                      'xbox/src/rt/ultra/pi.c'],
                     includes=['xbox/include', 'xbox/include/xrc', 'xbox/src/rt', 'xbox/src/rt/ultra'],

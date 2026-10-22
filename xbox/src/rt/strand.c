@@ -122,7 +122,7 @@ static void sreg(recomp_context* ctx, int r, uint32_t v) { (&ctx->r0)[r] = (gpr)
 /* f20 + i as swc1 / lwc1 see it: an odd register is its pair's high half (interp.c's fw) */
 static uint32_t* freg(recomp_context* ctx, int i) {
     int n = 20 + i;
-    return (n & 1) ? &ctx->f_odd[(n - 1) * 2] : &(&ctx->f0)[n].u32l;
+    return (n & 1) ? &XRC_FODD(ctx)[(n - 1) * 2] : &(&ctx->f0)[n].u32l;   /* FR as the context has it (recomp.h) */
 }
 
 /* setjmp(buf): the registers into the buffer as the game's own does; the buffer is this strand's */

@@ -113,6 +113,8 @@ static uint32_t s_si_dram;
 static uint32_t s_frame = 781250;
 static uint64_t s_next_vi, s_sp_done_at, s_dp_done_at;
 static unsigned s_frames, s_tasks, s_gfx_tasks;
+static unsigned s_snap_at;         /* --snap: RDRAM at the start of this graphics task (1 = the first) */
+static const char* s_snap_path;
 
 /* the PI DMAs from the ROM, newest last (where code came from) */
 typedef struct { uint32_t rom, ram, size; } Dma;
@@ -355,6 +357,13 @@ static void sp_status_write(uint32_t v) {
         s_sp_status |= 1u | 2u | (0x80u << 2);   /* halt, broke, sig2 (task done) */
         if (s_sp_status & 0x40) s_sp_done_at = s_cycles + 3000;
         if (type == 1) s_dp_done_at = s_cycles + 6000, s_gfx_tasks++;
+        if (type == 1)
+            say("[SP] graphics task %u: data %08x, %x bytes, frame %u", s_gfx_tasks, be32(&s_sp[0xFF0]), be32(&s_sp[0xFF4]), s_frames);
+        if (type == 1 && s_snap_path && s_gfx_tasks == s_snap_at) {   /* the display list as the CPU left it */
+            FILE* f = fopen(s_snap_path, "wb");
+            if (f) fwrite(s_ram, 1, s_ramsize, f), fclose(f);
+            fprintf(stderr, "dryboot: RDRAM at graphics task %u (data %08x, frame %u) to %s\n", s_gfx_tasks, be32(&s_sp[0xFF0]), s_frames, s_snap_path);
+        }
     }
 }
 
@@ -613,6 +622,8 @@ static int rd(uint32_t va, int n, uint64_t* out) {
     *out = phys_read((uint32_t)pa, n);
     return 1;
 }
+static uint32_t s_watch_lo, s_watch_hi;   /* --watch: the CPU's stores to these physical bytes, logged */
+static unsigned s_watch_n;
 static int wr(uint32_t va, uint64_t v, int n) {
     int64_t pa;
     if (va & (uint32_t)(n - 1)) {
@@ -621,6 +632,11 @@ static int wr(uint32_t va, uint64_t v, int n) {
     }
     pa = translate(va, 1);
     if (pa < 0) return 0;
+    if (s_watch_hi && (uint32_t)pa < s_watch_hi && (uint32_t)pa + (uint32_t)n > s_watch_lo && s_watch_n < 400) {
+        s_watch_n++;
+        fprintf(stderr, "watch: %08x <- %0*llx (%d bytes) at pc %08x, ra %08x, frame %u\n", (unsigned)pa, n * 2,
+                (unsigned long long)v, n, C.pc, (uint32_t)C.r[31], s_frames);
+    }
     phys_write((uint32_t)pa, v, n);
     return 1;
 }
@@ -828,8 +844,13 @@ static int64_t to_l(double v) {
     return v != v || v >= 9223372036854775808.0 || v < -9223372036854775808.0 ? 0x7FFFFFFFFFFFFFFFll : (int64_t)v;
 }
 
+static unsigned long long s_fp_fr1, s_fp_fr0, s_fp_odd0;   /* -v: FPU arithmetic with FR 1, FR 0, and FR 0 on an odd register */
 static void cop1(uint32_t w) {
     int fmt = (w >> 21) & 31, ft = (w >> 16) & 31, fsr = (w >> 11) & 31, fdr = (w >> 6) & 31, fn = w & 63;
+    if (fmt >= 16 && fmt <= 21) {
+        if (fr()) s_fp_fr1++;
+        else if (s_fp_fr0++, (ft | fsr | fdr) & 1) s_fp_odd0++;
+    }
     switch (fmt) {
     case 0: C.r[ft] = SX32(fget32(fsr)); return;                         /* mfc1 */
     case 1: C.r[ft] = fget64(fsr); return;                               /* dmfc1 */
@@ -912,6 +933,11 @@ static void cop0(uint32_t w) {
         if (rd == COMPARE) C.cp0[CAUSE] &= ~(uint64_t)0x8000;
         if (rd == CAUSE) { C.cp0[CAUSE] = (C.cp0[CAUSE] & ~(uint64_t)0x300) | (v & 0x300); return; }
         if (rd == COUNT) v &= 0xFFFFFFFFu;
+        if (rd == STATUS && ((v ^ C.cp0[STATUS]) & SR_FR) && s_verbose) {   /* -v: who changes the float mode */
+            static unsigned s_said;
+            if (s_said++ < 24) fprintf(stderr, "FR %d at pc %08x (ra %08x, k0 %08x, frame %u)\n", (int)((v >> 26) & 1), C.pc, (uint32_t)C.r[31],
+                                       (uint32_t)C.r[26], s_frames);
+        }
         C.cp0[rd] = v;
         return;
     }
@@ -1345,7 +1371,7 @@ static uint32_t* load_known(const char* path, size_t* n) {
 static int usage(void) {
     fprintf(stderr, "usage: dryboot <rom.z64> <out dir> --entry X --boot-size N [--cic N] [--tv 0|1|2] [--rdram 4|8]\n"
                     "               [--known file] [--frames N] [--press frame|0] [--script autopad.txt] [--eep 4|16]\n"
-                    "               [--dump addr bytes file] [-v]\n");
+                    "               [--dump addr bytes file] [--snap gfx-task file] [--watch addr bytes] [-v]\n");
     return 1;
 }
 
@@ -1374,6 +1400,15 @@ int main(int argc, char** argv) {
         else if (!strcmp(a, "--press-mode")) s_press_mode = (int)strtoul(v, NULL, 10);
         else if (!strcmp(a, "--script")) script_load(v);
         else if (!strcmp(a, "--eep")) s_eep16 = strtoul(v, NULL, 10) == 16;
+        else if (!strcmp(a, "--watch") && i + 2 < (uint32_t)argc) {   /* --watch <addr> <bytes>: who stores there */
+            s_watch_lo = (uint32_t)strtoul(v, NULL, 16) & 0x1FFFFFFFu;
+            s_watch_hi = s_watch_lo + (uint32_t)strtoul(argv[i + 2], NULL, 0);
+            i += 1;
+        }
+        else if (!strcmp(a, "--snap") && i + 2 < (uint32_t)argc) {   /* --snap <n> <file>: RDRAM as graphics task n starts */
+            s_snap_at = (unsigned)strtoul(v, NULL, 0), s_snap_path = argv[i + 2];
+            i += 1;
+        }
         else if (!strcmp(a, "--dump") && i + 3 < (uint32_t)argc) {   /* --dump <addr> <bytes> <file>: RDRAM after the run */
             dump_at = (uint32_t)strtoul(v, NULL, 16) & 0x1FFFFFFFu;
             dump_n = (uint32_t)strtoul(argv[i + 2], NULL, 0);
@@ -1475,6 +1510,8 @@ int main(int argc, char** argv) {
             fclose(d);
         }
     }
+    if (s_verbose)
+        fprintf(stderr, "fpu: %llu operations with FR 1, %llu with FR 0 (%llu on an odd register)\n", s_fp_fr1, s_fp_fr0, s_fp_odd0);
     fprintf(stderr, "dryboot: %u frames, %llu instructions, %u tasks (%u graphics), %u DMAs; %u functions, %u code pages learnt\n",
             s_frames, (unsigned long long)s_cycles, s_tasks, s_gfx_tasks, s_ndma, s_nfunc, s_ncode);
     if (s_verbose) {

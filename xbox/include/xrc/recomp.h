@@ -472,6 +472,30 @@ typedef struct {
     uint8_t mips3_float_mode;
 } recomp_context;
 
+/* XRC_FODD(ctx): the word mtc1, mfc1, lwc1, swc1 and the conversions reach
+ * for an odd FPR, which n64rx spells instead of the generator's
+ * ctx->f_odd[(i - 1) * 2] in a game whose threads run with Status.FR set
+ * (pipeline.py write_fodd): word (i - 1) * 2 from f0's high word is f(i-1)'s
+ * high word with FR = 0 (the even register's other half, as O32 code wants)
+ * and, one word on, f(i)'s own low word with FR = 1, the register the
+ * generator's .s arithmetic (ctx->fN.fl) uses. mips3_float_mode is the
+ * context's FR: set where a thread starts (its game's osCreateThread rule)
+ * and by cop0_status_write. Without it a Rare game's hand-written matrix code
+ * (mov.s $f3 ... swc1 $f17) stored the even registers' high words: Jet Force
+ * Gemini's view matrices came out NaN (docs/renderer.md). Still an offset
+ * from ctx, so restrict holds. XRC_FR: 0 (FR = 0 everywhere, as before), 1
+ * (osCreateThread gives every thread FR), 2 (Rare's: FR unless the id is
+ * negative); n64rx sets it from the ROM (saves.py thread_fr; N64RX_FR=0
+ * leaves it 0) */
+#ifndef XRC_FR
+#define XRC_FR 0
+#endif
+#if XRC_FR
+#define XRC_FODD(c) ((uint32_t*)&(c)->f0 + 1 + (c)->mips3_float_mode)
+#else
+#define XRC_FODD(c) ((uint32_t*)&(c)->f0 + 1)
+#endif
+
 #if XRC_CHECKS
 #define CHECK_FR(ctx, idx) do { if (((idx) & 1) != 0 && !(ctx)->mips3_float_mode) xrc_check_failed("odd FPR"); } while (0)
 #else

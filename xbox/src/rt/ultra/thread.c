@@ -92,6 +92,7 @@ typedef struct {
     recomp_context* ctx;        /* thread_body's: its sp for interp.c's exception code */
     volatile unsigned sleeps;   /* times it went to sleep (xu_send's yield) */
     uint32_t gp;                /* its creator's gp (XRC_THREAD_GP) */
+    int fr;                     /* it runs with Status.FR (recomp.h XRC_FR) */
     void* starter;              /* the Thr that started it (XRC_START_DEFER) */
     unsigned starter_sleeps;    /* its sleeps then */
     int rs;                     /* XRC_RUN_TOKEN: RS_NONE, RS_READY (runnable), RS_BLOCKED (on an N64 object) */
@@ -498,6 +499,7 @@ static void thread_body(void* p) {
     token_wait(d);   /* the run token before its first instruction */
     running_is(d->t);
     xrc_ctx_init(&ctx, d->sp);
+    xrc_ctx_fr(&ctx, d->fr);
     if (XRC_THREAD_GP) ctx.r28 = (gpr)(int32_t)d->gp;
     d->ctx = &ctx;
     ctx.r4 = (gpr)(int32_t)d->arg;
@@ -544,7 +546,13 @@ ULTRA(osCreateThread) {
      * Snap: the next object-thread stack's free-list link, corrupted with a
      * GObj pointer). -DXRC_THREAD_SP16=0: the sp as given. */
     d->sp = ARG(4) - (XRC_THREAD_SP16 ? 16u : 0u);
-    wr32(t + TH_ID, ARG(1));
+    {   /* the game's osCreateThread puts FR in the new context's Status (XRC_FR 1), or Rare's does
+         * unless the id is negative, which it keeps negated (XRC_FR 2: Jet Force Gemini's FR = 0 thread) */
+        int32_t id = (int32_t)ARG(1);
+        d->fr = XRC_FR != 0;
+        if (XRC_FR == 2 && id < 0) d->fr = 0, id = -id;
+        wr32(t + TH_ID, (uint32_t)id);
+    }
     wr32(t + TH_PRIORITY, ARG(5));
     TRACE("[OS] trace: create %08x id %d entry %08x pri %d (kt %d stopped %d wait %x) by %08x", (unsigned)t,
           (int)ARG(1), (unsigned)ARG(2), (int)ARG(5), d->kt != 0, d->stopped, (unsigned)d->wait, (unsigned)self()->t);
@@ -653,6 +661,7 @@ int xu_start_dispatched(uint32_t t) {
     d->arg = rd32(t + TH_CTX_A0);
     d->sp = sp;
     d->gp = rd32(t + 0xEC);   /* its context's gp (it ran with 0: review 5b.19) */
+    d->fr = XRC_FR && (rd32(t + 0x118) & 0x04000000u);   /* and its Status's FR */
     pri = (int)(int32_t)rd32(t + TH_PRIORITY);
     wr16(t + TH_STATE, OS_STATE_RUNNABLE);
     rank_update(pri);
@@ -1257,6 +1266,7 @@ ULTRA(__osRestoreInt) {
 void cop0_status_write(recomp_context* ctx, gpr value) {
     Thr* me = self();
     ctx->status_reg = (uint32_t)value;
+    if (XRC_FR) ctx->mips3_float_mode = (uint8_t)(((uint32_t)value >> 26) & 1u);   /* FR: recomp.h XRC_FODD */
     if (value & 1) ints_on(me);
     else ints_off(me);
 }

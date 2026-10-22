@@ -237,10 +237,36 @@ First builds from the ROM alone (functions in the analysis; libultra names):
 | Mario Tennis | - | 1,346 in 14, 81 names | 32 rounds: 2,375 in 29 |
 | Blast Corps | - | 1,508 in 10, 96 names | 15 rounds |
 
+Across the library (the sweep's 246 ROMs, 600 frames each, 8 MB, the
+16 Kbit EEPROM where `romonly.EEP16K` has the game): 237 reach their RSP
+tasks, 225 of them 50 or more in the 600 frames; 12 stop under 50 (a wait
+on something the model does not answer yet: Mario Golf, Ken Griffey's two,
+Top Gear Rally 2, Rainbow Six, Road Rash, CyberTiger). The 9 with none:
+F-Zero X (CIC 6106; Yoshi's Story, the other 6106, runs), Banjo-Tooie (its
+CIC 6105 check), BattleTanx and Global Assault (a NULL list node at boot),
+A Bug's Life and Toy Story 2 (Traveller's Tales' probe of `0xC0001000`),
+Xena (a NULL pointer), F1 World Grand Prix II (1,000 4-byte PI DMAs, then
+every thread waits), NBA Courtside (every thread waits, no pad read).
+
+The FPU with Status.CU1 clear traps (coprocessor unusable), as the VR4300
+does: libultra marks a thread as an FPU user in that trap's handler and
+only then saves its FP registers at a switch. Before (2026-10-22) no thread
+was marked, a switch clobbered FP registers, and Perfect Dark (4 tasks, an
+address error in its inflater), Banjo-Kazooie (the bad pointer at frame
+293), Pilotwings 64 and Top Gear Overdrive stopped early; with it Perfect
+Dark's first build has 2,286 functions in 38 segments against 2 without
+the dry boot. CyberTiger went the other way (569 tasks to 3): its thread 2
+loses a race the trap's few hundred instructions shift, and with PAL frame
+timing (`--tv 0`) it runs as before, so a timing difference in the model,
+not the trap. `-v` adds what the float mode needs (`fpu:` FPU operations
+with FR 1, with FR 0 and on an odd register under FR 0; `FR n at pc`: the
+Status writes that change it), `--watch addr bytes` logs the CPU's stores
+there with the pc and frame, and `--snap n file` writes RDRAM as graphics
+task n starts (its display list as the CPU left it; scratch only: the
+game's bytes).
+
 `decomp_check.py --learn <file>` scores a learn file against a decomp.
-Open: Banjo-Kazooie takes a TLB miss on a bad pointer at frame 293 of the
-dry boot (a CPU or RCP difference not found yet), so what it learns stops
-there; Mario Tennis's matches need longer runs or better input than the
+Open: Mario Tennis's matches need longer runs or better input than the
 schedule's; nothing here is checked on a console yet.
 
 ## How well it does (checked against decomps)

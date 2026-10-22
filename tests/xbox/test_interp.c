@@ -277,6 +277,15 @@ static void t_fpu(void) {
     CHECK("after bc1tl", REG(t7), 1);
     CHECK("f1 is f0's high word", C.f0.u32h, 7);
     CHECK("mfc1 f1", REG(s0), 7);
+#if XRC_FR
+    fresh();   /* FR = 1 (recomp.h XRC_FODD): an odd FPR is a register of its own, for moves and .s alike */
+    C.mips3_float_mode = 1;
+    C.r8 = 0x40200000u /* 2.5f */;
+    RUN(C1(4, t0, 3) /* mtc1 f3 */, FT(S_, 3, 3, 5, 0) /* add.s f5, f3, f3 */, C1(0, s0, 5) /* mfc1 f5 */, JR_RA, NOP);
+    CHECKF("FR 1: mtc1 f3 is f3", C.f3.fl, 2.5f);
+    CHECK("FR 1: f2 untouched", C.f2.u32h, 0);
+    CHECK("FR 1: mfc1 f5 reads add.s's", REG(s0), 0x40A00000u);
+#endif
 
     fresh();   /* the FCR31 rounding mode, round.w, the 64-bit moves and conversions */
     C.r8 = 0x40200000u /* 2.5f */, C.r9 = 1 /* toward zero */, C.r10 = (gpr)(int32_t)0xC0600000u /* -3.5f */;

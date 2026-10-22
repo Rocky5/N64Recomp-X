@@ -191,3 +191,45 @@ def os_runqueue(rom_data: bytes):
                     found = addr
         i += 4
     return [f'-DXRC_OS_RUNQUEUE=0x{found:08X}u'] if found else []
+
+def thread_fr(rom_data: bytes):
+    """XRC_FR (recomp.h XRC_FODD): 1 when the game's osCreateThread gives a
+    new thread Status.FR (the 32 independent FPRs of the MIPS III float mode),
+    2 for Rare's, which clears it again for a negative thread id and keeps the
+    id negated (Jet Force Gemini, Perfect Dark); 0 for libultra's own
+    (SR_IMASK | SR_EXL | SR_IE), the other games. Found by the shape of the
+    store: the context's Status word at 0x118 (sw rX, 0x118(base)) made by
+    ori rX, 0xFF03 shortly before, with lui rX, 0x0400 (FR) before that; and
+    lui rY, 0xFBFF (the mask without FR) shortly after for Rare's. The last
+    copy found counts (a game's own, as os_exception). N64RX_FR=0: 0."""
+    if os.environ.get('N64RX_FR', '1') == '0':
+        return 0
+    found, i = 0, 0
+    word = lambda o: int.from_bytes(rom_data[o:o + 4], 'big') if 0 <= o and o + 4 <= len(rom_data) else 0
+    while True:
+        i = rom_data.find(b'\x01\x18', i)
+        if i < 0:
+            break
+        o = i - 2
+        i += 2
+        if o % 4 or (word(o) & 0xFC00FFFF) != 0xAC000118:   # sw rX, 0x118(base)
+            continue
+        rx = (word(o) >> 16) & 31
+        ori = next((k for k in range(o - 4, max(o - 4 * 24, -4), -4)
+                    if word(k) >> 26 == 13 and (word(k) >> 16) & 31 == rx and word(k) & 0xFFFF == 0xFF03), None)
+        if ori is None or ((word(ori) >> 21) & 31) not in (0, rx):
+            continue
+        hi = 0
+        if (word(ori) >> 21) & 31 == rx:
+            lui = next((k for k in range(ori - 4, max(ori - 4 * 24, -4), -4)
+                        if word(k) >> 26 == 15 and (word(k) >> 16) & 31 == rx), None)
+            if lui is None:
+                continue
+            hi = word(lui) & 0xFFFF
+        mode = 0
+        if hi & 0x0400:
+            mode = 1
+            if any(word(k) >> 26 == 15 and word(k) & 0xFFFF == 0xFBFF for k in range(o - 4 * 4, o + 4 * 16, 4)):
+                mode = 2
+        found = mode
+    return found

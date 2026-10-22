@@ -16,7 +16,7 @@ import time
 from . import ROOT, VERSION, N64rxError, compat, dryboot, engines, packs, romonly, rom as romlib, saves
 from . import learn as learnmod
 
-GEN_VERSION = 12   # bump when what n64rx writes into gen/ changes (the cache key)
+GEN_VERSION = 13   # bump when what n64rx writes into gen/ changes (the cache key)
 VIDEO = {'auto': 0, '480': 2, '720': 3}
 EEPROM = {'eep4k': 512, 'eep16k': 2048}
 FATX_BAD = '<>:"/\\|?*'
@@ -120,7 +120,7 @@ def cache_key(rom, pack, gpr=None, pin=None):
     file of the pack, the recompiler's pin, what n64rx writes, the width"""
     return hashlib.sha256(json.dumps([rom.sha1, pack.file_hash(), pin or engines.recompiler_pin(), GEN_VERSION,
                                       gpr or '', os.environ.get('N64RX_TRACE', ''), pack.rdram_mb, os.environ.get('N64RX_GUARD', '1'),
-                                      os.environ.get('N64RX_RESTRICT', '0')]).encode()).hexdigest()
+                                      os.environ.get('N64RX_RESTRICT', '0'), os.environ.get('N64RX_FR', '1')]).encode()).hexdigest()
 
 
 def decide_gpr(pack, rom, override, prog, data=None):
@@ -400,6 +400,23 @@ def write_restrict(gen):
                 lines[i] = RESTRICT_GOTO.sub(
                     lambda g: f'{{ XRC_LOOP_BARRIER(); goto {g.group(1)}; }}' if g.group(1) in seen else g.group(0), line)
         f.write_text('\n'.join(lines), encoding='utf-8', newline='\n')
+    return n
+
+
+def write_fodd(gen, fr):
+    """In a game whose threads run with Status.FR (saves.thread_fr), the
+    generator's ctx->f_odd[(i - 1) * 2] (an odd FPR's word as FR = 0 has it:
+    the even register's high half) becomes XRC_FODD(ctx)[(i - 1) * 2], which
+    follows the context's FR (recomp.h). Returns the number of accesses."""
+    if not fr:
+        return 0
+    n = 0
+    for f in sorted(gen.glob('funcs_*.c')):
+        text = f.read_text(encoding='utf-8', errors='replace')
+        k = text.count('ctx->f_odd[(')
+        if k:
+            f.write_text(text.replace('ctx->f_odd[(', 'XRC_FODD(ctx)[('), encoding='utf-8', newline='\n')
+            n += k
     return n
 
 
@@ -806,6 +823,9 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
             prog.note(f'{write_sp_check(gen)} calls check $sp on return (N64RX_SP_CHECK, trace.c)')
         if nguard:
             prog.note(f'{nguard} functions from captured code checked against RDRAM before they run (guard.c)')
+        nfodd = write_fodd(gen, saves.thread_fr(recomp_rom.read_bytes()))
+        if nfodd:
+            prog.note(f'{nfodd} odd-FPR accesses follow Status.FR: the game\'s threads run with it (XRC_FR)')
         nres = write_restrict(gen)   # last: the rewrites above match the plain signature
         if nres:
             prog.note(f'{nres} functions take restrict pointers (N64RX_RESTRICT)')
@@ -831,6 +851,8 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
                                       saves.faulted_thread(recomp_bytes))          # libultra's fault path (tlb.c)
     flags += saves.os_exception(recomp_bytes)           # the game's exception code, for a TLB miss (interp.c)
     flags += saves.os_runqueue(recomp_bytes)            # its run queue, a sentinel while that code runs
+    fr = saves.thread_fr(recomp_bytes)                   # the float mode its osCreateThread gives (recomp.h XRC_FR)
+    flags += [f'-DXRC_FR={fr}'] if fr else []
     flags += learnmod.rdram_user(learnt)                 # RDRAM's home when KUSEG lands on the kernel's (mem.c)
     flags += learnmod.high_tlb(learnt)                   # KSEG2/3 through the game's TLB (recomp.h, tlb.c)
     env = {

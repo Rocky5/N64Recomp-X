@@ -1623,3 +1623,27 @@ its virtual page, as the console's net does; thread entries are `eret`
 targets that never ran, were no exception's EPC and follow no call; START
 and A are pressed on a schedule so menus give way to the code they load.
 Off by default until a console set runs builds made with it.
+
+## Status.FR per context: odd FPRs follow each thread's float mode (2026-10-22, `recomp.h XRC_FODD`, `ultra/thread.c`, `saves.thread_fr`, `pipeline.py write_fodd`, `XRC_FR`, `N64RX_FR`)
+
+N64Recomp's generator spells an odd FPR two ways: its arithmetic on
+`ctx->fN.fl` (a register of its own) and its moves through `f_odd`, the
+even register's high word (FR = 0, as O32 code wants; upstream's
+`uses_mips3_float_mode` is parsed but not used). A game whose threads run
+with Status.FR set (MIPS III's 32 independent FPRs) breaks on that split:
+Jet Force Gemini's view matrix code is hand-written with odd singles, and
+its stores wrote other registers' words (`docs/renderer.md`). FR is per
+thread, from the Status word osCreateThread stores (libultra's 0xFF03; FR
+for every thread in Acclaim's Turok engine games, Conker, Shadow Man and
+Perfect Dark; Rare's in Jet Force Gemini clears it for a negative id, which
+it stores negated), and the dry boot ran both modes in one game (JFG, DK64),
+so a build-wide FR = 1 would have broken the FR = 0 threads' double moves.
+Chosen: the odd word is indexed from f0 by `1 + mips3_float_mode` (an
+offset from ctx, so `restrict` holds; one extra load per odd access, only
+in a game that needs it: n64rx rewrites the generated code and passes
+`-DXRC_FR` only when the ROM's osCreateThread sets FR), each context's mode
+set where its thread starts and by `cop0_status_write`. The rule is found
+by the store's shape (the Status word at 0x118 of the context, made by
+`ori 0xFF03` after `lui 0x0400`), libultra's struct, no game's address.
+Not chosen: patching the generator (patches/recomp/: the same effect, and
+a pin move). `N64RX_FR=0`: FR = 0 everywhere, as before.
