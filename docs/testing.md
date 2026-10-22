@@ -261,6 +261,8 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXHW_SPLASH_CLASSIC=1` | 0 | the first loading screen (unscii, aurora) instead of the deep-space title card |
 | `-DXHW_SPLASH_MENU=0` | 1 | BACK held at boot does nothing (no menu before the game) |
 | `N64RX_J_LATER=0` | 1 | the analyser decides a far `j` at once (a tail call) instead of after the walk |
+| `N64RX_HW_FOCUS=0` | 1 | an overlay function is read unfocused when deciding whether it reaches a register (it read another overlay's words or none; review 4.3: Pokémon Snap had 13 overlay functions interpreted for nothing) |
+| `N64RX_PROBE_MB=0` | 1 | any `0xA0xx0000` constant marks an uncached RDRAM probe (interpreted), as before; otherwise only a MB boundary does (Smash Bros.' display-list word 0xA0780000 is not one; `test_precheck`) |
 | `N64RX_J_SEEN=0` | 1 | a far `j` whose target the walk reached by another branch is a tail call, as before (a function start there split the function; review 4.6. Paper Mario's check: 17 extra functions, 15 with it on; `test_precheck`) |
 | `N64RX_MESG_NODIV=0` | 1 | the message-queue rules want IDO's divide (no compare-wrapped osSendMesg/osRecvMesg) |
 | `N64RX_LEARNED=0` (env, n64rx) | 1 | a ROM-only build does not read `games/learned/<code>.<sha1>.txt`, the project's console-learnt facts for that exact ROM (`games/README.md`) |

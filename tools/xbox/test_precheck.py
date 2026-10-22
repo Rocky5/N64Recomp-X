@@ -191,6 +191,11 @@ walk_ws += [NOP] * ((far - 0x10) // 4) + [jr(31), NOP]
 f = AF.walk(_Img(0x80100000, walk_ws), 0x80100000, set())
 check(0x80102800 not in f.tails and f.end == 0x80100000 + far + 8, 'walk: a far j the function reaches is no tail')
 
+# an uncached RDRAM probe's address is a MB boundary; a display-list word lui forms is not (Smash Bros.' 0xA0780000)
+_ft = lambda *c: types.SimpleNamespace(hw=set(), k1ram=False, consts=set(c))   # noqa: E731
+check(emit._reg_or_probe(_ft(0xA0400000)) and not emit._reg_or_probe(_ft(0xA0780000)),
+      'probe rule: 0xA0400000 a probe, 0xA0780000 not')
+
 # a KSEG2/3 TLB mapping on the console (Paper Mario's effects): the next build translates it (XRC_HIGH_TLB)
 with tempfile.TemporaryDirectory() as d:
     lg = pathlib.Path(d) / 'run.log'

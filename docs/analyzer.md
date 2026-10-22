@@ -494,6 +494,13 @@ then reached by another branch was still a tail call: `discover` started a
 function there and split the one it sits in (review 4.6). Now only an
 unreached target is a tail (`N64RX_J_SEEN`). Paper Mario's check: 15
 extra functions, was 17, none lost; nine other games' counts unchanged.
+The register check (`emit.hw_funcs`) now reads an overlay's function with
+the focus on its segment (review 4.3; `N64RX_HW_FOCUS`), and the memory
+probe rule wants a MB boundary (`N64RX_PROBE_MB`): with the first alone,
+Smash Bros.' overlay display-list builders (`lui 0xA078`) were taken for
+probes. Both: Pokémon Snap interprets 4 functions, was 17; Paper Mario 37,
+was 38; Smash, Ocarina, Majora, F-Zero X, Bassmasters, Mario Tennis and
+GoldenEye unchanged.
 
 ## Known gaps
 

@@ -209,7 +209,11 @@ def _reg_or_probe(ft):
     """a register by a fixed address, or RDRAM by a fixed uncached one (a game's
     own memory-size probe at 0xA0400000: Ocarina of Time, F-Zero X, Bassmasters;
     the interpreter's model reads past RDRAM as nothing, recompiled code faults)"""
-    return bool(ft.hw) or ft.k1ram or any(0xA0000000 <= c < 0xA0800000 and not c & 0xFFFF for c in ft.consts)
+    # a probe's address is a MB boundary; a display list's words formed by lui are not (Smash
+    # Bros.' overlay builders: 0xA0780000, read as uncached RDRAM once its overlays were read
+    # focused). N64RX_PROBE_MB=0: any 64 KB boundary, as before
+    step = 0xFFFFF if os.environ.get('N64RX_PROBE_MB', '1') != '0' else 0xFFFF
+    return bool(ft.hw) or ft.k1ram or any(0xA0000000 <= c < 0xA0800000 and not c & step for c in ft.consts)
     # (the upper half of an uncached RDRAM address formed: Ocarina of Time's -O0 check keeps the
     # address on the stack, out of the constant tracker's reach; a handful of functions a game)
 
@@ -220,9 +224,23 @@ def hw_funcs(a: Analysis, live, nm, replaced):
     a later osCartRomInit polling PI_STATUS, a raw SI or AI routine; a game's
     own register code): the runtime's interpreter runs them, its loads and
     stores there going to the register model (xbox/src/rt/mmio.c). A function
-    the rules named and the runtime replaces stays replaced."""
-    return {x: nm[x] for x, f in a.all_funcs().items()
-            if x in live and x != a.entry and nm[x] not in replaced and _reg_or_probe(features(a.img, f))}
+    the rules named and the runtime replaces stays replaced. An overlay's
+    function is read with the image's focus on its segment (as reachable()
+    does): unfocused, the words at its address were another overlay's or none,
+    and one reading SP_STATUS stayed recompiled (review 4.3).
+    N64RX_HW_FOCUS=0: read unfocused, as before"""
+    focus = os.environ.get('N64RX_HW_FOCUS', '1') != '0'
+    prev, out = a.img.focus, {}
+    try:
+        for x, f in a.all_funcs().items():
+            if x not in live or x == a.entry or nm[x] in replaced:
+                continue
+            a.img.focus = a.seg_of(x) if focus and x >> 32 else prev
+            if _reg_or_probe(features(a.img, f)):
+                out[x] = nm[x]
+    finally:
+        a.img.focus = prev
+    return out
 
 
 def report(a: Analysis, ids, live, nm, replaced):
