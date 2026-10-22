@@ -33,6 +33,10 @@ void xrc_trace_enter(const char* name) {
 #ifdef XRC_TRACE_COUNT
     count_one(name);
 #endif
+#ifdef XRC_TRACE_LOG   /* diagnosis: -DXRC_TRACE_LOG=<n>, the first n entries logged as they happen (a game that
+                        * resets the console leaves no crash report to dump the ring into: Armorines) */
+    if (i < (unsigned)(XRC_TRACE_LOG)) xhw_logf("[TRACE] %u %s (thread %p)", i, name, xhw_thread_self());
+#endif
     s_name[i] = name;
     s_vram[i] = 0;
     s_thread[i] = xhw_thread_self();
