@@ -2843,3 +2843,45 @@ disassembly), each checked here in xemu before it went in.
   (a destination pointer of 0) and then runs it; NHL 99 and Bomberman 64:
   The Second Attack store through a NULL pointer (0x28, 0x38); RE2's own
   microcode is not drawn; NBA Courtside; JFG's 3D.
+
+## 2026-10-22 (evening): set 19 on red, its verdicts, and the fixes after it (red + xemu)
+
+Set 19 (29 release builds at fe59555, `build-host/hwbuild19.sh`) went to
+red, size-verified (`deploy-set19.sh`; sets 17 and 18 never had). The
+maintainer played seven before running out of time; logs pulled with
+`build-host/pull-set19.py` to `C:\xemu\hw\logs<name>`.
+
+- **Diddy Kong Racing** (`vdkr3`): works perfectly. **Gold.**
+- **Castlevania: Legacy of Darkness** (`vcv5`): **Silver**, texture issues.
+- **GoldenEye** (`vge13`): stays Silver; texture flicker on the road markers.
+- **Banjo-Kazooie** (`vbk20`) and **Kirby 64 US** (`vk7`): texture issues,
+  the same in both (Kirby's at the menu). Not seen in xemu. Ruled out from
+  the logs: the texture pool (0 allocations failed) and GPU ordering
+  (freed textures wait for idle; textures are never rewritten in place).
+  What the issues look like is still to ask.
+- **Mario Tennis** (`vmt7`): plays, then froze with the BACK menu on its
+  Paks page: retraces stopped at 1480, the watchdog's hang card. The
+  thread dump shows a deadlock (game scheduler with interrupts off, so
+  holding the runtime lock, waiting for the renderer the menu holds; the
+  VI thread, which feeds the menu, waiting for the runtime lock). Fixed in
+  d41d8cb for every game (`XRC_GFX_LOCK_DROP`, `XRC_MENU_VI_FIRST`);
+  xemu never showed the freeze either way. `vmt8` (the fix) is on red.
+- **Pokémon Snap** (`vsnap13`): the camera still does not move, but the
+  run had 8-10 s on the Beach; the tutorial's first focus came at 7-39 s
+  in xemu (and not at all in two runs). `vsnap14` on red logs the focus
+  flag and the photo count (`[PEEK]` 0x803AE758 / 0x800AE27C): stay on
+  the Beach without touching the stick until "Press Z to aim", then LT
+  and A three times.
+- Not run: the Gold three (SM64, Pilotwings, Smash), Mario Kart, Ocarina,
+  Mario Party, Majora's Mask, JFG, Star Fox and the 13 first-time games.
+
+After it (xemu; host tests after each):
+- **Body Harvest** (4a6db73): three code blocks at one address, one kept;
+  now all, as overlays of one another. 247 frames (before: a DMA to
+  address 0 and a fatal). Smash's play scenario unchanged with it.
+- Earlier this evening (handoff above): NHL 99 (fe59555, e7fd013),
+  Bomberman 64 TSA (bdc626a), Conker (1472782), RE2 (6c53ced).
+
+`[MEM]`/`[CLOCK]` from red's logs: Banjo-Kazooie 50,112 KB free at boot,
+11,772 KB after nv2a (`vbk20`); Kirby 64 50,964 / 27,804 KB (`vk7`); the
+clock line `[CLOCK] cpu 733 MHz`.
