@@ -21,8 +21,7 @@ TIERS = {
         'The road markings flicker.',
         'The frame rate dips in busy scenes (to about 40 fps).')),
     ('NBKE', 0): (SILVER, 'Banjo-Kazooie (US)', (
-        'Static behind the START screen menu.',
-        'A dark, fog-like texture error in the opening intro.')),
+        'A dark, fog-like texture error in the opening intro.',)),
     ('CZLE', 2): (SILVER, 'Ocarina of Time 1.2 (US)', (
         'Short hitches and small audio skips when a new area loads.',
         'Some textures pop in late.',
