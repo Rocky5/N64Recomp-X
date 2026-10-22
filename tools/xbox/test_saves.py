@@ -101,8 +101,33 @@ def test_faulted_thread():
     return len(bad)
 
 
+def test_os_runqueue():
+    """saves.os_runqueue: the queue head's priority against the running thread's, the loads in either order"""
+    import os
+    bad = []
+    strict = words(0x8F490004, 0x3C0A800C, 0x8D4A8918, 0x8D4B0004, 0x012B082A)   # lw t1,4(k0); lui; lw; lw 4(t2); slt
+    turok = words(0x3C0A800C, 0x8D4A8918, 0x8F490004, 0x8D4B0004, 0x00000000, 0x012B082A)
+    if saves.os_runqueue(strict) != ['-DXRC_OS_RUNQUEUE=0x800B8918u']:
+        bad.append('the strict order')
+    if saves.os_runqueue(turok) != ['-DXRC_OS_RUNQUEUE=0x800B8918u']:
+        bad.append("the queue loaded first (Turok 2's)")
+    os.environ['N64RX_RUNQ_LOOSE'] = '0'
+    try:
+        if saves.os_runqueue(turok) != []:
+            bad.append('N64RX_RUNQ_LOOSE=0: the strict order only')
+    finally:
+        del os.environ['N64RX_RUNQ_LOOSE']
+    other = words(0x3C0A800C, 0x8D4A97E8, 0x8F490004, 0x8D4B0004, 0x00000000, 0x012B082A)
+    img = bytes(0x40) + turok + bytes(0x40) + other
+    if saves.os_runqueue(img) != ['-DXRC_OS_RUNQUEUE=0x800B97E8u'] or             saves.os_runqueue(img, 0x30) != ['-DXRC_OS_RUNQUEUE=0x800B8918u']:
+        bad.append("the copy after near, else the last")
+    for b in bad:
+        print(f'  FAIL os_runqueue: {b}')
+    return len(bad)
+
+
 def main():
-    nbad = test_cont_max() + test_thread_fr() + test_os_exception() + test_faulted_thread()
+    nbad = test_cont_max() + test_thread_fr() + test_os_exception() + test_faulted_thread() + test_os_runqueue()
     rc = hostcc.run(['tests/xbox/test_saves.c', 'xbox/src/rt/ultra/savedev.c', 'xbox/src/rt/ultra/pfs.c',
                      'xbox/src/rt/ultra/pi.c'],
                     includes=['xbox/include', 'xbox/include/xrc', 'xbox/src/rt', 'xbox/src/rt/ultra'],

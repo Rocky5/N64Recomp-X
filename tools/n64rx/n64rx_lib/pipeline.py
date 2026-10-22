@@ -894,7 +894,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     flags += saves.consistent_threads(saves.running_thread(pack, recomp_bytes),   # __osRunningThread, kept by thread.c
                                       saves.faulted_thread(recomp_bytes, exc[0] if exc else None))   # its fault path (tlb.c)
     flags += saves.os_exception(recomp_bytes, segs)      # its exception code, for a TLB miss (interp.c)
-    flags += saves.os_runqueue(recomp_bytes)            # its run queue, a sentinel while that code runs
+    flags += saves.os_runqueue(recomp_bytes, exc[0] if exc else None)   # its run queue, a sentinel while that code runs
     fr = saves.thread_fr(recomp_bytes)                   # the float mode its osCreateThread gives (recomp.h XRC_FR)
     flags += [f'-DXRC_FR={fr}'] if fr else []
     flags += learnmod.rdram_user(learnt)                 # RDRAM's home when KUSEG lands on the kernel's (mem.c)

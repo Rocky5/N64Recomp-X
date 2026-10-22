@@ -183,33 +183,44 @@ def exception_copy(rom_data: bytes, segments=()):
     return linked[-1] if linked else copies[-1] if copies else None
 
 
-def os_runqueue(rom_data: bytes):
+def os_runqueue(rom_data: bytes, near=None):
     """-DXRC_OS_RUNQUEUE=<addr>: libultra's __osRunQueue, from __osException
     comparing the running thread's priority with the queue head's
-    (lw rP, 4(k0); lui rQ, hi; lw rQ, lo(rQ); lw rH, 4(rQ); slt). The
+    (lw rP, 4(k0); lui rQ, hi; lw rQ, lo(rQ); lw rH, 4(rQ); slt, the first
+    load anywhere among them: Turok 2's loads the queue first). The
     runtime's threads never fill the game's own queue; while it runs the
     game's exception code on a TLB miss (rt/interp.c) the queue points at a
     sentinel of priority -1, so that code returns to the running thread
-    (Conker read the empty queue's head)."""
-    found, i = None, rom_data.find(bytes.fromhex('8F'), 0)
-    words = lambda o: [int.from_bytes(rom_data[o + 4 * k:o + 4 * k + 4], 'big') for k in range(5)]
-    i = 0
+    (Conker read the empty queue's head; Turok 2 popped NULL from it). The
+    copy in the __osException the runtime runs (after ROM offset `near`,
+    exception_copy's), else the last found."""
+    word = lambda o: int.from_bytes(rom_data[o:o + 4], 'big') if 0 <= o and o + 4 <= len(rom_data) else 0
+    found, i = [], 0
     while True:
         i = rom_data.find(b'\x8f\x49\x00\x04', i)   # lw t1, 4(k0)
         if i < 0:
             break
         if i % 4 == 0:
-            w = words(i)
-            rq = (w[1] >> 16) & 31
-            if (w[1] >> 26 == 15 and w[2] >> 26 == 35 and (w[2] >> 21) & 31 == rq and (w[2] >> 16) & 31 == rq
-                    and w[3] >> 26 == 35 and (w[3] >> 21) & 31 == rq and w[3] & 0xFFFF == 4
-                    and w[4] >> 26 == 0 and w[4] & 63 == 42):
-                lo = w[2] & 0xFFFF
-                addr = ((w[1] & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF
+            # lui rQ, hi; lw rQ, lo(rQ) near it (N64RX_RUNQ_LOOSE=0: right after it only, the rule before)
+            for a in (range(i - 12, i + 8, 4) if os.environ.get('N64RX_RUNQ_LOOSE', '1') != '0' else (i + 4,)):
+                w0, w1 = word(a), word(a + 4)
+                rq = (w0 >> 16) & 31
+                if not (w0 >> 26 == 15 and w1 >> 26 == 35 and (w1 >> 21) & 31 == rq and (w1 >> 16) & 31 == rq):
+                    continue
+                k = next((k for k in range(a + 8, a + 24, 4) if word(k) >> 26 == 35 and (word(k) >> 21) & 31 == rq
+                          and word(k) & 0xFFFF == 4), None)   # lw rH, 4(rQ)
+                if k is None or not any(word(m) >> 26 == 0 and word(m) & 63 == 42 for m in range(k + 4, k + 16, 4)):
+                    continue
+                lo = w1 & 0xFFFF
+                addr = ((w0 & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF
                 if _ram(addr):
-                    found = addr
+                    found.append((i, addr))
+                break
         i += 4
-    return [f'-DXRC_OS_RUNQUEUE=0x{found:08X}u'] if found else []
+    if not found:
+        return []
+    inside = [f for f in found if near is not None and near <= f[0] < near + 0x1000]
+    return [f'-DXRC_OS_RUNQUEUE=0x{(inside[0] if inside else found[-1])[1]:08X}u']
 
 def thread_fr(rom_data: bytes):
     """XRC_FR (recomp.h XRC_FODD): 1 when the game's osCreateThread gives a
