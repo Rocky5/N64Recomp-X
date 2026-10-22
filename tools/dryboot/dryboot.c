@@ -564,11 +564,14 @@ static int wr(uint32_t va, uint64_t v, int n) {
 }
 
 static void tlb_write(int i) {
+    static unsigned s_said;
     Tlb* t = &C.tlb[i & 31];
     t->mask = (uint32_t)C.cp0[PAGEMASK] & 0x01FFE000u;
     t->hi = (uint32_t)C.cp0[ENTRYHI] & ~(t->mask | 0x1F00u);
     t->lo0 = (uint32_t)C.cp0[ENTRYLO0] & 0x3FFFFFFFu;
     t->lo1 = (uint32_t)C.cp0[ENTRYLO1] & 0x3FFFFFFFu;
+    if (s_verbose && s_said++ < 48)
+        fprintf(stderr, "tlb %2d: mask %08x hi %08x lo0 %08x lo1 %08x (pc %08x)\n", i & 31, t->mask, t->hi, t->lo0, t->lo1, C.pc);
 }
 
 /* ---------------------------------------------------- what is learnt */
@@ -583,6 +586,7 @@ static unsigned s_nseen, s_nfunc, s_ncode;
 static uint32_t s_kuseg_seen[64];
 static unsigned s_nkuseg;
 static int s_rdram8;
+static uint32_t s_rdram_mb = 4;   /* osMemSize's (--rdram) */
 #define MAX_PAGES 4096
 static struct { uint32_t va, hash; } s_pages[MAX_PAGES];
 static unsigned s_npages;
@@ -708,7 +712,7 @@ static void entered(uint32_t va, uint32_t caller) {
             fprintf(s_txt, "kuseg %08x 0\n", (unsigned)region);
         }
     }
-    if (p >= 0x400000u && !s_rdram8) {
+    if (p >= 0x400000u && !s_rdram8 && s_rdram_mb == 8) {
         s_rdram8 = 1;
         fprintf(s_txt, "rdram 8\n");
     }
@@ -1306,6 +1310,7 @@ int main(int argc, char** argv) {
         i++;
     }
     if (!entry || (mb != 4 && mb != 8)) return usage();
+    s_rdram_mb = mb;
     if (!(f = fopen(rom_path, "rb"))) { fprintf(stderr, "dryboot: cannot read %s\n", rom_path); return 1; }
     fseek(f, 0, SEEK_END);
     n = ftell(f);
@@ -1315,7 +1320,10 @@ int main(int argc, char** argv) {
     s_rom = (uint8_t*)malloc(s_romsize);
     if (!s_rom || fread(s_rom, 1, s_romsize, f) != s_romsize) { fclose(f); return 1; }
     fclose(f);
-    s_ramsize = mb << 20;
+    /* 8 MB kept whatever osMemSize says: a 4 MB game's stack top writes past 4 MB (All-Star Baseball
+     * 2000's entry: sp 0x803FFFF0, the 5th argument at 0x14(sp)) and reads it back, as the console
+     * runtime's window lets it (an access past the end went nowhere: the TLB mapped nothing) */
+    s_ramsize = 8u << 20;
     s_ram = (uint8_t*)calloc(1, s_ramsize);
     s_cpuw = (uint32_t*)calloc(s_ramsize / 128, sizeof *s_cpuw);
     s_ran = (uint32_t*)calloc(s_ramsize / 128, sizeof *s_ran);
@@ -1332,7 +1340,7 @@ int main(int argc, char** argv) {
     wbe32(s_ram + 0x30C, 0);
     wbe32(s_ram + 0x310, cic);
     wbe32(s_ram + 0x314, 0);
-    wbe32(s_ram + 0x318, s_ramsize);
+    wbe32(s_ram + 0x318, mb << 20);   /* osMemSize: the build's */
     if (boot_size > s_romsize - 0x1000) boot_size = s_romsize - 0x1000;
     s_boot_lo = entry & 0x1FFFFFFFu;
     s_boot_hi = s_boot_lo + boot_size;
