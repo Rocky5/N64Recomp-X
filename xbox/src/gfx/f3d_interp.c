@@ -796,6 +796,10 @@ static struct { uint32_t frame, addr, key; TexEntry* e; } s_memo[MEMO];
 static int s_fullsync;
 static void tex_miss(const char* why, int tidx);
 static void fb_touch(uint32_t addr, uint32_t bytes);
+#ifndef XGFX_ZCLEAR_INFER
+#define XGFX_ZCLEAR_INFER 1   /* a far-depth fill before any Z image is the Z clear (do_fillrect) */
+#endif
+static uint32_t s_cimg_siz_cur;   /* SETCIMG's pixel size, whatever the image (XGFX_ZCLEAR_INFER) */
 static uint32_t s_cimg_w, s_cimg_siz, s_cimg_maxy;   /* the colour image's width and pixel size; the frame's lowest scissor row */
 
 
@@ -1813,6 +1817,19 @@ static void do_fillrect(uint32_t w0, uint32_t w1) {
     int cycle = (R.omh >> F3D_G_MDSFT_CYCLETYPE) & 3;
     f3d_fillrect_decode(w0, w1, &lrx, &lry, &ulx, &uly);
     if (cycle >= 2) { lrx++; lry++; }   /* fill/copy include the lower-right edge */
+    /* a list that clears its depth buffer through the colour image before
+     * it names the Z image (Banjo-Kazooie: depthbuffer_clear, then
+     * depthbuffer_set): with no Z image known yet (the first frame, a
+     * replayed task), a 16-bit fill of G_MAXFBZ (0xFFFC, the RDP's far depth)
+     * is that clear, and the image is the Z image from here on. It drew as
+     * a colour fill and the depth buffer kept what it held: the frame's
+     * scene failed its depth test (the intro black on the host).
+     * -DXGFX_ZCLEAR_INFER=0: a colour fill, as before */
+    if (XGFX_ZCLEAR_INFER && !R.zimg && R.cimg && cycle == 3 && R.fill == 0xFFFCFFFCu && s_cimg_siz_cur == 2u) {
+        R.zimg = R.cimg;
+        DIRTY();
+        if (XHW_TEST_BUILD) xhw_logf("[GFX] fill of far depth into %08x before any Z image: taken as the Z image", (unsigned)R.cimg);
+    }
     if (R.cimg != R.zimg && lry > 0 && (uint32_t)lry > s_cimg_maxy) s_cimg_maxy = (uint32_t)lry;
     if (R.cimg == R.zimg && R.cimg) {   /* z-buffer clear (Birdman64 gfx.md) */
         float x0 = ulx, y0 = uly, x1 = lrx, y1 = lry;
@@ -3187,6 +3204,7 @@ static void run_dl(const uint32_t* pc) {
             case F3D_G_SETFILLCOLOR: R.fill = w1; break;
             case F3D_G_SETCIMG: {
                 uint32_t c = seg(w1);
+                s_cimg_siz_cur = (w0 >> 19) & 3u;
                 if (XGFX_PROBE && probe_cimg(c, (w0 & 0xFFFu) + 1u, (w0 >> 19) & 3u)) {
                     R.cimg = c;   /* a probe copy's target: not the screen */
                     break;

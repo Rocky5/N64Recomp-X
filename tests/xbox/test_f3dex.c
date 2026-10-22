@@ -54,8 +54,11 @@ void xgfx_draw(const XgfxState* st, const XgfxVtx* v, uint32_t ntris) {
     s_fog = st->fog;
     for (uint32_t i = 0; i < ntris * 3 && s_nv < MAXV; i++) s_v[s_nv++] = v[i];
 }
+static unsigned s_clear_depth;   /* depth clears seen */
 void xgfx_clear(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t argb, int color, int depth, float z01) {
-    (void)x0; (void)y0; (void)x1; (void)y1; (void)argb; (void)color; (void)depth; (void)z01;
+    (void)x0; (void)y0; (void)x1; (void)y1; (void)argb; (void)z01;
+    (void)color;
+    s_clear_depth += depth != 0;
 }
 void xgfx_present(void) {}
 static unsigned s_tex_creates;
@@ -965,6 +968,30 @@ static void test_vi_origin(void) {
     vi_tri_x(320u, 0u);   /* 320 wide and column 0 again for the tests after */
 }
 
+
+/* a far-depth fill into a 16-bit image before any Z image is named
+ * (Banjo-Kazooie clears its depth buffer, then names it): the depth clear,
+ * not a colour fill (XGFX_ZCLEAR_INFER). The Z image is unset first */
+#ifndef XGFX_ZCLEAR_INFER
+#define XGFX_ZCLEAR_INFER_T 1
+#else
+#define XGFX_ZCLEAR_INFER_T XGFX_ZCLEAR_INFER
+#endif
+static void test_zclear_infer(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX       fifo 1.23 Yoshitaka Yasumoto 1997 Nintendo.");
+    s_pc = DL_AT;
+    cmd(0xFE000000u, 0);                                                  /* SETZIMG 0: none named */
+    cmd(0xFF000000u | (0u << 21) | (2u << 19) | (320u - 1u), 0x70000u);   /* SETCIMG the depth buffer's memory */
+    cmd(0xBA001402u, 0x00300000u);                                        /* SETOTHERMODE_H: cycle type FILL */
+    cmd(0xF7000000u, 0xFFFCFFFCu);                                        /* SETFILLCOLOR far depth */
+    cmd(0xF6000000u | (319u << 14) | (239u << 2), 0);                     /* FILLRECT the whole image */
+    cmd(0xB8000000u, 0);
+    s_clear_depth = 0, s_nv = 0;
+    run(&u);
+    CHECK(XGFX_ZCLEAR_INFER_T ? s_clear_depth == 1 && s_nv == 0 : s_clear_depth == 0 && s_nv > 0,
+          "zclear infer: %u fill vertices drawn, %u depth clears", s_nv, s_clear_depth);
+}
+
 int main(void) {
     test_ci();
     setup_data();
@@ -993,6 +1020,7 @@ int main(void) {
     test_zimg_copy();
     test_fog_blender();
     test_vi_origin();
+    test_zclear_infer();
     test_fast3d();   /* and Fast3D once more after the guards' lists */
     if (s_fail) printf("test_f3dex: %d failed\n", s_fail);
     return s_fail ? 1 : 0;
