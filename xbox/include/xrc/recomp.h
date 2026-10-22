@@ -535,10 +535,14 @@ void pause_self(uint8_t* rdram);
  * write_setjmp_sites). Kill switch: N64RX_STRANDS=0. */
 void** xrc_strand_jb(uint32_t buf);
 void xrc_strand_resumed(uint8_t* rdram, recomp_context* ctx, uint32_t buf);
+/* the empty asm after it keeps the call from being a tail call when the
+ * site ends its function: jb must hold this frame, not one already gone
+ * (review 5a.10: clang made it `jmp n64_setjmp`) */
 #define XRC_SETJMP(rdram, ctx) do { \
         uint32_t xrc_b_ = (uint32_t)(ctx)->r4; \
         if (__builtin_setjmp(xrc_strand_jb(xrc_b_))) xrc_strand_resumed(rdram, ctx, xrc_b_); \
         else n64_setjmp(rdram, ctx); \
+        __asm__ volatile("" ::: "memory"); \
     } while (0)
 
 #ifdef __cplusplus
