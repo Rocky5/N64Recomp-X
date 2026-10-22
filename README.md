@@ -31,8 +31,8 @@ real Xbox moves a game up:
 - **Silver**, playable with bugs that do not stop you: Mario Kart 64,
   GoldenEye 007, Banjo-Kazooie, Ocarina of Time.
 - **Experimental**, everything else: it may boot, run partly, or not at
-  all. Across a whole library, 245 of 246 games build today and far fewer
-  run yet; what blocks the rest is tracked in
+  all. Across a whole library, 245 of 246 games build today and 163
+  present frames in xemu (sweep s12), far fewer run well yet; what blocks the rest is tracked in
   [`docs/analyzer.md`](docs/analyzer.md). The plan is
 [`docs/PLAN.md`](docs/PLAN.md); what was verified, and how, is
 [`docs/handoff.md`](docs/handoff.md).
@@ -56,7 +56,7 @@ real Xbox moves a game up:
 ### From the command line
 
 1. Install Docker Desktop, or run `n64rx doctor --install` for a native
-   toolchain (Windows, macOS, Linux). `n64rx doctor` says what is there and
+   toolchain (Windows, macOS, Linux; verified on Windows so far). `n64rx doctor` says what is there and
    what is missing.
 2. `n64rx info "Your Game (USA).z64"` says what it is and how well it runs;
    `n64rx build "Your Game (USA).z64"` builds it (`--iso FILE` for a disc
@@ -91,6 +91,6 @@ python tools/xbox/make_test_rom.py build-host/test/test.z64
 | L + R + BACK + WHITE | restart, anywhere |
 
 Every game gets the same port: the "TechProGabe Presents..." loading screen,
-output up to 720p, widescreen, the BACK menu and the exit combos. Nothing
+output up to 720p (720p so far in xemu; 480i and 480p on a console), widescreen, the BACK menu and the exit combos. Nothing
 from any game ships with this project, no built game is ever published, and
 nothing derived from a ROM is committed here ([`LICENSE.md`](LICENSE.md)).

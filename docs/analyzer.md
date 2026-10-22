@@ -211,6 +211,38 @@ the function table before the recompiled sections.
    recompiles those (`N64RX_RELOC_OVL=all`: every one). Ocarina of Time:
    468 overlays, all link addresses as the decomp's; Majora's Mask: 612.
 
+## The dry boot: the learning loop's first rounds on the PC (`tools/dryboot/`, `N64RX_DRYBOOT=1`)
+
+`docs/roadmap.md` B2; `docs/decisions.md` has the choices. Before a ROM-only
+build, `n64rx_lib/dryboot.py` builds `tools/dryboot/dryboot.c` with the PC's
+compiler (once per source), runs the ROM's boot in it for
+`N64RX_DRYBOOT_FRAMES` (1800: 30 s of game time, a few seconds here, START
+and A pressed on a schedule), and analyses again with its learn file
+(`<build>/dryboot/learn.txt`, `learn_code.bin`) ahead of any `--learn`. The
+dry boot is a CPU-only N64: the VR4300 with COP0, the TLB and the FPU,
+RDRAM, and an RCP model that answers as the hardware would and finishes
+every task at once. It runs the game's own entry code, libultra, threads and
+exception handler. For each function a call (or a thread's first dispatch)
+enters that the analysis lacks, it writes what the console's safety net
+would: the PI DMA under it, or its page when the CPU made it or the TLB
+maps it.
+
+First builds from the ROM alone (functions in the analysis; libultra names):
+
+| game | without | with the dry boot | the console's learn rounds |
+|---|---|---|---|
+| Dr. Mario 64 | 263, its gzip main segment missed | 998 of the main segment's 1,006 (decomp), boot 263/270, 74 names (unchanged) | 3 rounds |
+| GoldenEye 007 | 665 in 2 segments | 3,797 in 7, 119 names | 30 rounds: 3,821 in 7, 118 |
+| Banjo-Kazooie | (boot loader only) | 6,567 in 5, 107 names | 22 rounds: 6,999 in 2, 108 |
+| Mario Tennis | - | 1,346 in 14, 81 names | 32 rounds: 2,375 in 29 |
+| Blast Corps | - | 1,508 in 10, 96 names | 15 rounds |
+
+`decomp_check.py --learn <file>` scores a learn file against a decomp.
+Open: Banjo-Kazooie takes a TLB miss on a bad pointer at frame 293 of the
+dry boot (a CPU or RCP difference not found yet), so what it learns stops
+there; Mario Tennis's matches need longer runs or better input than the
+schedule's; nothing here is checked on a console yet.
+
 ## How well it does (checked against decomps)
 
 `tools/xbox/decomp_check.py` runs the analyser on a ROM and compares it with

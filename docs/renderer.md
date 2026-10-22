@@ -287,8 +287,9 @@ screen.
   from its ROM alone).
 - F3DEX2's forced matrix (`G_MV_MATRIX` + `G_MW_FORCEMTX`), `G_MV_POINT`,
   G_LINE3D, `G_DMA_IO`, `G_SPECIAL_*`: skipped (counted).
-- F3DEX2 is verified on the host only (no F3DEX2 game runs from its ROM
-  yet: Paper Mario and Pokémon Snap stop at overlays sharing a vram, Dr.
-  Mario 64 at a KSEG1 register read, Smash Bros. in the analyser).
+- F3DEX2 runs from the ROM alone in Pokémon Snap (Beach on a console),
+  Kirby 64, Ocarina of Time (Silver) and Ridge Racer 64; 70 of the s12
+  sweep's games switch to an F3DEX2 microcode (`sweep.py --rescan`'s
+  table).
 - Lighting: F3DEX2's lookat (`G_MV_LIGHT` offsets 0 and 24) is not kept;
   texgen uses the eye-space normal as for Fast3D.

@@ -1560,3 +1560,66 @@ its music and effects with holes). Near the end the span is now what is
 left of RDRAM: 0 bad addresses. The regression set's 13 games had none
 before or after. The first four bad addresses are now logged with their
 command (`[AUDIO] bad address ...`). Kill switch `-DXRC_ASP_SPAN_END=0`.
+
+## The run token: libultra's one-thread-at-a-time, off until a console set (2026-10-22, `ultra/thread.c`, `XRC_RUN_TOKEN`)
+
+`docs/roadmap.md` B1. Every thread switch the record added (`XRC_START_DEFER`,
+`XRC_SEND_YIELD`, `XRC_RANK_LEVELS`, `XRC_INTS_BOOST`) patched one case of
+one fact: the kernel time-slices threads that share a level and runs any
+lower level while a thread waits on a host lock, where libultra runs the
+highest-priority runnable thread alone until it blocks. The token makes
+that the rule: one game thread holds it at a time (the highest-priority
+ready one, FIFO among equals), it is handed on only at N64 blocks (a
+queue, a stop, a fault wait, the idle loop's `pause_self`, a polled
+`__osEnqueueAndYield`), never at a host wait, and a thread readied that
+outranks the holder takes it, waiting for interrupts to come on when they
+are off. The runtime's own threads are the interrupts and never hold it.
+The kernel's levels stay: they still preempt, and a holder preempted by
+an interrupt's wake-up runs on to its next runtime call only where it
+shares a level with the new holder (the one residual difference, marked
+DIVERGES). Rejected: demoting a preempted holder to the lowest level (a
+kernel call from the VI thread per preemption, and priority inversion on
+any host lock the demoted thread held). Off by default: it changes every
+game's threading and only a console set says it is the better build;
+`tests/xbox/test_thread.c` checks the order on pthreads.
+
+## The analyser's first fit stays; a probe pass reports a second fit (2026-10-22, `analyze/libultra.py`, `N64RX_NAME_UNIQUE`, `N64RX_NAME_BITS`)
+
+Review 4.1 found the per-function rules name the first function that fits.
+Deciding at a pass's end instead (every fit collected, named only when one)
+moved names in 7 of 27 library games, because the rules read each other's
+names within a pass: Mario Party's `osSetEventMesg` went to
+`__osSetHWIntrRoutine` once `osSendMesg` was named a rule later. So the
+first fit keeps the name, and a probe pass after the names settle runs every
+rule with nothing named and lists each name that a second function of a
+different shape fits (`analysis.txt`). What the probe found was fixed in the
+rules themselves (`osViBlack`'s bit 0x20 against `osViRepeatLine`'s 0x40,
+`osMapTLBRdb`'s 0xC0000000 entry against games' own TLB writers,
+`osEepromProbe`'s call besides the SI access pair against `osContSetCh`).
+`N64RX_NAME_UNIQUE=1` gives an ambiguous name to the fit nearest the other
+libultra names; unnaming was rejected (second copies of `__osDisableInt` in
+Star Fox 64 and Blast Corps would lose their name).
+
+## The dry boot: a CPU-only N64 on the PC, not a console round (2026-10-22, `tools/dryboot/dryboot.c`, `n64rx_lib/dryboot.py`, `N64RX_DRYBOOT`)
+
+`docs/roadmap.md` B2. Code a game makes at run time (Rare's and Camelot's
+decompressed segments, Dr. Mario 64's gzip main segment, GoldenEye's code
+paged in behind the TLB) needed the console, round after round, before a
+user's build was whole. The dry boot runs the ROM's own boot on the PC: a
+VR4300 written here (not `interp.c`, a function-level interpreter that
+recurses on the host stack and cannot follow libultra's `eret` thread
+switches), RDRAM and an RCP that finishes every task at once, the game's
+own libultra and exception handler running as they would on the console.
+It writes the console safety net's formats, so nothing new is taught to
+the analyser and what is learnt stays in the build folder (a page the CPU
+wrote is the same RDRAM capture the console's net saves). Choices: a page
+counts as the CPU's when most of its words were written since a DMA (the
+exception vectors and a patched word leave a boot page the ROM's); a page
+is saved again only when its code changed, not data beside it; a page's
+superseded versions are dropped unless an older one comes back (a loader
+replaced for good made learn.py keep Banjo-Kazooie's block twice, as an
+overlay, whose libultra copy is never named); TLB-mapped code is saved by
+its virtual page, as the console's net does; thread entries are `eret`
+targets that never ran, were no exception's EPC and follow no call; START
+and A are pressed on a schedule so menus give way to the code they load.
+Off by default until a console set runs builds made with it.
