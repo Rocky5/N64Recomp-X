@@ -200,6 +200,50 @@ def tlb_entry(rom, entry):
     return None
 
 
+def tlb_main(rom, entry, main):
+    """A main that maps the boot code's own pages inline and jumps into them
+    (Rare's Conker: main at 0x80005AB0 writes PageMask 0x7FE000, EntryHi
+    0x10000000, EntryLo0 PFN 0, EntryLo1 PFN 0x400, tlbwi, then jr
+    0x10001050). The code IPL3 copied runs at the virtual address of its
+    physical one, and its jal targets are linked there (0x0C0089BC from
+    0x10001068 is 0x100226F0). Returns (target, base) with base = the virtual
+    address of physical 0, or None. Straight-line only: a call or a branch
+    before the jr is not this shape."""
+    off = 0x1000 + (main - entry)
+    if not 0x1000 <= off <= len(rom) - 0x100:
+        return None
+    regs, cop0, tlb = {0: 0}, {}, None
+    for i in range(48):
+        o = off + 4 * i
+        w = int.from_bytes(rom[o:o + 4], 'big')
+        ins = Ins(w, main + 4 * i)
+        if ins.op == 15:
+            regs[ins.rt] = ins.imm << 16
+        elif ins.op in (8, 9) and ins.rs in regs:
+            regs[ins.rt] = (regs[ins.rs] + ins.simm) & 0xFFFFFFFF
+        elif ins.op == 13 and ins.rs in regs:
+            regs[ins.rt] = regs[ins.rs] | ins.imm
+        elif ins.cop0 and ins.cop0[0] == 'mt':
+            if ins.rt in regs:
+                cop0[ins.rd] = regs[ins.rt]
+        elif w == 0x42000002:   # tlbwi
+            tlb = dict(cop0)
+        elif ins.is_jr or ins.is_jalr:
+            t = regs.get(ins.rs)
+            if tlb is None or t is None or t >= 0x80000000 or not {5, 10, 2} <= set(tlb) or not tlb[2] & 2:
+                return None
+            base = ((tlb[10] & ~0x1FFF) - ((tlb[2] >> 6) << 12)) & 0xFFFFFFFF
+            load = entry & 0x1FFFFFFF
+            if not base + load <= t < base + load + 0x100000:
+                return None
+            return t, base
+        elif ins.is_jal or ins.is_j or ins.is_branch:
+            return None
+        elif ins.dest is not None:
+            regs.pop(ins.dest, None)
+    return None
+
+
 def _table(img, insns, i, fstart):
     """A jump table at the jr at insns[i]: walk back for lw rX, lo(rB) and
     lui rB, hi (with an addu of the index between), bounded by an earlier

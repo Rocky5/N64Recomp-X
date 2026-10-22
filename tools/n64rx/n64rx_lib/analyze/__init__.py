@@ -17,6 +17,13 @@ from . import funcs as F
 from . import segments as S
 
 BOOT_PLAIN = os.environ.get('N64RX_BOOT_PLAIN', '1') != '0'   # Analysis.overlays
+# the TLB template's second shape: an SDK entry whose main maps the boot code
+# with an inline tlbwi and jumps into the mapping (funcs.tlb_main: Conker).
+# Analysed at KSEG0, every function the game runs at 0x1000xxxx was unknown
+# to the function table (each call through the safety net), libultra was
+# named at addresses never called, and the game's own osStartThread's eret
+# ended the boot ("The boot code came back"). N64RX_TLB_MAIN=0: KSEG0, as before
+TLB_MAIN = os.environ.get('N64RX_TLB_MAIN', '1') != '0'
 
 
 class AnalysisError(Exception):
@@ -100,6 +107,28 @@ def analyze(rom, extra_segments=()):
             entry, e = entry - off, e2
             break
     bss, bss_size, main = e
+    tm = F.tlb_main(rom, entry, main) if TLB_MAIN else None
+    if not tm:
+        return _analyze_sdk(rom, entry, bss, bss_size, main, extra_segments)
+    # analysed where main maps it only when that is where the whole image runs: its functions there cover
+    # most of what IPL3 copied (Conker: 0x24038 of 0x2C4B0 bytes). Perfect Dark's main maps 0x70000000
+    # the same way, but past its first pages what runs there is code it inflates (0x7FAC of 0x89E20
+    # covered): as one ROM segment there its learnt functions were compiled from the compressed bytes
+    # (4 libultra names against 85, a crash), so it stays at KSEG0 with its captures, as before
+    a_t = _analyze_tlb(rom, entry, (tm[0], tm[1], main), extra_segments,
+                       load=entry & 0x1FFFFFFF, size=bss - entry, bss=bss)
+    cover = sum(f.end - f.start for f in a_t.funcs.get('boot', {}).values())
+    if 2 * cover >= bss - entry:
+        a_t.kseg0_main = main   # the game's own, whatever libultra function it looks like (romonly)
+        return a_t
+    a = _analyze_sdk(rom, entry, bss, bss_size, main, extra_segments)
+    a.notes.append(f'main {main:08X} maps {tm[1]:08X} onto physical 0 and jumps to {tm[0]:08X}, but code there '
+                   f'covers only {cover:#x} of {bss - entry:#x} bytes: analysed at KSEG0')
+    return a
+
+
+def _analyze_sdk(rom, entry, bss, bss_size, main, extra_segments):
+    """the SDK's shape: ROM 0x1000 at the entry, up to the BSS"""
     img = F.Image(rom)
     boot = F.Segment('boot', 0x1000, entry, bss - entry)
     if not 0 < boot.size <= 0x100000:
@@ -125,21 +154,22 @@ def analyze(rom, extra_segments=()):
     return a
 
 
-def _analyze_tlb(rom, entry, t, extra_segments):
+def _analyze_tlb(rom, entry, t, extra_segments, load=0x400, size=None, bss=None):
     """the TLB template (funcs.tlb_entry): the entry and its TLB writer run at
     KSEG0 (a small segment of their own), the rest of what IPL3 copied runs
-    where the TLB maps it: physical 0x400 at base + 0x400 (the game's own
-    entry maps the pages; the runtime aliases them, rt/tlb.c)"""
+    where the TLB maps it: physical `load` (0x400; Conker's 6105 IPL3: 0x1000)
+    at base + load (the game's own entry or main maps the pages; the runtime
+    aliases them, rt/tlb.c)"""
     main, base, helper = t
     img = F.Image(rom)
     kseg0 = F.Segment('entry', 0x1000, entry, max(helper - entry + 0x100, 0x100))
-    code = F.Segment('boot', 0x1000, base + 0x400, min(0x100000, len(rom) - 0x1000))
+    code = F.Segment('boot', 0x1000, base + load, size or min(0x100000, len(rom) - 0x1000))
     img.segments += [kseg0, code]
-    a = Analysis(entry, main, base + 0x400 + code.size, img)
+    a = Analysis(entry, main, bss if bss is not None else base + load + code.size, img)
     a.funcs['entry'] = F.discover(img, kseg0, [entry, helper])
     a.funcs['boot'] = F.discover(img, code, [main])
     a.notes.append(f'TLB-mapped code: the entry at {entry:08X} maps {base:08X} onto physical 0 and calls {main:08X}; '
-                   f'ROM 0x1000 at {base + 0x400:08X}, {code.size:#x} bytes, {len(a.funcs["boot"])} functions')
+                   f'ROM 0x1000 at {base + load:08X}, {code.size:#x} bytes, {len(a.funcs["boot"])} functions')
     for seg in extra_segments:
         _add(a, seg, [seg.vram])
     while True:

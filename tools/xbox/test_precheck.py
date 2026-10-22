@@ -160,6 +160,23 @@ probe_ws[3] = NOP   # a load alone (a heap's end compared, not a probe)
 an.img.rom = struct.pack(f'>{len(probe_ws)}I', *probe_ws)
 check(not romonly._wants_8mb(an), 'a load alone: 4 MB')
 
+# a main that maps the boot code with its own tlbwi and jumps there (Conker): its target and base
+from n64rx_lib.analyze import funcs as AF  # noqa: E402
+T0_, T1_ = 8, 9
+def ori(rt, rs, imm): return i_(13, rs, rt, imm)
+def mtc0(rt, rd): return (16 << 26) | (4 << 21) | (rt << 16) | (rd << 11)
+main_ws = [lui(T0_, 0x007F), ori(T0_, T0_, 0xE000), mtc0(T0_, 5),     # PageMask 4 MB pages
+           lui(T0_, 0x1000), mtc0(T0_, 10),                            # EntryHi 0x10000000
+           ori(T0_, 0, 0x1F), mtc0(T0_, 2),                            # EntryLo0 PFN 0, valid
+           lui(T1_, 1), ori(T1_, T1_, 0x1F), mtc0(T1_, 3),             # EntryLo1 PFN 0x400
+           0x42000002,                                                  # tlbwi
+           lui(T0_, 0x1000), addiu(T0_, T0_, 0x1050), jr(T0_), NOP]
+rom = b'\0' * 0x1000 + b'\0' * 0x40 + struct.pack(f'>{len(main_ws)}I', *main_ws) + b'\0' * 0x200
+check(AF.tlb_main(rom, 0x80001000, 0x80001040) == (0x10001050, 0x10000000), 'tlb_main: target and base')
+main_ws[11:13] = [lui(T0_, 0x2000), addiu(T0_, T0_, 0x1050)]          # a jump outside the mapping's image
+rom = b'\0' * 0x1040 + struct.pack(f'>{len(main_ws)}I', *main_ws) + b'\0' * 0x200
+check(AF.tlb_main(rom, 0x80001000, 0x80001040) is None, 'tlb_main: a jump elsewhere')
+
 # a KSEG2/3 TLB mapping on the console (Paper Mario's effects): the next build translates it (XRC_HIGH_TLB)
 with tempfile.TemporaryDirectory() as d:
     lg = pathlib.Path(d) / 'run.log'

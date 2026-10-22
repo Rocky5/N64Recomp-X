@@ -90,6 +90,15 @@ def make(rom, bdir, base=None, learnt=None):
     ids, _N = libultra.identify(a.img, {k: f for k, f in a.all_funcs().items() if k < 1 << 32})
     ids.pop(a.entry, None)   # the entry code is the game's own, whatever it looks like (South Park's clears the TLB)
     ids.pop(a.main, None)    # and so is main (Conker's and GoldenEye's set up the TLB, osMapTLBRdb's shape)
+    # a main that maps the boot code and jumps into it (analyze.TLB_MAIN: Conker's at 0x80005AB0 fits
+    # osUnmapTLBAll first): not named, and the name goes to the next address it fits (0x10008120), the
+    # one the game calls
+    km = getattr(a, 'kseg0_main', None)
+    gone = ids.pop(km, None) if km is not None else None
+    if gone:
+        nxt = next((c for c in _N.ambiguous.get(gone, ()) if c != km and c not in ids), None)
+        if nxt is not None:
+            ids[nxt] = gone
     for n, cands in sorted(_N.ambiguous.items()):   # libultra.py's probe pass: a second, different fit
         a.notes.append(f'libultra: {n} fits {", ".join(f"{c & 0xFFFFFFFF:08X}" for c in cands)} '
                        f'({"the nearest the other names" if libultra.NAME_UNIQUE else "the first"} named; '
