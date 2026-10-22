@@ -2568,3 +2568,48 @@ with both (`vsf1`, title ID 4E5260B9).
   xemu, default switches): every one presents (Kirby 64 (E) once stuck
   at "Reading the ROM" with four xemus running, 2825 frames on a rerun);
   no crash.
+
+## 2026-10-22: a roadmap and a code review of dev at ba03cd1 (host only, no hardware, no xemu)
+
+- **`docs/roadmap.md`** (new): from seven games to the top 100 and 25
+  Gold. The record's failures sorted into seven cross-game buckets ranked
+  by games moved per week of work (B1 a run token for libultra's thread
+  semantics, B2 a build-time dry boot for code the analyser cannot see, B3
+  microcodes, B4 framebuffer effects, B5 code on demand, B6 the M3
+  measurement and the `restrict` lever, B7 unnamed libultra); six phases
+  with exit checks; the 25 Gold candidates and the gap for each; the
+  top-100 appendix (the record, the bucket, the No-Intro and mupen64plus
+  facts, engine notes to verify); questions for the maintainer.
+- **`docs/review-2026-10.md`** (new): the code review of `dev` at
+  `ba03cd1`, each item CONFIRMED or PLAUSIBLE with file:line: the host
+  tests, the generated code's aliasing cost, the PC tool and the app
+  (security, supply chain, robustness), the analyser, the runtime core,
+  the libultra layer, the renderer, the platform layer, licences, docs
+  debt, test coverage. The highs: 3.1 (`n64rx` deletes an existing folder
+  named like the ROM's header title), 1.1 and 1.2 (host tests red on
+  Linux), 5b.1 (no retrace message to a 1- or 2-slot VI queue), 5a.1
+  (`section_addresses` overrun), 4.1 (the naming rules' uniqueness check);
+  the roadmap's section 8 ranks the top 13.
+- Verified how: the host tests run on Linux (18 of 22 entries green;
+  `test_mmio`'s link failure and `test_f3dex`'s GCC `-Werror` failures are
+  review items 1.1 and 1.2; `test_splash` needs nxdk, `test_analyze`
+  checked 0 pairs with no ROM); a codegen experiment with the project's own
+  flags and `recomp.h` on the generated code's contract (with `restrict` on
+  the two parameters a four-instruction MIPS fill loop goes from 6 x86
+  instructions with 4 memory operands at 32-bit registers, 15 with 8 at
+  64-bit, to 4 register-only ones in both: roadmap B6); the display-list
+  interpreter fuzzed
+  on the host (the real `f3d_interp.c` and `texconv.c` over an RDRAM window
+  with guard pages, 12,600 lists: three overrun classes, no output-contract
+  violation; review 5c); SHA-1 and the XBE section finder checked on the
+  host (review 5d.1); host harnesses linking the real runtime and libultra
+  sources against stand-ins (review 5a, 5b).
+- Not verified: nothing ran on a console or in xemu; no ROM (synthetic
+  ROMs and hand-written MIPS only); LLVM 21.1.8 and nxdk are not on the
+  host (clang 18 and GCC 13 stood in). No code was changed.
+- Gaps: the renderer, platform layer and audio HLE reviews are shallower
+  than the rest (their reviewers were stopped: review 5c, 5d, 9); the
+  `nv2a_cc.c` combiner cross-check against an RDP model was lost and must
+  be redone. The top-100 facts come from the No-Intro DAT and the
+  mupen64plus database, not from carts; the engine column waits for the
+  sweep's microcode columns (roadmap B3).

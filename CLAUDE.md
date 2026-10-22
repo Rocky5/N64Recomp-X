@@ -115,6 +115,8 @@ the approach (§1), the architecture (§3), the build, game packs and tests
 | `docs/testing.md` | host tests, the xemu runner, scripted input, the decomp check and the library sweep, the switch table |
 | `docs/decisions.md` | decisions made while building and why (incl. the plan's departures) |
 | `docs/compat.md` | each game's tier (Gold fully working, Silver playable, Experimental the rest), the rules that move a game, the console run behind each |
+| `docs/roadmap.md` | the plan to the top 100 and 25 Gold: the seven cross-game buckets ranked, the phases, the 25 candidates and the gap for each, the top-100 appendix with the record and the DB facts, questions for the maintainer |
+| `docs/review-2026-10.md` | the code review of `dev` at `ba03cd1`: host-test state, the generated code's aliasing cost, the PC tool's security and robustness, the analyser, runtime, libultra layer, renderer, platform, licences, docs debt, test coverage; each item CONFIRMED or PLAUSIBLE with file:line |
 | `docs/handoff.md` | where things stand (games x xemu x console), then per milestone and per piece of work: verified how, not verified, gaps |
 | `docs/look/` | the logo (`logo/`: mark, mono, lockups; `tools/xbox/render_logo.js` renders the icons); the loading screen's baseline shots (xemu, STILL); the BACK menu card's, Paks page's and Controls page's host previews |
 | `games/README.md` | how a game pack is made |
