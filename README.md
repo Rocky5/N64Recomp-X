@@ -27,9 +27,10 @@ per-game file needed.
 Every game has a tier ([`docs/compat.md`](docs/compat.md)), and only a
 real Xbox moves a game up:
 
-- **Gold**, fully working: Super Mario 64, Pilotwings 64, Super Smash Bros.
+- **Gold**, fully working: Super Mario 64, Pilotwings 64, Super Smash Bros.,
+  Diddy Kong Racing.
 - **Silver**, playable with bugs that do not stop you: Mario Kart 64,
-  GoldenEye 007, Banjo-Kazooie, Ocarina of Time.
+  GoldenEye 007, Banjo-Kazooie, Ocarina of Time, Castlevania: Legacy of Darkness.
 - **Experimental**, everything else: it may boot, run partly, or not at
   all. Across a whole library, 245 of 246 games build today and 163
   present frames in xemu (sweep s12), far fewer run well yet; what blocks the rest is tracked in

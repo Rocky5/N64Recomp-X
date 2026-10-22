@@ -18,9 +18,11 @@ TIERS = {
         'The TV on the map screen shows the wrong picture.',
         'Drift boosts may not behave exactly as on the N64.')),
     ('NGEE', 0): (SILVER, 'GoldenEye 007 (US)', (
-        'The frame rate dips in busy scenes (to about 40 fps).',)),
+        'The road markings flicker.',
+        'The frame rate dips in busy scenes (to about 40 fps).')),
     ('NBKE', 0): (SILVER, 'Banjo-Kazooie (US)', (
-        'Static over the START screen.',)),
+        'Some textures draw wrong.',
+        'Static over the START screen.')),
     ('CZLE', 2): (SILVER, 'Ocarina of Time 1.2 (US)', (
         'Short hitches and small audio skips when a new area loads.',
         'Some textures pop in late.',
@@ -30,7 +32,7 @@ TIERS = {
         'Some textures on the board are mixed up.')),
     ('NPFE', 0): (EXPERIMENTAL, 'Pokémon Snap (US)', (
         'On a new save the Beach tutorial locks the camera until three photos of a Pokémon '
-        '(follow its prompts: Z, then A); not yet shown to unlock on a real Xbox.',)),
+        '(follow its prompts: Z, then A); on a real Xbox the camera does not move yet.',)),
     ('NZSE', 0): (EXPERIMENTAL, 'Majora\'s Mask (US)', (
         'Crashes after the Nintendo logo (a fix waits for a console test).',)),
     ('NJFE', 0): (EXPERIMENTAL, 'Jet Force Gemini (US)', (
@@ -40,9 +42,9 @@ TIERS = {
     ('NK4P', 0): (EXPERIMENTAL, 'Kirby 64 - The Crystal Shards (E)', (
         'Not run on a real Xbox yet; in the xemu emulator it plays its intro and tutorial.',)),
     ('NM8E', 0): (EXPERIMENTAL, 'Mario Tennis (US)', (
-        'Shows a white screen and stops while starting (a fix waits for a console test).',)),
-    ('ND4E', 0): (EXPERIMENTAL, 'Castlevania - Legacy of Darkness (US)', (
-        'Crashes about a minute into play.',)),
+        "Plays, but freezes in the BACK menu's Controller Pak page.",)),
+    ('ND4E', 0): (SILVER, 'Castlevania - Legacy of Darkness (US)', (
+        'Some textures draw wrong.',)),
     ('NBEE', 0): (EXPERIMENTAL, 'All-Star Baseball 2000 (US)', (
         'Not run on a real Xbox yet; in the xemu emulator it plays its menus and a game.',)),
     ('NASE', 0): (EXPERIMENTAL, 'All-Star Baseball 2001 (US)', (
@@ -52,9 +54,7 @@ TIERS = {
     ('NCYE', 0): (EXPERIMENTAL, "South Park: Chef's Luv Shack (US)", (
         'Not run on a real Xbox yet; in the xemu emulator it reaches its player select and menus.',
         'Its logo draws wrong: the background and letters of the title.')),
-    ('NDYE', 1): (EXPERIMENTAL, 'Diddy Kong Racing (US, v1.1)', (
-        "Not run on a real Xbox yet; in the xemu emulator its intro and title draw whole (Rare's own "
-        'microcode, read since 2026-10-20); a race not tried yet.',)),
+    ('NDYE', 1): (GOLD, 'Diddy Kong Racing (US, v1.1)', ()),
 }
 
 MEANING = {
