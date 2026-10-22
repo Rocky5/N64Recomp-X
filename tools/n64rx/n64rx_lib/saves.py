@@ -118,29 +118,34 @@ def consistent_threads(running, faulted):
     return running + faulted
 
 
-def faulted_thread(rom_data: bytes):
+def faulted_thread(rom_data: bytes, near=None):
     """-DXRC_FAULTED_THREAD=<addr> -DXRC_TH_BADVADDR=<off>: libultra's
     __osFaultedThread and the offset of context.badvaddr in OSThread, from
-    __osException's fault path (sw k0, __osFaultedThread; state 1; flags 2;
-    mfc0 t2, BadVAddr; sw t2, badvaddr(k0)), for the runtime's TLB-miss
-    fault path (rt/ultra/thread.c). The last copy found: a game's own,
-    beside its boot loader's."""
-    key = bytes.fromhex('24090001A749001024090002A7490012')
-    found, i = None, rom_data.find(key)
+    __osException's fault path (sw k0, __osFaultedThread; state 1; then flags
+    2, mfc0 t2, BadVAddr and sw t2, badvaddr(k0) in either order: Turok 2's
+    reads BadVAddr before the flags), for the runtime's TLB-miss fault path
+    (rt/ultra/thread.c). The copy in the __osException the runtime runs (the
+    first one after ROM offset `near`, os_exception's), else the last copy
+    found: a game's own, beside its boot loader's."""
+    key = bytes.fromhex('24090001A7490010')
+    word = lambda o: int.from_bytes(rom_data[o:o + 4], 'big')
+    found, i = [], rom_data.find(key)
     while i >= 0:
         o = i - 8
-        if o >= 0 and i % 4 == 0:
-            w0, w1 = (int.from_bytes(rom_data[o + k:o + k + 4], 'big') for k in (0, 4))
-            w6, w7 = (int.from_bytes(rom_data[i + 16 + k:i + 20 + k], 'big') for k in (0, 4))
-            if w0 >> 16 == 0x3C01 and w1 >> 16 == 0xAC3A and w6 == 0x400A4000 and w7 >> 16 == 0xAF4A:
-                lo = w1 & 0xFFFF
-                addr = ((w0 & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF
+        if o >= 0 and i % 4 == 0 and word(o) >> 16 == 0x3C01 and word(o + 4) >> 16 == 0xAC3A:
+            rest = [word(i + 8 + 4 * k) for k in range(4)]
+            bad = next((w for w in rest if w >> 16 == 0xAF4A), None)
+            if 0x24090002 in rest and 0x400A4000 in rest and bad is not None:
+                lo = word(o + 4) & 0xFFFF
+                addr = ((word(o) & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF
                 if _ram(addr):
-                    found = (addr, w7 & 0xFFFF)
+                    found.append((o, addr, bad & 0xFFFF))
         i = rom_data.find(key, i + 4)
     if not found:
         return []
-    return [f'-DXRC_FAULTED_THREAD=0x{found[0]:08X}u', f'-DXRC_TH_BADVADDR=0x{found[1]:X}u']
+    inside = [f for f in found if near is not None and near <= f[0] < near + 0x1000]
+    _o, addr, off = inside[0] if inside else found[-1]
+    return [f'-DXRC_FAULTED_THREAD=0x{addr:08X}u', f'-DXRC_TH_BADVADDR=0x{off:X}u']
 
 
 def os_exception(rom_data: bytes, segments=()):
@@ -155,6 +160,12 @@ def os_exception(rom_data: bytes, segments=()):
     last (the rule before) was another image's, whose libultra fault path ran
     for its TLB misses instead of the code that pages its world in. Else the
     last copy found: a game's own."""
+    c = exception_copy(rom_data, segments)
+    return [f'-DXRC_OS_EXCEPTION=0x{c[1]:08X}u'] if c else []
+
+
+def exception_copy(rom_data: bytes, segments=()):
+    """os_exception's choice: (the ROM offset of its __osException, its vram), or None"""
     key = bytes.fromhex('FF410020401B6000')
     copies, i = [], rom_data.find(key)
     while i >= 0:
@@ -164,13 +175,12 @@ def os_exception(rom_data: bytes, segments=()):
             if w[0] >> 16 == 0x3C1A and w[1] >> 16 == 0x275A and w[2] == 0x03400008 and w[3] == 0 \
                     and w[4] >> 16 == 0x3C1A and w[5] >> 16 == 0x275A:
                 lo = w[1] & 0xFFFF
-                copies.append((o, ((w[0] & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF))
+                copies.append((o + 16, ((w[0] & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF))
         i = rom_data.find(key, i + 4)
-    linked = [t for o, t in copies for s in segments
-              if isinstance(getattr(s, 'rom', None), int) and s.rom <= o + 16 < s.rom + s.size
-              and (s.vram + o + 16 - s.rom) & 0xFFFFFFFF == t]
-    found = linked[-1] if linked else copies[-1][1] if copies else None
-    return [f'-DXRC_OS_EXCEPTION=0x{found:08X}u'] if found else []
+    linked = [(o, t) for o, t in copies for s in segments
+              if isinstance(getattr(s, 'rom', None), int) and s.rom <= o < s.rom + s.size
+              and (s.vram + o - s.rom) & 0xFFFFFFFF == t]
+    return linked[-1] if linked else copies[-1] if copies else None
 
 
 def os_runqueue(rom_data: bytes):

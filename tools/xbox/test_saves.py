@@ -81,8 +81,28 @@ def test_os_exception():
     return len(bad)
 
 
+def test_faulted_thread():
+    """saves.faulted_thread: libultra's order and Turok 2's (BadVAddr read before the flags), and the copy
+    after `near` when there are several"""
+    bad = []
+    lib = words(0x3C01800C, 0xAC3A8924, 0x24090001, 0xA7490010, 0x24090002, 0xA7490012, 0x400A4000, 0xAF4A0124)
+    t2 = words(0x3C01800C, 0xAC3A97F4, 0x24090001, 0xA7490010, 0x24090002, 0x400A4000, 0xA7490012, 0xAF4A0124)
+    if saves.faulted_thread(lib) != ['-DXRC_FAULTED_THREAD=0x800B8924u', '-DXRC_TH_BADVADDR=0x124u']:
+        bad.append("libultra's order")
+    if saves.faulted_thread(t2) != ['-DXRC_FAULTED_THREAD=0x800B97F4u', '-DXRC_TH_BADVADDR=0x124u']:
+        bad.append("BadVAddr before the flags")
+    img = bytes(0x40) + lib + bytes(0x40) + t2   # at 0x40 and 0xA0
+    if saves.faulted_thread(img)[0] != '-DXRC_FAULTED_THREAD=0x800B97F4u':
+        bad.append('no near: the last copy')
+    if saves.faulted_thread(img, 0x30)[0] != '-DXRC_FAULTED_THREAD=0x800B8924u':
+        bad.append("the copy in os_exception's __osException")
+    for b in bad:
+        print(f'  FAIL faulted_thread: {b}')
+    return len(bad)
+
+
 def main():
-    nbad = test_cont_max() + test_thread_fr() + test_os_exception()
+    nbad = test_cont_max() + test_thread_fr() + test_os_exception() + test_faulted_thread()
     rc = hostcc.run(['tests/xbox/test_saves.c', 'xbox/src/rt/ultra/savedev.c', 'xbox/src/rt/ultra/pfs.c',
                      'xbox/src/rt/ultra/pi.c'],
                     includes=['xbox/include', 'xbox/include/xrc', 'xbox/src/rt', 'xbox/src/rt/ultra'],
