@@ -88,6 +88,7 @@ typedef struct {
     int learning;          /* entered by the safety net: log the functions it runs */
     int exc;               /* the refill vector (xrc_interp_refill): eret returns */
     uint32_t epc_k0;       /* k0 when EPC was last written (__osDispatchThread: the thread it restores) */
+    int eret_ret;          /* the run ended at an eret outside the exception code (XRC_ERET_KEEP) */
     int nframes;
     Frame fr[MAX_FRAMES];
 } St;
@@ -265,6 +266,17 @@ static void divu32(St* st, uint32_t a, uint32_t b) {
  * entry at Wired, as before. */
 #ifndef XRC_ERET_RETURN
 #define XRC_ERET_RETURN 1
+#endif
+/* An eret taken as a return comes after the game's dispatcher loaded the
+ * next thread's context into the registers: s0-s7, gp, sp and fp were the
+ * dispatched thread's, not the caller's. NHL 99's own kernel dispatched a
+ * new thread (8003BBE0, fp 0); its creator's func_80029A30 then ended with
+ * `move sp, fp` and returned sp 0x18, and the next `sw zero, 0x10(sp)`
+ * faulted (a write of N64 0x28). On the N64 the caller resumes later from
+ * its own saved context, so it sees the registers it had: put back as they
+ * were when this run began. -DXRC_ERET_KEEP=0: the dispatched thread's, as before */
+#ifndef XRC_ERET_KEEP
+#define XRC_ERET_KEEP 1
 #endif
 #ifndef XRC_TLBWR_RANDOM
 #define XRC_TLBWR_RANDOM 1
@@ -496,6 +508,7 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
                 xhw_logf("[INTERP] eret at %08x outside exception code: a return%s", (unsigned)pc,
                          started ? " (the thread it dispatched started)" : "");
             br->ret = 1;
+            st->eret_ret = 1;
             return;
         }
         break;
@@ -636,13 +649,13 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
     Last* last = last_of();
     St* outer = last->st;
     regs_in(&st, ctx);
-    gpr keep0[10];   /* test builds: the callee-saved registers at entry */
+    gpr keep0[11];   /* the callee-saved registers at entry (test builds' check; XRC_ERET_KEEP) */
     {
         unsigned k;
         for (k = 0; k < 8; k++) keep0[k] = st.r[16 + k];
-        keep0[8] = st.r[29], keep0[9] = st.r[30];
+        keep0[8] = st.r[29], keep0[9] = st.r[30], keep0[10] = st.r[28];
     }
-    st.fcc = 0, st.learning = learning, st.nframes = 0, st.exc = exc, st.epc_k0 = 0;
+    st.fcc = 0, st.learning = learning, st.nframes = 0, st.exc = exc, st.epc_k0 = 0, st.eret_ret = 0;
     st.r[31] = SX32(ra ? ra : SENTINEL);
     if (learning) st.fr[st.nframes++] = (Frame){entry, SENTINEL, entry, caller};
     xrc_trace_vram(entry);   /* trace.c: what the crash report names */
@@ -747,6 +760,11 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
         pc = br.target;
     }
     frames_report(&st, 0);
+    if (XRC_ERET_KEEP && st.eret_ret) {
+        unsigned k;
+        for (k = 0; k < 8; k++) st.r[16 + k] = keep0[k];
+        st.r[29] = keep0[8], st.r[30] = keep0[9], st.r[28] = keep0[10];
+    }
     if (XHW_TEST_BUILD) hot_note(entry, steps);
     if (XHW_TEST_BUILD && !exc) {   /* diagnosis: a callee-saved register it did not put back */
         static unsigned s_bad;
