@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# The ROM leak check on every commit (CLAUDE.md's first hard rule; tools/xbox/rom_leak_check.py):
+# the staged files as they will be committed. tools/xbox/setup.sh points core.hooksPath here.
+root=$(git rev-parse --show-toplevel) || exit 1
+tmp=$(mktemp -d) || exit 1
+trap 'rm -rf "$tmp"' EXIT
+git diff --cached --name-only --diff-filter=ACMR -z | while IFS= read -r -d '' f; do
+  mkdir -p "$tmp/$(dirname "$f")"
+  git show ":$f" > "$tmp/$f" 2>/dev/null
+done
+files=$(cd "$tmp" && find . -type f | sed 's|^\./||')
+[ -z "$files" ] && exit 0
+py=$(command -v python3 || command -v python)
+cd "$tmp" && printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 "$py" "$root/tools/xbox/rom_leak_check.py" --files-root "$tmp" \
+  || { echo "pre-commit: rom_leak_check refused this commit (see above)"; exit 1; }

@@ -57,3 +57,16 @@ build-sweep/
 /app/build/icon.icns
 /app/renderer/img/
 /app/renderer/mark-stars.js
+
+# archives (a ROM zipped is still a ROM), saves, and what the learning loop and the analysis keep
+*.zip
+*.7z
+*.gz
+*.xz
+*.bz2
+*.rar
+*.srm
+*.sav
+learn_code.bin
+learn.txt
+analysis.cache

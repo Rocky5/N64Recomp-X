@@ -119,4 +119,9 @@ py=python3; command -v python3 >/dev/null && python3 -c 'import sys' 2>/dev/null
 say "Python modules (rabbitizer, pillow) for $py"
 "$py" -m pip install --user -q rabbitizer pillow 2>/dev/null || "$py" -m pip install --user -q --break-system-packages rabbitizer pillow || true
 
+# ---- the ROM leak check on every commit (tools/xbox/hooks/pre-commit), unless hooks are set already ----
+if [ -d "$root/.git" ] && [ -z "$(git -C "$root" config --get core.hooksPath)" ]; then
+  git -C "$root" config core.hooksPath tools/xbox/hooks && say "git hooks: tools/xbox/hooks (the ROM leak check)"
+fi
+
 say "done: NXDK_DIR=$NXDK_DIR LLVM=$LLVM; run n64rx doctor"

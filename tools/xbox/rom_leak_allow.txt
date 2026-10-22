@@ -1,0 +1,18 @@
+# rom_leak_check.py: every committed image by its SHA-256 (original art, the port's own screens and host
+# previews; never a game frame). A new image needs a line here, made deliberately.
+c5e450b764a237293f5308c789ca723c15f1a8af24204f7fba982ce5442fc648  docs/look/app-building.png
+90a1f07e1818a3220ecf5ed42d47d52b3854030cc971cc8a9ab609f09ef0588a  docs/look/app-done.png
+47cad75763aaac9e9f1c44d4f71e4077ca304826b8894fd0acc95882ae2f26fe  docs/look/app-game.png
+b66133a541915e2642c152acd15db961740925309038f0d22929a3fc8b816b4f  docs/look/app-home.png
+0a000986cc60229cf9737929b80477bdc7a9c7660c6048e46a2a60e3d06a1312  docs/look/card-no-game-still.png
+acc47fef9446e57fe15921774a5e0f02996ef175005da209838da6f1d34ee22e  docs/look/controls-page-host.png
+a374c002cd375bd9b5bb0d991abc98a2b12f488b8632aaac8042a2a510ee2756  docs/look/loading-480i-still.png
+462fa303c633289146e593cd4e9659cd66163a7d808dbbd394c33e0ff980ec6e  docs/look/loading-space-host.png
+b3b38d6e443ea2ed04c6bdf1a5951f5400c33c1afa44f084a2c7fef371b089b5  docs/look/logo/lockup-dark.svg
+0227e0e850b1ed3804fd882c79e3ec3cb74bab71db85c65f948e40bf32432aab  docs/look/logo/lockup-light.svg
+1d1e7b4788b1d9280e6ebd20c3fc3328015cd284b82471e2914e10d17fef092a  docs/look/logo/lockup.svg
+3716f3803c4a78350657a7c0d6b6acce504d5e9239ef799f5313a30e82c15f8e  docs/look/logo/mark.svg
+457a87d2bea337881adbadb274b631d143aaa64609ee08bbd993b2b2717aa535  docs/look/logo/mono.svg
+f83547398f26890703874e21455731a61404dc209b1efd4589c17eab8c79fa64  docs/look/menu-card-host.png
+f0047d979f8bbd543a9ce9f65d83de61fda0f8bbf3cb270a5bd69b280c95590b  docs/look/paks-page-host.png
+6478715d8312890fb764a55d9c1119271a5add8395578a082e837c5ad8b10a0a  xbox/assets/logo.png

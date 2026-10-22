@@ -102,6 +102,7 @@ jobs:
           python tools/xbox/test_jpeg.py
           python tools/xbox/test_thread.py
           python tools/xbox/test_dryboot.py
+          python tools/xbox/test_leak_check.py
           python tools/xbox/test_asp_hle.py --bench 0
 
       - name: The platform and runtime alone (no game)
