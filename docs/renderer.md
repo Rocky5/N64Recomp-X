@@ -144,8 +144,12 @@ The generator's moves reach an odd FPR as the even one's high word (FR = 0),
 so each odd-register store wrote another register's word. With the float
 mode followed per context (`XRC_FR`, `docs/testing.md`) the matrix in xemu
 is the dry boot's, word for word (test build, 6 dumped tasks, 0 of 2
-matrices with `0x8000` against 2 of 2 with `N64RX_FR=0`). Whether its
-letters now draw is not checked yet.
+matrices with `0x8000` against 2 of 2 with `N64RX_FR=0`). The name-entry
+screen itself, from the dry boot's RDRAM at its graphics task 1,500 (3,600
+frames) drawn by the host renderer (`tools/xbox/dryboot_frame.py`): the
+frame, the name field and every letter key in 3D, through the DKR path as
+it is. So the renderer was never the letters' problem; in xemu that screen
+is not reached yet at this machine's speed (not checked there).
 
 RDP rules added 2026-10-17 (each with its switch in `docs/testing.md`):
 - the screen's size is the width of the buffer the game swaps to (its
