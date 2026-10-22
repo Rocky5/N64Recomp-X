@@ -55,9 +55,21 @@ static uint64_t s_frames_in, s_frames_dropped, s_task_us, s_stats_t0;
 #ifndef XRC_ASP_SPAN_END
 #define XRC_ASP_SPAN_END 1
 #endif
+/* A command list's addresses are physical (the game's audio library took
+ * them through osVirtualToPhysical, as the RSP's DMA wants), so they are read
+ * as KSEG0: xrc_host takes one below 0x80000000 as KUSEG and through the
+ * game's TLB. Turok 2 maps KUSEG 0x00300000 to physical 0x00100000, so its
+ * AI buffers at physical 0x0031A0D0 were written 2 MB low, over the
+ * scheduler's message queues at 0x8011AD28 (xemu, a write watch: msgCount
+ * zeroed by asp_hle_run; the game's threads then waited for good).
+ * -DXRC_ASP_PHYS=0: through the TLB, as before */
+#ifndef XRC_ASP_PHYS
+#define XRC_ASP_PHYS 1
+#endif
 static void* asp_addr(uint32_t a, void* user) {
     uint32_t p = a & 0x1FFFFFFFu;
     (void)user;
+    if (XRC_ASP_PHYS) a = 0x80000000u | p;
     if (XRC_ASP_SPAN_END && p < xrc_rdram_size && xrc_rdram_size - p < 0x1000u)
         return xrc_host(a, xrc_rdram_size - p);
     return xrc_host(a, 0x1000);
