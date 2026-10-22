@@ -2796,3 +2796,50 @@ Commits 10786f5..da84afb on `dev`, none pushed; nothing deployed to red.
   restart; what the Acclaim games draw (not judged: no frames kept); NBA Courtside's scheduler messages stop;
   Conker's KUSEG-0 read; contiguous TLB pages want one section; JFG's 3D
   past its menus (xemu reaches only the Nintendo logo in 150 s).
+
+## 2026-10-22 (afternoon, no hardware): Armorines, Resident Evil 2 and Conker present; the sweep measures what it says (xemu only)
+
+The maintainer was back, asked for a push of the night's work (`dev` at
+c4d06ed, 52 commits) and allowed one Opus subagent at a time. Commits
+since the push: 6c53ced, 1472782; nothing deployed to red. Two of the
+diagnoses below were the subagent's (host only: logs, the dry boot,
+disassembly), each checked here in xemu before it went in.
+
+- **Armorines** (c4d06ed, the last commit of the push): it reset the
+  console with no card every boot (s12 too). A live trace
+  (`-DXRC_TRACE_LOG`, new) ended in its heap memset: its boot bumps the
+  word at 0x80400000 and reads it back to find the Pak, which on a 4 MB
+  build is the runtime's own memory past RDRAM, so it "found" 8 MB and
+  cleared to 0x80780000 over the host. Such a probe now gets 8 MB
+  (`N64RX_PROBE_8MB`). xemu: 232 frames, one boot.
+- **Resident Evil 2** (6c53ced): its DAC thread's 192-sample buffers
+  (shorter than a retrace) left the AI model's backlog at or below 0, and
+  the event never came again; its synthesizer, its audio tasks and then
+  its scheduler's own RSP task waited on that. A buffer queued to a spent
+  backlog posts at once (`XRC_AI_SPENT`, `test_ai`), and a graphics task
+  with no display list (its own microcode) is not run, SP done only
+  (`XRC_GFX_NO_LIST`; DIVERGES: what it draws is missing). xemu: 204
+  frames (before: 2). Super Mario 64, Pilotwings 64 and Smash present
+  with both, no crash.
+- **Conker's Bad Fur Day** (1472782): its main maps the boot code at
+  0x10000000 with its own tlbwi and jumps there; analysed at KSEG0 every
+  call went through the safety net and its own osStartThread's eret ended
+  the boot. Analysed where main maps it when the functions there cover
+  most of the image (`N64RX_TLB_MAIN`; Perfect Dark has the same main but
+  stays at KSEG0: an A/B showed its mapped span is inflated code). xemu,
+  ROM alone with the learnt facts: threads start, 185 frames.
+- **The sweep** (8a8d08e): `--run N` was cut at the 30 s heartbeat
+  whatever N said, and a boot xemu stalled at the loading screen counted
+  as "no frames". Both fixed (`SWEEP_RETRIES`). s14db (the dry boot, no
+  learnt facts, 90 s, the 101 games s12 left under 30 frames) is running
+  on slot 12; it was built before the fixes above, and my one-off boots
+  on slot 11 ran beside it, so its "no frames" lines need a second look.
+- **The recompile cache** (34be68e): `fix_stray_goto` changed gen/ without
+  a GEN_VERSION bump (Bust-A-Move '99 and Forsaken failed again from kept
+  code), and the key ignored the recompiler's own ROM copy; both fixed.
+- Set 18 is staged (28 builds, `C:\xemu\hw\stage-*`), not deployed; it
+  predates these fixes. `[MEM]`/`[CLOCK]` are xemu's only.
+- Gaps: Body Harvest DMAs 0x1108 bytes of MIO0 data to RDRAM 0x80000000
+  (a destination pointer of 0) and then runs it; NHL 99 and Bomberman 64:
+  The Second Attack store through a NULL pointer (0x28, 0x38); RE2's own
+  microcode is not drawn; NBA Courtside; JFG's 3D.
