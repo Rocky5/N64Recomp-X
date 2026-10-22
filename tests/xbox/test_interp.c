@@ -57,6 +57,9 @@ static int s_nlearnt;
 void xrc_trace_vram(uint32_t vram) { (void)vram; }   /* trace.c: nothing to record on the host */
 void xhw_sleep_ms(uint32_t ms) { (void)ms; }
 xhw_thread* xhw_thread_self(void) { return (xhw_thread*)0; }
+uint64_t xhw_time_us(void) { return 0; }
+int xhw_perf_detail(void) { return 0; }
+void xhw_perf_add(int bucket, uint64_t us) { (void)bucket, (void)us; }
 int xu_fault_wait(uint32_t vaddr, int store) { (void)vaddr; (void)store; return 0; }   /* ultra/thread.c */
 void xhw_crash_set_fixup(int (*fn)(uint32_t host, int write)) { (void)fn; }
 int xrc_kseg1_heal(uint32_t host) { (void)host; return 0; }

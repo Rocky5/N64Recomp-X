@@ -60,8 +60,11 @@ static unsigned s_trace;
 static xhw_mutex* s_lock;
 static volatile int s_depth;   /* the owner's recursion count (only the owner changes it) */
 
+static int s_perf = -1;   /* [PERF2] (-DXHW_PERF_DETAIL=1): lock takes and the boost's level changes counted */
 void xu_lock(void) {
     if (!s_lock) s_lock = xhw_mutex_create();
+    if (s_perf < 0) s_perf = xhw_perf_detail();
+    if (s_perf) xhw_perf_add(XHW_PERF_LOCKS, 0);
     xhw_mutex_lock(s_lock);
     s_depth++;
 }
@@ -1223,13 +1226,19 @@ static int ints_off(Thr* me) {
     if (me->ints_off) return 0;
     xu_lock();
     me->ints_off = 1;
-    if (XRC_INTS_BOOST && me->kt && me->t) xhw_thread_set_level(me->kt, 14);
+    if (XRC_INTS_BOOST && me->kt && me->t) {
+        xhw_thread_set_level(me->kt, 14);
+        if (s_perf > 0) xhw_perf_add(XHW_PERF_INTS, 0);
+    }
     return 1;
 }
 static void ints_on(Thr* me) {
     if (!me->ints_off) return;
     me->ints_off = 0;
-    if (XRC_INTS_BOOST && me->kt && me->t) xhw_thread_set_level(me->kt, xu_level_of((int)rd32(me->t + TH_PRIORITY)));
+    if (XRC_INTS_BOOST && me->kt && me->t) {
+        xhw_thread_set_level(me->kt, xu_level_of((int)rd32(me->t + TH_PRIORITY)));
+        if (s_perf > 0) xhw_perf_add(XHW_PERF_INTS, 0);
+    }
     xu_unlock();
     if (s_pend) token_yield(me);   /* a switch that waited for interrupts on */
 }

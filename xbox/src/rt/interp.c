@@ -62,6 +62,15 @@
 #define MAX_FRAMES 32               /* in-line calls tracked for the learn log */
 
 recomp_func_t* xrc_try_function(uint32_t vram);   /* ovl.c: NULL when no function starts there */
+/* [PERF2] (-DXHW_PERF_DETAIL=1): each entry's time, inclusive of what it calls */
+static int s_pdetail = -1;
+static uint64_t perf_in(void) {
+    if (s_pdetail < 0) s_pdetail = xhw_perf_detail();
+    return s_pdetail ? xhw_time_us() : 0;
+}
+static void perf_out(uint64_t t0) {
+    if (t0) xhw_perf_add(XHW_PERF_INTERP, xhw_time_us() - t0);
+}
 void xrc_trace_vram(uint32_t vram);                /* trace.c */
 /* learn.c: a function the analyser missed ran here (len: bytes it spanned) */
 void xrc_learn_func(uint32_t vram, uint32_t len, uint32_t caller);
@@ -901,7 +910,11 @@ void xrc_interp(uint8_t* rdram, recomp_context* ctx, uint32_t entry) {
 #endif
     if (s_logged < 16) s_logged++, xhw_logf("[INTERP] %08x: hand-written code, interpreted", (unsigned)entry);
     map_entry(entry);
-    run(rdram, ctx, entry, 0, 0, 0, 0);
+    {
+        uint64_t t0 = perf_in();
+        run(rdram, ctx, entry, 0, 0, 0, 0);
+        perf_out(t0);
+    }
 }
 
 /* hand-written code that reads $ra as a value (Jet Force Gemini's call-site

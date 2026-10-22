@@ -625,6 +625,8 @@ static uint32_t s_m0_tile, s_m0_addr;
 /* f3d_bench: the list run again with the back end left out (nothing drawn;
  * textures still looked up, made only if new) or in, untimed by [PERF] */
 static int s_null_back, s_benching;
+static int s_in_dl;
+static uint64_t s_present_in_dl;
 static void flush(void) {
     if (!s_nb) return;
     if (s_null_back) {
@@ -828,7 +830,7 @@ static TexEntry* texture_for_tile(int tidx) {
     unsigned line = t->line * 8u * (t->siz == 3 ? 2u : 1u), bytes, pw, ph, slot, i, pal;
     uint32_t key, sample, full = 0;
     int big, hot = 0;
-    uint64_t tex_t0;
+    uint64_t tex_t0, hash_t0;
     TexEntry* e;
     if (!ld->valid && XGFX_TMEM_WITHIN) {
         /* a tile inside a bigger LOADBLOCK that started lower in TMEM (Banjo-
@@ -905,6 +907,11 @@ static TexEntry* texture_for_tile(int tidx) {
     if (fbfx_stale_count())   /* a frame the game draws with: RDRAM gets it first */
         fb_touch(ld->addr, ld->tile ? (ld->rows - 1u) * ld->stride + ld->row_bytes : bytes);
     /* the change check hashes the image as it is (its byte order does not matter for that) */
+    {
+        static int s_detail = -1;
+        if (s_detail < 0) s_detail = xhw_perf_detail();
+        hash_t0 = s_detail ? xhw_time_us() : 0;
+    }
     if (ld->tile && XGFX_TILE_ROWHASH) {
         /* every row (16 spread rows past XGFX_TEX_FULLHASH_MAX bytes): Pokémon
          * Snap types its dialogue into a texture loaded with LOADTILE, and a
@@ -919,6 +926,9 @@ static TexEntry* texture_for_tile(int tidx) {
     sample = sample_hash(host(ld->addr), span(ld->addr, ld->tile ? ld->row_bytes : bytes)) ^
              (ld->tile ? sample_hash(host(ld->addr + (ld->rows - 1u) * ld->stride),
                                      span(ld->addr + (ld->rows - 1u) * ld->stride, ld->row_bytes)) : 0);
+    if (hash_t0)   /* [PERF2]: the samples' time and the bytes they cover */
+        xhw_perf_add(XHW_PERF_TEXHASH, xhw_time_us() - hash_t0),
+            xhw_perf_add(XHW_PERF_TEXBYTES, ld->tile ? (uint64_t)ld->rows * ld->row_bytes : bytes);
     slot = ((ld->addr >> 3) * 2654435761u ^ key * 40503u) % TEX_CACHE;
     big = XGFX_TEX_RECHECK && !ld->tile && bytes > XGFX_TEX_FULLHASH_MAX;
     for (i = 0; i < 8; i++) {   /* 8-way probe */
@@ -1015,7 +1025,7 @@ build:
     e->h = (uint16_t)h;
     e->pw = (uint16_t)pw;
     e->ph = (uint16_t)ph;
-    xhw_perf_add(XHW_PERF_TEX, xhw_time_us() - tex_t0);
+    if (!s_benching) xhw_perf_add(XHW_PERF_TEX, xhw_time_us() - tex_t0);   /* ([DLBENCH] times its own runs) */
 hit:
     e->frame = s_frame_no;
 #if XGFX_TEX_MEMO
@@ -3602,12 +3612,17 @@ void f3d_run(uint32_t dl, int present) {
 #endif
     DIRTY();
     s_dl_cmds = 0;
+    s_in_dl = 1, s_present_in_dl = 0;
+    xhw_perf_phase(1);
     run_dl((const uint32_t*)host(dl));
     flush();
+    xhw_perf_phase(0);
+    s_in_dl = 0;
     if (!s_benching) {
-        uint64_t t1 = xhw_time_us();
-        s_dl_us += t1 - t0;
-        xhw_perf_add(XHW_PERF_DL, t1 - t0);
+        /* a present the list made (a split frame) is the present's, not the list's (review 2.2) */
+        uint64_t t1 = xhw_time_us(), us = t1 - t0 > s_present_in_dl ? t1 - t0 - s_present_in_dl : 0;
+        s_dl_us += us;
+        xhw_perf_add(XHW_PERF_DL, us);
     }
     if (present) f3d_present_frame();
 }
@@ -3651,9 +3666,15 @@ void f3d_present_frame(void) {
     fb_stage();
     wx_frame_overlay();   /* the port's own text (FPS counter, settings panel; patches/021) */
     {
-        uint64_t t1 = xhw_time_us();
+        uint64_t t1 = xhw_time_us(), us, log;
+        xhw_perf_phase(2);
         xgfx_present();
-        xhw_perf_add(XHW_PERF_PRESENT, xhw_time_us() - t1);
+        xhw_perf_phase(0);
+        us = xhw_time_us() - t1;
+        log = xhw_perf_log_us();   /* the [PERF] lines written inside it */
+        us = us > log ? us - log : 0;
+        xhw_perf_add(XHW_PERF_PRESENT, us);
+        if (s_in_dl) s_present_in_dl += xhw_time_us() - t1, xhw_perf_phase(1);
     }
     if (s_frames % 600 == 0)
         xhw_logf("[GFX] frame %u state %d: tris %u, rejected %u (far %u, near %u), culled %u, clipped %u (far %u, near %u) | "

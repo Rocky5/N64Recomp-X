@@ -154,6 +154,8 @@ unsigned xu_retrace(void) { return 0; }
 void xrc_trace_dump(void) {}
 void xrc_trace_thread(void* thread, unsigned n) { (void)thread, (void)n; }
 uint32_t xrc_interp_last_pc(void* thread) { (void)thread; return 0; }
+int xhw_perf_detail(void) { return 0; }
+void xhw_perf_add(int bucket, uint64_t us) { (void)bucket, (void)us; }
 
 /* ---- game code ---- */
 #define NFUNC 32

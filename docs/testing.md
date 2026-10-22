@@ -265,6 +265,7 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_CHECKS=1` | 0 | `NAN_CHECK` and `CHECK_FR` as logged fatals |
 | `-DXRC_VIDEO_DEFAULT=<n>` | 0 (auto) | the default output (`n64rx build --video`) |
 | `-DXHW_AUTOPAD=1` | 0 | a test build with scripted input |
+| `-DXHW_PERF_DETAIL=1` | 0 | a `[PERF2]` line beside each `[PERF]`: GPU waits inside display lists, the interpreter's time (inclusive) and calls, texture hashing's time and bytes, the runtime lock's takes and the interrupts-off boost's level changes a frame (the M3 gate's counters, `docs/roadmap.md` B6). `[PERF]` itself now leaves a present made inside a list out of DL, the 5 s log write out of PRESENT and `[DLBENCH]`'s runs out of TEX, and counts waits at the frame's start apart (review 2.2); `tools/xbox/ab_report.py a.log b.log` compares boots by these lines |
 | `-DXRC_AUDIO=0` | 1 | audio tasks counted and dropped: silent |
 | `-DXRC_AUDIO_DUMP=<s>` | 0 | test builds: 3 s of the output from second `<s>` as `[AUDDUMP]` lines (`tools/xbox/auddump_to_wav.py serial.log out.wav`: the WAV and its numbers, RMS, L/R correlation, the energy below 4 kHz; the WAV stays outside the tree) |
 | `-DXRC_MENU=0` | 1 | no BACK menu (settings.ini still works) |

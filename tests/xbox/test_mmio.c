@@ -43,6 +43,8 @@ void xrc_learn_func(uint32_t vram, uint32_t len, uint32_t caller) { (void)vram, 
 void xrc_trace_vram(uint32_t vram) { (void)vram; }
 void xhw_sleep_ms(uint32_t ms) { (void)ms; }
 xhw_thread* xhw_thread_self(void) { return (xhw_thread*)0; }
+int xhw_perf_detail(void) { return 0; }
+void xhw_perf_add(int bucket, uint64_t us) { (void)bucket, (void)us; }
 int xu_fault_wait(uint32_t vaddr, int store) { (void)vaddr; (void)store; return 0; }   /* ultra/thread.c */
 uint32_t xu_self_sp(void) { return 0; }
 void xhw_crash_set_fixup(int (*fn)(uint32_t host, int write)) { (void)fn; }

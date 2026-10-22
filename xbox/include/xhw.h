@@ -343,10 +343,20 @@ int xhw_running_in_xemu(void);
  * Coarse sections timed on the ACPI clock, added from any thread. DL and
  * PRESENT are whole sections; TEX is the part of DL spent converting and
  * uploading textures, WAIT the part of PRESENT (and of the next frame's
- * start) spent waiting for the GPU or the flip. */
-enum { XHW_PERF_DL, XHW_PERF_TEX, XHW_PERF_PRESENT, XHW_PERF_WAIT, XHW_PERF_AUDIO, XHW_PERF_N };
+ * start) spent waiting for the GPU or the flip, WAIT_DL the waits inside a
+ * display list (a texture upload's idle wait). With -DXHW_PERF_DETAIL=1 a
+ * [PERF2] line adds the interpreter's time (inclusive), the texture
+ * hashing's time and bytes, and counts of the runtime's lock and of the
+ * interrupts-off boost's level changes (the M3 gate, docs/roadmap.md B6). */
+enum { XHW_PERF_DL, XHW_PERF_TEX, XHW_PERF_PRESENT, XHW_PERF_WAIT, XHW_PERF_AUDIO, XHW_PERF_WAIT_DL, XHW_PERF_WAIT_FRAME,
+       XHW_PERF_INTERP, XHW_PERF_TEXHASH, XHW_PERF_TEXBYTES, XHW_PERF_LOCKS, XHW_PERF_INTS, XHW_PERF_N };
 void xhw_perf_add(int bucket, uint64_t us);
 void xhw_perf_frame(void);   /* once per presented frame (nv2a.c) */
+/* f3d_interp.c: 1 while a display list runs (its GPU waits are WAIT_DL), 2 in the present (WAIT), 0
+ * elsewhere (WAIT_FRAME: a wait at the frame's start, in neither section) */
+void xhw_perf_phase(int phase);
+uint64_t xhw_perf_log_us(void);   /* the last [PERF] lines' own time, once (the present subtracts it) */
+int xhw_perf_detail(void);        /* -DXHW_PERF_DETAIL=1: the [PERF2] counters are kept */
 
 /* ---- audio: the AI output, s16 stereo (xhw_audio.c, Melee-X's driver) ---- */
 int xhw_audio_init(uint32_t rate);            /* 1: AC97 or the xemu APU voice runs */
