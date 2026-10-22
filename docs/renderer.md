@@ -86,7 +86,11 @@ G_OBJ_RECTANGLE (unscaled), G_OBJ_RECTANGLE_R (the 2D sub-matrix's X, Y
 and BaseScale) and G_OBJ_SPRITE (the whole A B C D matrix, rotated) draw
 uObjSprite from TMEM as the render tile, the LDTX forms load first;
 G_OBJ_MOVEMEM (S2DEX2: G_MOVEMEM G_MV_MATRIX) sets the matrix,
-G_OBJ_RENDERMODE its clamp and filter (host test `s2dex_obj`). Yoshi's
+G_OBJ_RENDERMODE its clamp and filter (host test `s2dex_obj`). The TLUT
+load's uObjTxtrTLUT is {type, image, phead, pnum, ...}: its fields were read
+one late until 2026-10-22, and the palette never landed (Kirby 64's title
+background, a CI8 G_BG_1CYC, drew black on the host and wrong on red;
+`XGFX_OBJ_TLUT_FIELDS`, host test `s2dex_tlut`; right on red, `vk8`). Yoshi's
 Story's title and story pages draw in xemu with none unhandled. Still
 skipped (counted in the 600-frame `[GFX] unhandled op` line): G_SELECT_DL.
 Its shared commands (DL, ENDDL, the segment table, the RDP, the
@@ -233,6 +237,14 @@ every family.
 | GoldenEye | Fast3D 2.0G with Rare's G_TRI4 | Nintendo/Rare logos, the gun barrel, the 440x330 file select and mission menus, the Dam in-game; the pause watch's model missing, the sky purple, one block's texture garbled (open) |
 | Mario Party | F3DEX | the intro's 3D scenes, the title (its 32-bit logo strips: `XGFX_LOADTILE32`), Mushroom Village; on red its frames whole since present-on-swap |
 | Ocarina of Time 1.2 | F3DZEX2 (+ S2DEX2 `[Safe]`, JPEG task) | the title, file select, name entry, Kokiri Forest; on red its textures wrong and two moons on the title (open) |
+
+A list's first frame can clear its depth buffer before it names it:
+Banjo-Kazooie sets the colour image to the depth buffer's memory and fills
+it with G_MAXFBZ (0xFFFC) before its G_SETZIMG. With no Z image known yet,
+such a 16-bit fill is the depth clear and that image the Z image
+(`XGFX_ZCLEAR_INFER`, host test `zclear_infer`; it mattered for one-task
+replays on the host, whose intro frames drew black; the console keeps the
+Z image across tasks).
 
 ## Framebuffer effects (`xbox/src/gfx/fbfx.{h,c}`, f3d_interp.c)
 

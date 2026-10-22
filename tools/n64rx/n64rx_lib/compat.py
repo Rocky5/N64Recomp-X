@@ -31,15 +31,16 @@ TIERS = {
         'Freezes when a board starts (a fix waits for a console test).',
         'Some textures on the board are mixed up.')),
     ('NPFE', 0): (EXPERIMENTAL, 'Pokémon Snap (US)', (
-        'On a new save the Beach tutorial locks the camera until three photos of a Pokémon '
-        '(follow its prompts: Z, then A); on a real Xbox the camera does not move yet.',
+        'On a new save the Beach tutorial locks the camera until three photos of a Pokémon; '
+        'on a real Xbox its "Press Z to aim" prompt does not appear yet, so the camera stays locked.',
         'Photos cannot be viewed after a course; grass shows through the mountains.')),
     ('NZSE', 0): (EXPERIMENTAL, 'Majora\'s Mask (US)', (
         'Crashes after the Nintendo logo (a fix waits for a console test).',)),
     ('NJFE', 0): (EXPERIMENTAL, 'Jet Force Gemini (US)', (
         'Gets to the Rare logo; the menu is broken, it runs slowly and has no sound.',)),
     ('NK4E', 0): (EXPERIMENTAL, 'Kirby 64 - The Crystal Shards (US)', (
-        'Many textures draw wrong on a real Xbox.',)),
+        'The lives and the ability card do not show in the HUD.',
+        "An enemy's textures draw wrong.")),
     ('NK4P', 0): (EXPERIMENTAL, 'Kirby 64 - The Crystal Shards (E)', (
         'Not run on a real Xbox yet; in the xemu emulator it plays its intro and tutorial.',)),
     ('NM8E', 0): (EXPERIMENTAL, 'Mario Tennis (US)', (

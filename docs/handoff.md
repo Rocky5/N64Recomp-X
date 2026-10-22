@@ -4,85 +4,40 @@ One entry per milestone: what was verified, how, and where ("xemu" results
 are emulator-only; timing, audio, memory and HDD latency are judged on the
 console).
 
-## Where things stand (2026-10-18)
+## Where things stand (2026-10-22, late)
 
-Each game's tier (Gold fully working, Silver playable, Experimental the
-rest; only a console run promotes) is in `docs/compat.md`; a console
-result here moves its row there in the same change.
+Each game's tier is in `docs/compat.md` (Gold fully working, Silver
+playable, Experimental the rest; only a console run promotes); a console
+result here moves its row there in the same change. "xemu" is the emulator
+(test builds in its slots); "red" is the maintainer's console (480i).
+Anything not marked red is xemu or host only.
 
-**Newest (2026-10-19, xemu only; nothing of it on red yet):**
-- Mario Tennis: intro, menus, character select, matches (~25 fps), the
-  attract demo, from the ROM alone plus learning rounds.
-- Castlevania: Legacy of Darkness: through to Foggy Lake (~30 fps).
-- Acclaim's KUSEG-linked games: All-Star Baseball 2000, 2001 and '99 play
-  a game; South Park: Chef's Luv Shack reaches its menus (logo drawn
-  wrong); Jeremy McGrath Supercross 2000 draws 5 frames (needs its process
-  switcher modelled).
-- Ocarina of Time and Majora's Mask recompile the overlays they relocate
-  themselves (from the ROM alone, the ones a learning run used): Ocarina
-  3137 frames in 120 s against 1950, into the opening cutscenes.
-- Runtime: AI busy/full status and its event per buffer and every
-  retrace; a blender that never reads the frame draws opaque; the PI event
-  after raw DMAs; AUTO paks answer as both; the guard's KUSEG checks by
-  what changed; test builds put an 8 MB RDRAM where xemu reads it fast.
-- The 12-game regression set presents frames with no crash after every
-  change; host tests pass; test_analyze 0 failures.
-
-**Open, in order:** Pokémon Snap's camera lock (the Beach tutorial
-waits for three photos with a Pokémon in focus; in xemu the photo check
-now finds one and the tutorial prompts "Press Z to aim": next, the three
-photos and the unlock shown in a run, then red with a new save); Jeremy
-McGrath's process switcher (`strand.c` taught its context save/load and
-the return to main); Chef's Luv Shack's logo; the sweep s10's entries
-NF2P, NF9E, NFBE run again (a test ran on their slot) and its three
-losses; set 15 rebuilt at HEAD before red (it predates all of the above;
-red was unreachable all session). The entries at the end
-have the details.
-
-**Before that (2026-10-18, late):** the loading screen is the deep-space title
-card the maintainer approved on red (`vsm13`: Super Mario 64 through it to
-the end of Bob-omb Battlefield, 9 ms a frame, the game at 29.9 fps); the boot holds swapped (L + R safe video, BACK
-the BACK menu before the game); the analyser keeps far `j`s inside their
-function (six compile failures of s9) and names a libultra built without
-IDO's divide (Mario Tennis past its crash, to a stall). The entry at the
-end has the details. Mario Tennis is the maintainer's next priority.
-
-The newest state first; the entries below are the record, oldest first.
-"xemu" is the emulator (slot runs, test builds); "red" is the maintainer's
-console (480i: its dashboard allows no 480p or 720p). Red ran the
-`e7ad98f` set and then the Controls set on 2026-10-18 (the entries at the
-end); set 14 (every game here plus Kirby 64, with the fixes those runs led
-to) is staged and not yet on red (`build-host/deploy-set14.sh`). Anything
-not marked red is xemu only.
-
-| tier (`docs/compat.md`) | games |
+| tier | games (red) |
 |---|---|
-| Gold | Super Mario 64, Pilotwings 64, Super Smash Bros. |
-| Silver | Mario Kart 64, GoldenEye, Banjo-Kazooie, Ocarina of Time 1.2 |
-| Experimental | Mario Party (its board: fix staged), Pokémon Snap (its camera lock: the tutorial's unlock, open), Majora's Mask (boot crash: fix staged), Jet Force Gemini, Kirby 64 (E) (staged), Mario Tennis, Castlevania: Legacy of Darkness, All-Star Baseball 2000 / 2001 / '99, South Park: Chef's Luv Shack, the rest |
+| Gold | Super Mario 64, Pilotwings 64, Super Smash Bros., Diddy Kong Racing |
+| Silver | Mario Kart 64, GoldenEye 007, Banjo-Kazooie, Ocarina of Time 1.2, Castlevania: Legacy of Darkness |
+| Experimental | Kirby 64 (title fixed; HUD and an enemy's textures), Pokémon Snap (the tutorial's focus), Mario Tennis (a line at the bottom, the ball), Mario Party, Majora's Mask, Jet Force Gemini, and every other game |
 
-| game (US) | how built | xemu | console (red) |
-|---|---|---|---|
-| Pilotwings 64 | its pack, or the ROM alone (`--analyze`): the same | title to results, saves, sound, 720p + hor+, the BACK menu | `vnrx1`: plays, sound, EEPROM saves, the BACK menu, the combos; 53-59 fps |
-| Mario Kart 64 | the ROM alone | title, menus, races (F3DEX), sound (nead), Controller Pak, 720p 16:9 | `vmk2`/`vmk4`: races at 29.9 fps (display lists 2-3 ms), sound, the ROM inside the XBE, the BACK menu and its Paks page, EEPROM and pak files; the map screen's TV (a framebuffer read) wrong; drift boosts in question |
-| Super Smash Bros. | the ROM alone | intro, title, 1P character select, a 1P match (Link vs Link, Hyrule Castle) at 47-50 fps with scripted input; 720p 16:9 at 45-57 fps (11.7 MB free) | `vssb6`: perfect, 59.9 fps; portraits sharp. `vssb7`: AC97 stuck on one boot, the next boot froze the Xbox in the audio boot; `vssb8` (step lines, an idle APU left alone): two clean boots |
-| Mario Party | the ROM alone | Hudson logo, the intro's 3D scene, the story text; one present a frame (its frames are several tasks; presented at the swap), audio; its processes run as coroutines; 720p at 29-30 fps; START past the title to Mushroom Village (`0e5dc19`) | `vmp5`: flicker gone, 29.9 fps. `vmp11`: stable to a board; the logo blocky, the board black (both fixed since: `vmp12` staged) |
-| Mario Party 2 / 3 | the ROM alone | intro, menus; 2: its audio thread, destroyed and made again by the game, plays on (58 tasks a second, 2026-10-17) | - |
-| Super Mario 64 | the ROM alone (+ three `--learn` rounds before) | head screen, Lakitu intro, castle grounds and Lakitu's text drawn right (scripted, 2026-10-17); 720p hor+ at 29-30 fps (the skybox stays in the 4:3 box) | `vsm6`, `vsm7`: works perfectly, 29.9 fps |
-| Pokémon Snap | the ROM alone (overlays sharing a vram) | intro, title, the photographer card, Professor Oak's lab and his whole briefing, every glyph right; the Beach course whole to the goal gate, back to the lab and out again at 29.9 fps (2026-10-18, 64 thread records); its cliffs, rails and track textured since the clamp-extent rule | `vsnap5`: runs well, 29.7 fps on the Beach; the camera can't be moved (the first run's tutorial: three photos with a Pokémon in focus; in xemu the photo check finds one and the tutorial prompts Z, then A; the unlock not yet shown) |
-| Banjo-Kazooie | the ROM alone + ~22 `--learn` rounds | title, file select, the new-game intro with the lair drawn whole, Banjo's house (~28 fps); near/far now the game's (the IPL3 copy); 720p hor+ at ~28 fps, 10 MB free (geometry the game culls shows as void at the far edges) | `vbk12`: the jiggy transition right. `vbk13`: textures much better (RGBA 4-bit); static on the START screen (open) |
-| Blast Corps | the ROM alone + 15 `--learn` rounds | Rare logo, title, profile screen, the attract demo (50-56 fps) | - |
-| Majora's Mask | the ROM alone | title, file select, name entry, audio (2026-10-17) | `vmm9`: still crashes at its first uncached write (a KSEG1 alias page lost after boot; healed at the fault since, not yet on red) |
-| Ocarina of Time 1.2 | the ROM alone, Yaz0 inflated (53 MB, page cache) | title, file select, name entry, a new file, the intro text, Kokiri Forest's HUD, the Deku Tree's intro drawn, music (nead); its intermittent title stall (a dropped SP done) fixed 2026-10-18 (8 of 8 boots) | `vzel13`: lock-ups up to 2.6 s and HDD noise (learn.txt per line: fixed). `vzel14`: steadier, quieter; its own 20 fps, hitches at scene loads (relocated overlays interpreted), small audio skips, a rumble buzz at scene changes (`[PAK]` log staged) |
-| Ridge Racer 64 | the ROM alone + one `--learn` round | F3DEX2; 1732 frames in 30 s (~44 fps) | - |
-| Donkey Kong 64 | the ROM alone + `--learn` rounds | its file screen ("GAME 1"), drawing on (the IPL3 copy at RDRAM 4); audio stops once graphics start (open) | - |
-| Diddy Kong Racing, Wave Race 64, WWF No Mercy, Dr. Mario 64 | the ROM alone | present frames for the whole 30 s sweep run (DKR's microcode not decoded: grey boxes) | - |
-| Paper Mario | the ROM alone + `--learn` rounds | past its obfuscated boot (KSEG2 DMA), 321 frames, then a map's textures (open) | - |
-| GoldenEye | the ROM alone + `--learn` rounds (30) | logos, gun barrel, file select, mission select, briefing, the Dam in-game with its HUD and the pause watch; menus 37-50 fps; 7 functions refused by the recompiler (134 before); since 2026-10-18 the Dam right (cosf, palettes, the RDP-triangle sky), Bond's gun and the pause watch, ~30 fps; 720p 16:9 the same at ~30 fps, 18.6 MB free | `vge5`: works very well, 59.5 fps in menus; some frame-rate dips |
-| Jet Force Gemini | the ROM alone | Rare logo, a menu screen by 70 s (its text drawn as boxes: open) since `$ra` is set at its resolver's calls (2026-10-18) | `vjfg1`: boots to the Rare logo, a broken menu, slow, silent (Rare's own GBI and audio microcode: open) |
-| Kirby 64 (E) | the ROM alone | the intro, the Copy-ability question, the tutorial rooms (since osTvType from the region and the interrupt-off boost, 2026-10-18); one HUD icon garbled | `vk1` staged |
-| Conker, Castlevania | the ROM alone + `--learn` rounds | boot and stop (the entries below) | - |
-| the library (246 games) | the ROM alone (`tools/xbox/sweep.py`) | s9: 132 still presenting at 30 s (s8: 128); Jet Force Gemini past its boot since (`docs/analyzer.md`) | - |
+**Last red round:** set 26 (`ff928b7`), the last entry below. **Staged,
+not deployed:** `vsnap18a/b` (`build-host/hwbuild27.sh`: Snap's detector
+logged at every task; B also holds a graphics task's done a retrace).
+
+**Open, in order** (each with the entry that has its details):
+1. Pokémon Snap's tutorial: the detector's focus flickers on red, so
+   "Press Z to aim" never holds; `vsnap18a/b` tell whether the done
+   events' timing is why (last entry).
+2. Kirby 64's HUD (lives, the ability card) and an enemy's textures on
+   red; next, the port's own RDRAM of the HUD picture (last entry).
+3. Mario Tennis: the line at the bottom, the ball's textures; a 384x15
+   tile bigger than TMEM (the set-19 night entry).
+4. Banjo-Kazooie: the orange shadows, the intro's dark fog, the jigsaw
+   pieces (the last two entries).
+5. GoldenEye's road markings flicker; Castlevania's textures; Mario Kart
+   64's map TV.
+6. The roadmap's buckets (`docs/roadmap.md`): the run token (B1), the dry
+   boot and learnt facts (B2), microcodes (B3), framebuffer effects by
+   default (B4), memory (B5), the M3 measurement gate (B6).
+7. The s15 library sweep (running) into `docs/analyzer.md`'s table.
 
 **What exists** (each piece with host tests and a kill switch; the entries
 below say how each was verified): the ROM inside the XBE and its page cache;
@@ -103,33 +58,10 @@ stopped by others; the library sweep and the V track's `decomp_check.py`
 (0 wrong libultra names on Paper Mario and Mario Kart 64). Diagnosis:
 `-DXRC_WATCH` (a hardware write watch), `XRC_WATCH_QUEUE`/`XRC_WATCH_RECV`,
 `N64RX_TRACE=1` (per-thread traces in crashes and stalls), the stall report,
-`[INTERP] hot`.
-
-**Open, roughly by how much they block** (details in the entries below and
-`docs/analyzer.md`):
-
-1. From red (2026-10-17): Banjo-Kazooie's jiggy and START-menu
-   textures; Ocarina of Time's textures (its two moons fixed in xemu);
-   Mario Party's first-boot audio hang (the AC97 bring-up,
-   `boot_prev.log`); whether `vzel12`/`vbk11`/`vmp9`/`vmm8`/`vsnap4`/`vge4`
-   fix what they are meant to; 720p on the
-   console (red's dashboard has it off); Mario Kart 64's drift boosts.
-2. GoldenEye: on the console (`vge4`); the watch model and the walker's
-   RDRAM tables are fixed in xemu (cosf), the rest of the missions unseen.
-3. Ocarina of Time's overlays run interpreted (also at `vzel5`'s commit);
-   its title stall (a dropped SP done) is fixed in xemu, not yet on red.
-4. The s8 categories: NULL reads through KUSEG (23; Chopper Attack's is a
-   hand-written task switcher, which needs strands like Mario Party's),
-   Rare's compressed boots before learning rounds (19), no frames in the
-   first round (52).
-5. Per game: Paper Mario's map textures, Donkey Kong 64's audio, Bomberman
-   64's loader, Perfect Dark (past its boot: a TLB miss through its own
-   exception code, round 8), Jet Force Gemini's menu text (boxes), Mario Party's 720p title logo.
-6. Renderer: S2DEX's own commands, F3DDKR, framebuffer effects by default;
-   hor+ for orthographic backgrounds (Super Mario 64's sky); MusyX and the
-   other audio microcodes.
-7. M2's leftovers (the 30-minute soak, Pilotwings' pack README); M3's
-   measurement gate.
+`[INTERP] hot`; the dry boot (`tools/dryboot`: the ROM's boot on the PC,
+`--snap`, `--watch`, `--script`) and its snapshots drawn by the real
+renderer on the host (`tools/xbox/dryboot_frame.py`, `bench_dl.py --png`,
+`--draws`, `--trace`, `-D BENCH_TEX_DUMP`).
 
 ## M0: skeleton, toolchain, the tool's shape (2026-10-16, branch `dev`)
 
@@ -2930,3 +2862,65 @@ staged, not deployed.
   scene) is not moved off the screen by the origin shift (it lands at
   columns 64-147); whether the N64 shows that corner is not known. Not
   yet seen on a console.
+
+## 2026-10-22 (late): set 26 on red, Kirby's title, Snap's tutorial focus, the analyser and the dry boot (red + host)
+
+Set 26 at `ff928b7` (`build-host/hwbuild26.sh`, `deploy-set26.sh`; logs in
+`C:\xemu\hw\logs<name>`): `vk8`, `vsnap17`, `vssb16`, `vsm19`, `vpw3`,
+`vbk24`, `vmt9`. Red ran Kirby, Snap and Mario Tennis; the Gold three and
+Banjo were not run this round.
+
+- **Kirby 64 (US) title screen: fixed on red** (`vk8`, ff928b7). The dry
+  boot's title frame on the host renderer drew the logo, the checkered sky
+  and the copyright line black: S2DEX's `G_OBJ_LOADTXTR` of a palette read
+  uObjTxtrTLUT's fields one late, so the CI8 background's palette never
+  loaded (`XGFX_OBJ_TLUT_FIELDS`, `test_s2dex_tlut`). Red: "works better".
+  Still open on red: an enemy's textures; the HUD's lives and the ability
+  card do not show (the ability itself works). On the host the tutorial's
+  HUD is whole, card included: it is a 320x48 picture the CPU composes at
+  0x800ED520 and a `G_BG_COPY` draws. The dry boot runs the game's own
+  code, so the next check is the port's RDRAM there (an `XRC_DLDUMP` of a
+  tutorial frame in xemu, scenario `C:\xemu\nrx-scen\k64tut`, drawn by
+  `bench_dl`): if the card is missing in it, the recompiled HUD code is at
+  fault, not the renderer.
+- **Pokémon Snap: the tutorial, explained** (the maintainer, from a real
+  N64: "Press Z to aim" never appears on the port). The decomp
+  (`app_level/player.c`): input stays disabled until three photos; the
+  prompt runs only while `gHasPokemonInFocus` is set and its loop ends the
+  frame focus drops. `vsnap17`'s peeks: the detector runs (5-7 Pokémon a
+  frame, its regions allocated) and finds Pidgey in focus, but on few
+  frames (probe: at most 13 of ~180 copies at half or more in 30 frames),
+  so the prompt never holds. The detector (`pokemon_detect.c`) queues the
+  analysis of the frame the RDP is drawing as the next frame starts, and
+  runs it at that task's DP full sync (`sched.c`); the port runs a task at
+  its start and its done went out when the scheduler blocked, so the
+  analysis can read a context the game is refilling. Staged, not
+  deployed: `vsnap18a` (`XRC_PEEK_TASK`: the detector's contexts, queue,
+  counts and focus at every graphics task) and `vsnap18b` (the same with
+  `XRC_DP_LATENCY=1`: a graphics task's done held a retrace)
+  (`build-host/hwbuild27.sh`, own title IDs, new saves). xemu could not
+  test it: the autopad scenarios stop in Oak's lab (`snaptut`).
+- **Mario Tennis** (`vmt9`): still the line at the bottom and the ball's
+  textures. Its match on the host renderer is clean.
+- **Banjo-Kazooie**: the host's black intro frames were a one-task replay
+  (the depth buffer cleared before it is named; `XGFX_ZCLEAR_INFER`,
+  d03810d), not red's fog. The orange shadows: the shadow model (badShad.c)
+  is an RGBA32 texture of near-black texels with an alpha ramp under orange
+  vertex colours; it decodes right on the host (`BENCH_TEX_DUMP`), and red's
+  log has no texture miss, pool failure or approximated combiner. Open.
+- **The analyser** (review items): a far `j` whose target the walk reached
+  is no tail call (4.6, `N64RX_J_SEEN`: Paper Mario 15 extra functions,
+  was 17); an overlay's function is read focused for the register check
+  (4.3, `N64RX_HW_FOCUS`) and the memory-probe rule wants a MB boundary
+  (`N64RX_PROBE_MB`): Snap interprets 4 functions, was 17; nine other
+  games unchanged; the six decomp pairs pass.
+- **The dry boot**: uncached RDRAM stops at 4 MB with `--rdram 4`, as the
+  console's KSEG1 alias (`--window keep`: as before). F-Zero X's
+  osGetMemSize found 8 MB and it spun past 4 MB; now 1,794 tasks (its
+  graphics still wait on something else). The 245-ROM A/B: 9 differ, none
+  lost much (WWF No Mercy 1,741 -> 2,649 tasks).
+- Builds handed over: Castlevania (`vcv5`) and GoldenEye (`vge13`, also
+  zipped) copied to the maintainer's Downloads folder. A macOS package
+  for a tester was started and paused (the Docker SDK image is not public,
+  no Mac runner: the command-line kit from a shallow checkout is the way).
+- The s15 sweep is still running (65 of 242 runs at the last look).

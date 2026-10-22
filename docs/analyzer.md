@@ -226,6 +226,10 @@ exception handler. For each function a call (or a thread's first dispatch)
 enters that the analysis lacks, it writes what the console's safety net
 would: the PI DMA under it, or its page when the CPU made it or the TLB
 maps it.
+With `--rdram 4` uncached RDRAM stops at 4 MB as the console's KSEG1 alias
+does (a load past it reads 0, a store goes nowhere; KSEG0 keeps 8 MB):
+F-Zero X's own osGetMemSize found 8 MB and ran its code past 4 MB until
+2026-10-22 (`--window keep`: as before).
 
 First builds from the ROM alone (functions in the analysis; libultra names):
 

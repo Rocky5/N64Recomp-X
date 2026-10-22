@@ -21,8 +21,8 @@ Experimental everything else (only the console promotes). From the ROM
 alone on the console (red, 480i): Gold (the maintainer's): Super Mario 64,
 Pilotwings 64, Super Smash Bros., Diddy Kong Racing. Silver: Mario Kart 64, GoldenEye,
 Banjo-Kazooie, Ocarina of Time, Castlevania: Legacy of Darkness. Experimental: Mario Party (its board: fix staged), Pokémon Snap (its
-camera), Majora's Mask (boot crash: fix staged), Jet Force Gemini, Kirby 64
-(staged) and the rest; the BACK menu's Controls page. The loading screen is the deep-space title card (approved on red,
+tutorial's photo check: A/B staged), Majora's Mask (boot crash: fix staged), Jet Force Gemini, Kirby 64
+(title right on red; its HUD), Mario Tennis and the rest; the BACK menu's Controls page. The loading screen is the deep-space title card (approved on red,
 `vsm13`: 6-9 ms a frame; hold BACK for the settings before the game, L + R
 for 480i).
 In xemu: 720p on the working
