@@ -30,6 +30,7 @@ xbe="${MX_XBE:-$root/build-xbox/xbe/default.xbe}"
 run="${MX_RUN:-$HOME/xemu/nrx-run}"
 iso="${MX_ROM:-}"
 mkdir -p "$run/stage"
+: > "$run/serial.log"   # never the last boot's log, whatever fails below
 rm -rf "$run/stage/"*
 cp "$xbe" "$run/stage/default.xbe"
 [ -n "${MX_STAGE_EXTRA:-}" ] && cp -R "$MX_STAGE_EXTRA"/. "$run/stage/"

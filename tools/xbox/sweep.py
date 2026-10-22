@@ -25,6 +25,7 @@ import concurrent.futures as cf
 import json
 import os
 import pathlib
+import queue
 import re
 import shutil
 import subprocess
@@ -331,21 +332,44 @@ def microcodes(lines):
     return gfx, audio
 
 
-def run_one(r, secs, sdir, keep_as=None):
-    """boot the XBE in xemu (the caller's slot) and keep the serial log's
+def slot_env(slot):
+    """xemu slot N's run folder and config (/c/xemu/nrx-envN.sh's); {} = the caller's"""
+    if slot is None:
+        return {}
+    base = '/c/xemu' if WIN else str(pathlib.Path.home() / 'xemu')
+    cfg = 'C:/xemu' if WIN else base
+    return {'MX_RUN': f'{base}/nrx-run{slot}', 'MX_XEMU_ARGS': f'-config_path {cfg}/slots/{slot}/xemu.toml'}
+
+
+def run_one(r, secs, sdir, keep_as=None, slot=None):
+    """boot the XBE in xemu (the caller's slot, or --slots' one) and keep the serial log's
     interesting lines and its tail (and the whole log as learn/<keep_as>.log,
     for the next learning round)"""
-    env = dict(os.environ, MX_XBE=r['xbe'], MX_SHOTS='0')
+    env = dict(os.environ, MX_XBE=r['xbe'], MX_SHOTS='0', **slot_env(slot))
     bash = 'C:/Program Files/Git/bin/bash.exe' if WIN else 'bash'
     t0 = time.time()
-    run_dir = os.environ.get('MX_RUN', str(pathlib.Path.home() / 'xemu/nrx-run'))
+    run_dir = env.get('MX_RUN', str(pathlib.Path.home() / 'xemu/nrx-run'))
     if WIN and re.match(r'^/[a-z]/', run_dir):
         run_dir = run_dir[1].upper() + ':' + run_dir[2:]
     log = pathlib.Path(run_dir) / 'serial.log'
+    err = ''
+    lines = []
     for _try in range(1 + RETRIES):
+        # the last boot's log must never stand for this one: s15 read one game's log for 165 others once
+        # xemu_run.sh began failing before it truncated the log
         try:
-            subprocess.run([bash, str(ROOT / 'tools/xbox/xemu_run.sh'), str(secs), RUN_STOP + rf'|\[BEAT\] {secs}s'], cwd=ROOT, env=env,
-                           capture_output=True, text=True, timeout=secs + 180)
+            log.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as e:   # held open by a stray xemu: this boot could not be told from the last
+            err = f'serial.log in use: {e}'
+            break
+        try:
+            p = subprocess.run([bash, str(ROOT / 'tools/xbox/xemu_run.sh'), str(secs), RUN_STOP + rf'|\[BEAT\] {secs}s'], cwd=ROOT, env=env,
+                               capture_output=True, text=True, timeout=secs + 180)
+            if p.returncode:
+                tail = (p.stderr or p.stdout or '').strip().splitlines()
+                err = f"xemu_run.sh: {tail[-1][:200] if tail else f'exit {p.returncode}'}"
         except subprocess.TimeoutExpired:
             pass
         lines = log.read_text(encoding='utf-8', errors='replace').replace('\r', '').splitlines() if log.is_file() else []
@@ -361,7 +385,10 @@ def run_one(r, secs, sdir, keep_as=None):
     (sdir / 'run' / f"{r['code']}.txt").write_text('\n'.join(keep) + '\n', encoding='utf-8')
     if keep_as and log.is_file():
         shutil.copyfile(log, sdir / 'learn' / f'{keep_as}.log')
-    return {**run_summary(lines), 'lines': len(lines), 'seconds': round(time.time() - t0)}
+    out = {**run_summary(lines), 'lines': len(lines), 'seconds': round(time.time() - t0)}
+    if not lines and err:
+        out['summary'], out['error'] = f'no log ({err[:80]})'.replace('|', '/'), err
+    return out
 
 
 def main():
@@ -378,6 +405,8 @@ def main():
                     help='with --run: the learning loop, ROUNDS times: each game that learnt something and '
                          'presents no frames is built again with its boot logs (--learn) and booted again')
     ap.add_argument('--learn-all', action='store_true', help='--learn for the games that present frames too')
+    ap.add_argument('--slots', help='with --run: boot on these xemu slots at once (e.g. 10,11,12: '
+                    'nrx-runN and slots/N/xemu.toml); each boot runs slower with several')
     ap.add_argument('--list', action='store_true', help='only show which ROM stands for each game')
     ap.add_argument('--rescan', action='store_true', help='redo the error lines and categories from the logs')
     a = ap.parse_args()
@@ -435,14 +464,27 @@ def main():
     if a.run:
         built = [r for r in results.values() if r['stage'] == 'xbe' and r.get('xbe')
                  and (not only or only.search(r['file']) or only.search(r['code']))]
-        for i, r in enumerate(built, 1):
-            if r.get('run') and not a.redo and not only:
-                continue
-            r['run'] = run_one(r, a.run, sdir, keep_as=f"{r['code']}-{len(learn_logs(sdir, r['code'])) + 1}"
-                               if a.learn else None)
-            rpath.write_text(json.dumps(results, indent=1), encoding='utf-8')
-            write_table(sdir, results, skipped)
-            print(f"[run {i}/{len(built)}] {r['code']} {r['file'][:40]:40} {r['run']['summary']}", flush=True)
+        todo = [r for r in built if a.redo or only or not r.get('run')]
+        slots = queue.Queue()
+        for s in (a.slots.split(',') if a.slots else [None]):
+            slots.put(s)
+
+        def boot(r):   # each boot takes a free slot and gives it back
+            s = slots.get()
+            try:
+                return run_one(r, a.run, sdir, keep_as=f"{r['code']}-{len(learn_logs(sdir, r['code'])) + 1}"
+                               if a.learn else None, slot=s)
+            finally:
+                slots.put(s)
+        with cf.ThreadPoolExecutor(slots.qsize()) as ex:
+            futs = {ex.submit(boot, r): r for r in todo}
+            for i, f in enumerate(cf.as_completed(futs), 1):
+                r = futs[f]
+                r['run'] = f.result()
+                with lock:
+                    rpath.write_text(json.dumps(results, indent=1), encoding='utf-8')
+                    write_table(sdir, results, skipped)
+                print(f"[run {i}/{len(todo)}] {r['code']} {r['file'][:40]:40} {r['run']['summary']}", flush=True)
     for rnd in range(1, a.learn + 1 if a.run else 1):
         # the learning loop (docs/analyzer.md): what a boot learnt goes into the next build
         todo = [r for r in results.values() if r['stage'] == 'xbe' and r.get('run') and r['run']['learn']
