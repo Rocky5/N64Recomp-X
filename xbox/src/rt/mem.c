@@ -66,13 +66,20 @@ static void hw_shadow(uint8_t* p, uint32_t bytes) {
              (unsigned)(sizeof k_hw_blocks / sizeof k_hw_blocks[0]));
 }
 
+/* 4 KB of slack past RDRAM's end, before the register shadow: the audio HLE
+ * is promised a 4 KB span (DMEM's size) and near the end a LOADBUFF or
+ * SAVEBUFF ran past the window, into the shadow pages (docs/review-2026-10.md
+ * 5b.15). -DXRC_RDRAM_GUARD=0: none, as before */
+#ifndef XRC_RDRAM_GUARD
+#define XRC_RDRAM_GUARD 4096u
+#endif
 int xrc_mem_init(uint32_t mb) {
     uint32_t bytes = mb << 20;
 #ifdef XRC_RDRAM_PAD_MB   /* diagnosis: RDRAM placed this many MB lower in physical memory */
-    uint8_t* p = (uint8_t*)xhw_rdram_alloc(bytes + ((uint32_t)(XRC_RDRAM_PAD_MB) << 20) + (HW_SHADOW ? HW_SHADOW_BYTES : 0));
+    uint8_t* p = (uint8_t*)xhw_rdram_alloc(bytes + XRC_RDRAM_GUARD + ((uint32_t)(XRC_RDRAM_PAD_MB) << 20) + (HW_SHADOW ? HW_SHADOW_BYTES : 0));
     /* (the allocator works down from the top: RDRAM at the bottom of the larger block sits lower) */
 #else
-    uint8_t* p = (uint8_t*)xhw_rdram_alloc(bytes + (HW_SHADOW ? HW_SHADOW_BYTES : 0));
+    uint8_t* p = (uint8_t*)xhw_rdram_alloc(bytes + XRC_RDRAM_GUARD + (HW_SHADOW ? HW_SHADOW_BYTES : 0));
 #endif
     if (!p) return 0;
     if (((uintptr_t)p & 0x80000000u) == 0) {   /* not the kernel's 0x80000000 + physical mapping */
@@ -97,7 +104,7 @@ int xrc_mem_init(uint32_t mb) {
 #endif
     xhw_logf("[RECOMP] window: %u MB, physical %08x, rdram base %08x", (unsigned)mb,
              (unsigned)((uintptr_t)p & 0x7FFFFFFFu), (unsigned)(uintptr_t)xrc_rdram);
-    if (HW_SHADOW) hw_shadow(p, bytes);
+    if (HW_SHADOW) hw_shadow(p, bytes + XRC_RDRAM_GUARD);
 #ifdef XRC_MEMBENCH   /* diagnosis: RDRAM's read speed before anything else runs */
     {
         uint32_t off, j, sum = 0;
