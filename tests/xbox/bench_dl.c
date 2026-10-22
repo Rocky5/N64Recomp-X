@@ -371,7 +371,11 @@ int main(int argc, char** argv) {
         }
     }
     s_render = 0;
+#ifndef BENCH_PRESENT_EACH
     s_quiet = 1;
+#else   /* --trace: the timed runs' frames are traced too (one task: its second run is frame 1) */
+    s_quiet = 0;
+#endif
     s_draws = s_tris = s_texs = s_clears = 0;
 #ifdef _WIN32
     if (argc > 4) {

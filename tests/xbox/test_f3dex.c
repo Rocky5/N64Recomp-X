@@ -831,6 +831,43 @@ static void test_s2dex_obj(void) {
     CHECK(s_tex_creates > before, "obj rect: no texture made from the loaded block");
 }
 
+/* G_OBJ_LOADTXTR of a uObjTxtrTLUT {type, image, phead, pnum, ...} loads
+ * the palette a CI sprite then reads (Kirby 64's title background: its
+ * fields were read one late and the palette never landed) */
+#ifndef XGFX_OBJ_TLUT_FIELDS
+#define XGFX_OBJ_TLUT_FIELDS_T 1
+#else
+#define XGFX_OBJ_TLUT_FIELDS_T XGFX_OBJ_TLUT_FIELDS
+#endif
+#define PAL_AT 0x3F800u
+#define TLO_AT 0x3FC00u
+static void test_s2dex_tlut(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode S2DEX  fifo 2.05  Yoshitaka Yasumoto 1998 Nintendo.");
+    unsigned i;
+    for (i = 0; i < 16; i++) put16(PAL_AT + 2 * i, i == 1 ? 0x07C1u : 0x0001u);   /* entry 1 green, the rest black */
+    for (i = 0; i < 256; i++) put8(BGI_AT + i, 0x11);                               /* CI4 texels, all index 1 */
+    put32(TLO_AT + 0, 0x00000030u); put32(TLO_AT + 4, PAL_AT);                      /* TLUT, image */
+    put16(TLO_AT + 8, 256); put16(TLO_AT + 10, 15);                                 /* phead, pnum */
+    put16(TLO_AT + 12, 0); put16(TLO_AT + 14, 0); put32(TLO_AT + 16, 0); put32(TLO_AT + 20, 0);
+    put32(OBJ_AT + 0, 0x00001033u); put32(OBJ_AT + 4, BGI_AT);                      /* the sprite: as test_s2dex_obj */
+    put16(OBJ_AT + 8, 0); put16(OBJ_AT + 10, 256u / 8u - 1u);
+    put16(OBJ_AT + 12, (2048u + 1u) / 1u); put16(OBJ_AT + 14, 0);                  /* tline: 1 word a row */
+    put32(OBJ_AT + 16, 0); put32(OBJ_AT + 20, 0);
+    put16(OBJ_AT + 24, 10u << 2); put16(OBJ_AT + 26, 1024); put16(OBJ_AT + 28, 16u << 5); put16(OBJ_AT + 30, 0);
+    put16(OBJ_AT + 32, 20u << 2); put16(OBJ_AT + 34, 1024); put16(OBJ_AT + 36, 8u << 5); put16(OBJ_AT + 38, 0);
+    put16(OBJ_AT + 40, 1); put16(OBJ_AT + 42, 0);                                   /* imageStride 1 word */
+    put16(OBJ_AT + 44, (2u << 8) | 0u); put16(OBJ_AT + 46, 0);                     /* CI, 4-bit; palette 0 */
+    s_pc = DL_AT;
+    cmd(0xE3001001u, 0x00008000u);   /* SETOTHERMODE_H TEXTLUT RGBA16 */
+    cmd(0x05000000u, TLO_AT);        /* G_OBJ_LOADTXTR: the palette */
+    cmd(0x07000000u, OBJ_AT);        /* G_OBJ_LDTX_RECT */
+    cmd(0xDF000000u, 0);
+    s_tex_px0 = 0;
+    run(&u);
+    CHECK(XGFX_OBJ_TLUT_FIELDS_T ? (s_tex_px0 & 0x00FFFFFFu) == 0x0000FF00u : (s_tex_px0 & 0x00FFFFFFu) != 0x0000FF00u,
+          "obj tlut: the sprite's first texel %08x (want green from the loaded palette)", (unsigned)s_tex_px0);
+}
+
 /* L3DEX2's G_LINE3D: a line between two vertices drawn as two triangles
  * across it (docs/roadmap.md B3; skipped before) */
 static void test_line3d(void) {
@@ -1015,6 +1052,7 @@ int main(void) {
     test_tlut_offset();
     test_s2dex_bg();
     test_s2dex_obj();
+    test_s2dex_tlut();
     test_line3d();
     test_dl_guards();
     test_zimg_copy();

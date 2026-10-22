@@ -2497,6 +2497,16 @@ static void obj_matrix(uint32_t a, unsigned len) {
     if (s_omtx[7] <= 0.0f) s_omtx[7] = 1.0f;
 }
 
+/* uObjTxtrTLUT is {type, image, phead, pnum, zero, sid, flag, mask}: the
+ * palette's head (256-511) at +8 and its count less one at +10. They were
+ * read one field late (pnum as the head, zero as the count): the LOADTLUT
+ * landed below TMEM's palette half and was dropped, and Kirby 64's title
+ * background (a CI8 BG_1CYC whose palette this loads) drew with the palette
+ * left from before: black on the host, wrong colours on red.
+ * -DXGFX_OBJ_TLUT_FIELDS=0: read as before */
+#ifndef XGFX_OBJ_TLUT_FIELDS
+#define XGFX_OBJ_TLUT_FIELDS 1
+#endif
 static void obj_loadtxtr(uint32_t a) {
     uint32_t type, img, d[16];
     unsigned n = 0, tmem, p1, p2;
@@ -2513,9 +2523,10 @@ static void obj_loadtxtr(uint32_t a) {
         d[n++] = 0xF5000000u | (2u << 19) | (((p1 + 1u) >> 2) & 0x1FFu) << 9 | (tmem & 0x1FFu); d[n++] = 7u << 24;
         d[n++] = 0xF4000000u; d[n++] = (7u << 24) | (((w - 1u) << 2) & 0xFFFu) << 12 | (p2 & 0xFFFu);
     } else if (type == 0x00000030u) {   /* G_OBJLT_TLUT: phead, pnum */
+        unsigned head = XGFX_OBJ_TLUT_FIELDS ? tmem : p1, num = XGFX_OBJ_TLUT_FIELDS ? p1 : p2;
         d[n++] = 0xFD000000u | (2u << 19); d[n++] = img;
-        d[n++] = 0xF5000000u | (2u << 19) | (p1 & 0x1FFu); d[n++] = 7u << 24;
-        d[n++] = 0xF0000000u; d[n++] = (7u << 24) | ((p2 << 2) & 0xFFFu) << 12;
+        d[n++] = 0xF5000000u | (2u << 19) | (head & 0x1FFu); d[n++] = 7u << 24;
+        d[n++] = 0xF0000000u; d[n++] = (7u << 24) | ((num << 2) & 0xFFFu) << 12;
     } else {
         return;
     }
