@@ -54,6 +54,9 @@ static uint8_t s_sp[0x2000];
 static uint8_t s_pif[64];
 static uint8_t s_eep[2048];
 static int s_eep16;   /* --eep 16: a 16 Kbit EEPROM (2 KB), else 4 Kbit */
+/* --versions: which superseded versions of a page are kept (write_captures): 0 last (only an older
+ * one that comes back), 1 all, 2 boot (the default: all but those saved before the first graphics task) */
+static int s_versions = 2;
 static uint32_t* s_cpuw;    /* a bit per RDRAM word: written by the CPU (or the RSP) since a DMA from the ROM */
 static int s_verbose;
 
@@ -361,7 +364,10 @@ static void sp_status_write(uint32_t v) {
             say("[SP] graphics task %u: data %08x, %x bytes, frame %u", s_gfx_tasks, be32(&s_sp[0xFF0]), be32(&s_sp[0xFF4]), s_frames);
         if (type == 1 && s_snap_path && s_gfx_tasks == s_snap_at) {   /* the display list as the CPU left it */
             FILE* f = fopen(s_snap_path, "wb");
+            char tp[1024];
             if (f) fwrite(s_ram, 1, s_ramsize, f), fclose(f);
+            snprintf(tp, sizeof tp, "%s.task", s_snap_path);   /* and its OSTask, as DMEM has it (dryboot_frame.py) */
+            if ((f = fopen(tp, "wb"))) fwrite(&s_sp[0xFC0], 1, 64, f), fclose(f);
             fprintf(stderr, "dryboot: RDRAM at graphics task %u (data %08x, frame %u) to %s\n", s_gfx_tasks, be32(&s_sp[0xFF0]), s_frames, s_snap_path);
         }
     }
@@ -694,7 +700,7 @@ static int seen(uint32_t v) {
 
 /* the 4 KB page at va (its words through the TLB now) as a code record, unless that version is
  * saved; kept in memory and written at the end (write_captures) */
-typedef struct { uint32_t va, hash; uint8_t* data; } Rec;
+typedef struct { uint32_t va, hash; uint8_t* data; unsigned gfx; } Rec;   /* gfx: graphics tasks before it */
 static Rec* s_recs;
 static unsigned s_nrecs, s_cap_recs;
 static void capture(uint32_t va) {
@@ -720,13 +726,16 @@ static void capture(uint32_t va) {
         if (!s_recs) exit(3);
     }
     s_recs[s_nrecs].va = (int32_t)vp >= 0 || vp >= 0xC0000000u ? vp : 0x80000000u | (vp & 0x1FFFFFFFu);
-    s_recs[s_nrecs].hash = h, s_recs[s_nrecs].data = rec, s_nrecs++;
+    s_recs[s_nrecs].hash = h, s_recs[s_nrecs].data = rec, s_recs[s_nrecs].gfx = s_gfx_tasks, s_nrecs++;
 }
 
 /* the records out: a page's versions all when an older one came back (an overlay the game loads at
- * that address again and again: Mario Tennis's scenes), else its last one alone (a loader the code
- * it unpacked replaced for good: one early version made learn.py keep Banjo-Kazooie's whole block
- * twice, as an overlay, whose libultra copy is then never named) */
+ * that address again and again: Mario Tennis's scenes), else its last one alone when the older ran
+ * at boot, before the first graphics task (a loader the code it unpacked replaced for good: one early
+ * version made learn.py keep Banjo-Kazooie's whole block twice, as an overlay, whose libultra copy
+ * is then never named; 36 names, 107 without). A version superseded once the game drew is kept
+ * (Mario Tennis's menu scene, replaced by its match: 2,283 functions in 16 segments, 1,372 in 14
+ * without). --versions last|all: the first rule alone, or every version */
 static void write_captures(void) {
     unsigned i, j;
     for (i = 0; i < s_nrecs; i++) {
@@ -737,7 +746,8 @@ static void write_captures(void) {
                 later = 1;
                 if (s_recs[j].hash == r->hash) back = 1;
             }
-        if (later && !back) {   /* superseded: unless a version before it comes back after it */
+        if (later && !back && s_versions != 1 && (s_versions == 0 || r->gfx == 0)) {   /* superseded: unless a version
+                                    * before it comes back after it, or it ran once the game drew (2) */
             unsigned k;
             for (k = 0; k < i && !back; k++)
                 if (s_recs[k].va == r->va)
@@ -1371,7 +1381,8 @@ static uint32_t* load_known(const char* path, size_t* n) {
 static int usage(void) {
     fprintf(stderr, "usage: dryboot <rom.z64> <out dir> --entry X --boot-size N [--cic N] [--tv 0|1|2] [--rdram 4|8]\n"
                     "               [--known file] [--frames N] [--press frame|0] [--script autopad.txt] [--eep 4|16]\n"
-                    "               [--dump addr bytes file] [--snap gfx-task file] [--watch addr bytes] [-v]\n");
+                    "               [--dump addr bytes file] [--snap gfx-task file] [--watch addr bytes]\n"
+                    "               [--versions boot|all|last] [-v]\n");
     return 1;
 }
 
@@ -1400,6 +1411,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(a, "--press-mode")) s_press_mode = (int)strtoul(v, NULL, 10);
         else if (!strcmp(a, "--script")) script_load(v);
         else if (!strcmp(a, "--eep")) s_eep16 = strtoul(v, NULL, 10) == 16;
+        else if (!strcmp(a, "--versions")) s_versions = !strcmp(v, "all") ? 1 : !strcmp(v, "last") ? 0 : 2;
         else if (!strcmp(a, "--watch") && i + 2 < (uint32_t)argc) {   /* --watch <addr> <bytes>: who stores there */
             s_watch_lo = (uint32_t)strtoul(v, NULL, 16) & 0x1FFFFFFFu;
             s_watch_hi = s_watch_lo + (uint32_t)strtoul(argv[i + 2], NULL, 0);

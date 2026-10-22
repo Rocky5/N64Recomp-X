@@ -80,6 +80,8 @@ def run(rom, a, pack, bdir, prog, log):
            '--rdram', str(pack.rdram_mb if pack and pack.rdram_mb in (4, 8) else 4),
            '--known', str(known), '--frames', frames,
            '--eep', '16' if pack and getattr(pack, 'save_type', '') == 'eep16k' else '4']
+    if os.environ.get('N64RX_DRYBOOT_VERSIONS') in ('all', 'last'):   # which versions of a page (default: boot)
+        cmd += ['--versions', os.environ['N64RX_DRYBOOT_VERSIONS']]
     script = os.environ.get('N64RX_DRYBOOT_SCRIPT')   # an autopad script for its input, instead of the schedule
     if script:
         cmd += ['--script', script]
