@@ -17,6 +17,16 @@ from . import funcs as F
 from . import segments as S
 
 BOOT_PLAIN = os.environ.get('N64RX_BOOT_PLAIN', '1') != '0'   # Analysis.overlays
+# A captured segment whose page starts inside the boot segment's last page
+# (NHL 99: code_80005000 against the boot's 0x80000400..0x800051D0, 0x1D0
+# bytes, zeros in both) shares no code with it: keyed as an overlay, its
+# 2,979 functions got ROM-offset keys, the libultra rules (which match calls
+# by vram) named nothing there, the game's own osCreateViManager /
+# osViSetEvent / osStartThread ran unreplaced, its own VI manager waited for
+# interrupts the runtime never raises, and no retrace reached it. An overlap
+# with the boot that holds the same bytes in both and no function start of
+# either is not an overlay. N64RX_BOOT_TWIN=0: any overlap makes one, as before
+BOOT_TWIN = os.environ.get('N64RX_BOOT_TWIN', '1') != '0'
 # the TLB template's second shape: an SDK entry whose main maps the boot code
 # with an inline tlbwi and jumps into the mapping (funcs.tlb_main: Conker).
 # Analysed at KSEG0, every function the game runs at 0x1000xxxx was unknown
@@ -39,6 +49,14 @@ class Analysis:
     funcs: dict = field(default_factory=dict)      # segment name -> {start: Func}
     notes: list = field(default_factory=list)
 
+    def _twin_overlap(self, s, o):
+        """s and o hold the same bytes where they overlap, and no function of either starts there"""
+        lo, hi = max(s.vram, o.vram), min(s.vram + s.size, o.vram + o.size)
+        rom = self.img.rom
+        if rom[s.rom + lo - s.vram:s.rom + hi - s.vram] != rom[o.rom + lo - o.vram:o.rom + hi - o.vram]:
+            return False
+        return not any(lo <= x < hi for n in (s.name, o.name) for x in self.funcs.get(n, {}))
+
     def overlays(self):
         """the names of the segments whose vram another segment shares; the
         boot segment is never one (its functions keep their plain keys and
@@ -48,7 +66,8 @@ class Analysis:
         N64RX_BOOT_PLAIN=0: the boot an overlay like any other"""
         segs = self.img.segments
         out = {s.name for s in segs for o in segs if o is not s and
-               s.vram < o.vram + o.size and o.vram < s.vram + s.size}
+               s.vram < o.vram + o.size and o.vram < s.vram + s.size and
+               not (BOOT_TWIN and 'boot' in (s.name, o.name) and self._twin_overlap(s, o))}
         if BOOT_PLAIN:
             out.discard('boot')
         return out
