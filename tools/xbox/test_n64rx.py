@@ -114,6 +114,18 @@ class Rom(unittest.TestCase):
             m = (gen / 'xrc_missing.c').read_text()
             self.assertIn('__attribute__((weak)) void __osSpSetStatus_recomp(', m)
             self.assertIn('xrc_missing("__osSpSetStatus_recomp", rdram, ctx)', m)
+
+    def test_fodd_rewrite(self):
+        """write_fodd: odd-FPR words through XRC_FODD only in a game whose threads run with Status.FR"""
+        with tempfile.TemporaryDirectory() as tmp:
+            gen = pathlib.Path(tmp)
+            src = '    ctx->f_odd[(3 - 1) * 2] = ctx->r4;\n    ctx->r2 = ctx->f_odd[(17 - 1) * 2];\n'
+            (gen / 'funcs_0.c').write_text(src)
+            self.assertEqual(pipeline.write_fodd(gen, 0), 0)
+            self.assertEqual((gen / 'funcs_0.c').read_text(), src)
+            self.assertEqual(pipeline.write_fodd(gen, 2), 2)
+            self.assertEqual((gen / 'funcs_0.c').read_text(),
+                             '    XRC_FODD(ctx)[(3 - 1) * 2] = ctx->r4;\n    ctx->r2 = XRC_FODD(ctx)[(17 - 1) * 2];\n')
             self.assertNotIn('func_80000400', m)
 
     def test_test_rom_is_deterministic(self):
