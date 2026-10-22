@@ -239,8 +239,12 @@ def write_table(sdir, results, skipped):
 
 
 RUN_KEYS = re.compile(r'\[(GFX|AUDIO|LEARN|FATAL|ULTRA|INTERP|CRASH|OS|SP|RECOMP|MEM)\]|missing|unknown', re.I)
-# stop early: a crash is reported, a fatal card is up, or the run is old enough to judge
-RUN_STOP = r'\[CRASH\] end|\[FATAL\]|\[BEAT\] 30s'
+# stop early: a crash is reported or a fatal card is up. The run's own length used to be cut at its
+# 30 s heartbeat whatever --run said: on this machine's xemu (about 2 fps) Banjo-Kazooie, GoldenEye
+# and Blast Corps show no frame by then and 80-280 by 90 s. Now the heartbeat at --run's seconds
+RUN_STOP = r'\[CRASH\] end|\[FATAL\]'
+# a boot xemu stalled before the loading screen's first frames: tried again this many times
+RETRIES = int(os.environ.get('SWEEP_RETRIES', '2'))
 
 
 N64_REGIONS = [(0x00000000, 0x80000000, 'KUSEG (TLB-mapped)'), (0x80000000, 0x80800000, 'KSEG0 RDRAM'),
@@ -334,16 +338,21 @@ def run_one(r, secs, sdir, keep_as=None):
     env = dict(os.environ, MX_XBE=r['xbe'], MX_SHOTS='0')
     bash = 'C:/Program Files/Git/bin/bash.exe' if WIN else 'bash'
     t0 = time.time()
-    try:
-        subprocess.run([bash, str(ROOT / 'tools/xbox/xemu_run.sh'), str(secs), RUN_STOP], cwd=ROOT, env=env,
-                       capture_output=True, text=True, timeout=secs + 180)
-    except subprocess.TimeoutExpired:
-        pass
     run_dir = os.environ.get('MX_RUN', str(pathlib.Path.home() / 'xemu/nrx-run'))
     if WIN and re.match(r'^/[a-z]/', run_dir):
         run_dir = run_dir[1].upper() + ':' + run_dir[2:]
     log = pathlib.Path(run_dir) / 'serial.log'
-    lines = log.read_text(encoding='utf-8', errors='replace').replace('\r', '').splitlines() if log.is_file() else []
+    for _try in range(1 + RETRIES):
+        try:
+            subprocess.run([bash, str(ROOT / 'tools/xbox/xemu_run.sh'), str(secs), RUN_STOP + rf'|\[BEAT\] {secs}s'], cwd=ROOT, env=env,
+                           capture_output=True, text=True, timeout=secs + 180)
+        except subprocess.TimeoutExpired:
+            pass
+        lines = log.read_text(encoding='utf-8', errors='replace').replace('\r', '').splitlines() if log.is_file() else []
+        # xemu here stalls some boots at the loading screen before its first 30 frames (the game never
+        # starts): booted again, not counted as "no frames"
+        if any(l.startswith('[BOOT] loading screen:') for l in lines):
+            break
     keep = [l for l in lines if RUN_KEYS.search(l)][:120]
     # every microcode line too, past the 120 (the audio set-up and [LEARN] lines crowded them out: --rescan's
     # graphics and audio columns came out empty for games that switch microcodes late)

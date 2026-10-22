@@ -163,6 +163,12 @@ export N64RX_BUILD_ROOT=$PWD/build-sweep N64RX_RECOMP=<checkout>/build-host/reco
 python -u tools/xbox/sweep.py "<ROM folder>" --jobs 5 --run 30 --tag s7
 ```
 
+`--run N` boots each XBE for N seconds (it stopped at the 30 s heartbeat
+whatever N was, before 2026-10-22: use 90 or more on a slow xemu), one at a
+time, and boots again (`SWEEP_RETRIES`, 2) one that xemu stalled before the
+loading screen's first frames. Run one xemu at a time and no builds beside
+it when frame counts matter: either stalls boots here.
+
 A one-off test build beside a sweep or a learning loop takes its own
 `N64RX_BUILD_ROOT` (`build-rg`, `build-sweep`), or the two compile over each
 other in `build-xbox/`.
