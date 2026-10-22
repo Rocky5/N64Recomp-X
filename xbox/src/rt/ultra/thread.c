@@ -831,6 +831,27 @@ ULTRA(osYieldThread) {
     xhw_yield();
 }
 
+/* gfx.c: a game thread about to wait for the renderer's lock, which the BACK
+ * menu holds for as long as it is open, lets go of every level of the
+ * runtime lock it holds with interrupts off, as it would at a block, and
+ * takes them back after (xu_lock_take). Mario Tennis's graphics thread
+ * started its task with interrupts off (__osDisableInt at 0x8003274C, then
+ * osSpTaskStartGo at 0x80032790): it waited in xrc_gfx_task holding the
+ * runtime lock, the VI thread waited for that lock, and the menu (fed from
+ * the VI thread) took no more input and never closed (red, vmt7, retrace
+ * 1480 for good). A thread the runtime does not know holds nothing here. */
+int xu_lock_drop(void);
+int xu_lock_drop(void) {
+    Thr* me = s_tls == 0xFFFFFFFFu ? NULL : (Thr*)xhw_tls_get(s_tls);
+    int n = me && me->ints_off ? s_depth : 0, i;
+    for (i = 0; i < n; i++) xu_unlock();
+    return n;
+}
+void xu_lock_take(int n);
+void xu_lock_take(int n) {
+    while (n-- > 0) xu_lock();
+}
+
 /* more2.c's __osEnqueueAndYield: a pause with every level of the lock let
  * go when the thread holds it (interrupts "off", as libultra's callers do),
  * taken back after */

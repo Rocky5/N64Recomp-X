@@ -72,6 +72,13 @@ unsigned xu_vi_rows(void) {
 
 void xu_ai_tick(void);   /* ai.c */
 
+/* The BACK menu and the exit combos are read before the VI thread takes
+ * the runtime lock: a game thread that holds it for long (interrupts off
+ * around a host wait) no longer takes the menu's input with it (CLAUDE.md:
+ * BACK in every game, in every state). -DXRC_MENU_VI_FIRST=0: after, as before */
+#ifndef XRC_MENU_VI_FIRST
+#define XRC_MENU_VI_FIRST 1
+#endif
 static void vi_thread(void* arg) {
     unsigned vbl = 0;
     (void)arg;
@@ -81,11 +88,12 @@ static void vi_thread(void* arg) {
         if (XRC_PAL_50HZ && xrc_tv_type == 0 && ++vbl % 6u == 0) continue;
         if (s_cur != s_next) s_cur = s_next;
         s_retrace++;
+        if (XRC_MENU_VI_FIRST) xrc_menu_vi(s_retrace);
         xu_lock();
         xu_rcp_flush(NULL);   /* sp.c: done events whose thread is blocked (or two retraces old) */
         xu_unlock();
         mq = s_mq;
-        xrc_menu_vi(s_retrace);
+        if (!XRC_MENU_VI_FIRST) xrc_menu_vi(s_retrace);
         xrc_video_vi(s_retrace);   /* the video-mode prompt: A, or the timeout (../video.c) */
         xrc_gfx_vi(s_retrace);     /* a frame that waited too long for its swap (../gfx.c) */
 #ifdef XRC_PEEK

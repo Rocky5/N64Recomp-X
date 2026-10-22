@@ -60,6 +60,26 @@ static volatile unsigned s_task_retrace;  /* the retrace the last task ended at 
 #define XRC_SWAP_STALE 6   /* retraces an open frame waits for its swap before it is presented anyway */
 #endif
 
+/* The renderer's lock from a game thread: the runtime lock's levels it holds
+ * (interrupts off) are let go while it waits, and taken back with the
+ * renderer held: no thread that holds the runtime lock waits for the
+ * renderer then, so the two cannot cross (the BACK menu holds the renderer
+ * while it is open and takes no runtime lock; the VI thread takes the
+ * renderer only after it lets the runtime lock go). DIVERGES: while it waits
+ * for the BACK menu, other threads may take the runtime lock its
+ * interrupts-off section held (the game is paused by the menu then).
+ * -DXRC_GFX_LOCK_DROP=0: waits holding it, as before */
+#ifndef XRC_GFX_LOCK_DROP
+#define XRC_GFX_LOCK_DROP 1
+#endif
+int xu_lock_drop(void);
+void xu_lock_take(int n);
+static int gfx_lock_game(void) {   /* the levels to take back after */
+    int n = XRC_GFX_LOCK_DROP ? xu_lock_drop() : 0;
+    xrc_gfx_lock();
+    return n;
+}
+
 /* the VI thread, every retrace: a frame left open with no task and no swap
  * to its buffer for XRC_SWAP_STALE retraces (a game that draws once and
  * waits, or swaps a buffer it did not draw into) is presented as it is */
@@ -74,7 +94,7 @@ void xrc_gfx_vi(unsigned retrace) {
 /* osViSwapBuffer (ultra/vi.c) */
 void xrc_gfx_swap(uint32_t fb) {
     if (!XRC_PRESENT_ON_SWAP || !s_up) return;
-    xrc_gfx_lock();
+    xu_lock_take(gfx_lock_game());
     if (!s_swapped) {
         s_swapped = 1;
         f3d_split_frames(1);
@@ -179,16 +199,17 @@ static void dl_bench(uint32_t task) {
  * close (the game is frozen under the menu; settings_menu.c) */
 static int s_dp = 1;
 void xrc_gfx_task(uint32_t task) {
-    int split;
+    int split, n;
     unsigned before;
     s_dp = 1;
     if (!s_up) return;
-    xrc_gfx_lock();
+    n = gfx_lock_game();
     while (xrc_menu_open()) {
         xrc_gfx_unlock();
         xhw_sleep_ms(10);
         xrc_gfx_lock();
     }
+    xu_lock_take(n);   /* the menu closed and the renderer is this thread's */
     split = s_swapped && s_open_tasks < XRC_SWAP_TASKS;
     if (s_swapped && s_open_tasks == XRC_SWAP_TASKS) {
         s_open_tasks++;
@@ -214,7 +235,7 @@ void xrc_gfx_task(uint32_t task) {
 /* osInvalDCache (ultra/misc.c): a frame there about to be read by the CPU */
 void xrc_gfx_inval(uint32_t addr, uint32_t len) {
     if (!s_up) return;
-    xrc_gfx_lock();
+    xu_lock_take(gfx_lock_game());
     f3d_fb_inval(addr, len);
     xrc_gfx_unlock();
 }
