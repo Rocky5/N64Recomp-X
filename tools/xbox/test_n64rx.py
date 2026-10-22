@@ -182,6 +182,9 @@ class Packs(unittest.TestCase):
             self.assertEqual(k, pipeline.cache_key(rom, p, pin='abc'))
             self.assertNotEqual(k, pipeline.cache_key(rom, p, pin='abd'))
             self.assertNotEqual(k, pipeline.cache_key(rom, p, gpr='32', pin='abc'))
+            # the recompiler's copy of the ROM: the same bytes change nothing, other bytes do
+            self.assertEqual(k, pipeline.cache_key(rom, p, pin='abc', data=rom.data))
+            self.assertNotEqual(k, pipeline.cache_key(rom, p, pin='abc', data=rom.data + b'\0' * 16))
             (p.dir / 'x.syms.toml').write_text('# changed\n')
             self.assertNotEqual(k, pipeline.cache_key(rom, p, pin='abc'))
 

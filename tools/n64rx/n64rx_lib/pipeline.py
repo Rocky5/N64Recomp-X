@@ -16,7 +16,7 @@ import time
 from . import ROOT, VERSION, N64rxError, compat, dryboot, engines, packs, romonly, rom as romlib, saves
 from . import learn as learnmod
 
-GEN_VERSION = 13   # bump when what n64rx writes into gen/ changes (the cache key)
+GEN_VERSION = 14   # bump when what n64rx writes into gen/ changes (the cache key; 14: fix_stray_goto)
 VIDEO = {'auto': 0, '480': 2, '720': 3}
 EEPROM = {'eep4k': 512, 'eep16k': 2048}
 FATX_BAD = '<>:"/\\|?*'
@@ -115,12 +115,15 @@ def tail(log, n=25):
     return '\n'.join('      | ' + l for l in lines[-n:])
 
 
-def cache_key(rom, pack, gpr=None, pin=None):
+def cache_key(rom, pack, gpr=None, pin=None, data=None):
     """the recompile step is skipped when this is unchanged: the ROM, every
-    file of the pack, the recompiler's pin, what n64rx writes, the width"""
+    file of the pack, the recompiler's pin, what n64rx writes, the width, and
+    `data`, the bytes N64Recomp reads when they are not the ROM's (learnt code
+    appended, or decompressed code in place: learn._decompressed_code)"""
+    extra = [hashlib.sha1(data).hexdigest()] if data is not None and data != rom.data else []
     return hashlib.sha256(json.dumps([rom.sha1, pack.file_hash(), pin or engines.recompiler_pin(), GEN_VERSION,
                                       gpr or '', os.environ.get('N64RX_TRACE', ''), pack.rdram_mb, os.environ.get('N64RX_GUARD', '1'),
-                                      os.environ.get('N64RX_RESTRICT', '0'), os.environ.get('N64RX_FR', '1')]).encode()).hexdigest()
+                                      os.environ.get('N64RX_RESTRICT', '0'), os.environ.get('N64RX_FR', '1')] + extra).encode()).hexdigest()
 
 
 def decide_gpr(pack, rom, override, prog, data=None):
@@ -829,7 +832,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     prog.step('Recompiling the game\'s code (N64Recomp)')
     eng.ensure_recompiler(log)
     gen = bdir / 'gen'
-    key = cache_key(rom, pack, gpr)
+    key = cache_key(rom, pack, gpr, data=ainfo.get('recomp_rom') if ainfo else None)
     stamp = gen / '.n64rx-key'
     if stamp.exists() and stamp.read_text() == key and (gen / 'funcs.h').exists():
         prog.note('the same ROM, pack and recompiler as last time: kept')
