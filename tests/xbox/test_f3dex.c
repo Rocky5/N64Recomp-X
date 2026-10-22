@@ -668,6 +668,38 @@ static void test_loadtile32(void) {
           "loadtile32: texture %u rows high, row 4 starts %08x (want 8 rows, green c1)", s_tex_h, s_tex_row4);
 }
 
+/* a LOADTILE past TMEM's 4 KB wraps (XGFX_TMEM_WRAP: Mario Tennis loads 384
+ * x 15..224 rows of a frame): rows of 128 bytes repeat every 32 in TMEM, so
+ * the tile's row 0 reads the last row written there (32 of 40 rows; 288 of
+ * 300, past the usual buffers) and row 4 the one 4 after it */
+#define TEXW_AT 0xA0000u   /* up to 300 rows of 128 bytes, clear of the other images */
+static void tmem_wrap_rows(unsigned rows, unsigned last0) {
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    unsigned i, y, before = s_tex_creates;
+    for (y = 0; y < rows; y++)
+        for (i = 0; i < 64; i++) put16(TEXW_AT + y * 128u + i * 2u, y < last0 ? 0xF801u : 0x07C1u);   /* red, then green */
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xFD000000u | (0u << 21) | (2u << 19) | (64u - 1u), TEXW_AT);   /* SETTIMG RGBA16 width 64 */
+    cmd(0xF5000000u | (0u << 21) | (2u << 19) | (16u << 9), 7u << 24);   /* SETTILE 7: line 16 */
+    cmd(0xF4000000u, (7u << 24) | (63u * 4u << 12) | ((rows - 1u) * 4u));   /* LOADTILE 0-63 x 0-(rows-1) */
+    cmd(0xF5000000u | (0u << 21) | (2u << 19) | (16u << 9), 0);          /* SETTILE 0: line 16 */
+    cmd(0xF2000000u, (63u * 4u << 12) | ((rows - 1u) * 4u));
+    cmd(0xE4000000u | (64u * 4u << 12) | (rows * 4u), 0);
+    cmd(0xE1000000u, 0);
+    cmd(0xF1000000u, (1u << 26) | (1u << 10));
+    cmd(0xDF000000u, 0);
+    run(&u);
+    CHECK(s_tex_creates == before + 1, "tmem wrap: a %u-row LOADTILE made %u textures (want 1)", rows, s_tex_creates - before);
+    CHECK(((s_tex_px0 >> 16) & 0xFFu) == 0 && ((s_tex_px0 >> 8) & 0xFFu) == 0xFFu && ((s_tex_row4 >> 8) & 0xFFu) == 0xFFu,
+          "tmem wrap: %u rows: row 0 starts %08x, row 4 %08x (want green: rows %u and %u wrote over them)", rows, s_tex_px0,
+          s_tex_row4, last0, last0 + 4u);
+}
+static void test_tmem_wrap(void) {
+    tmem_wrap_rows(40, 32);
+    tmem_wrap_rows(300, 288);
+}
+
 /* the probe (Pokemon Snap's photo check, XGFX_PROBE): an 8x8 LOADTILE of
  * the frame being drawn, COPY-texrected into an 8-wide image; a triangle
  * over the region drawn between two copies changes all 64 pixels, nothing
@@ -1043,6 +1075,7 @@ int main(void) {
     test_deswizzle32_dxt();
     test_tile_linew();
     test_loadtile32();
+    test_tmem_wrap();
     test_probe();
     test_readback();
     test_tile_rowhash();

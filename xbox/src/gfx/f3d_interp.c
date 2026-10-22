@@ -33,6 +33,7 @@
  * depth = (z/w + 1) / 2 of the back end's depth range, tested LEQUAL. */
 #include <math.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #if defined(__SSE__)
 #include <xmmintrin.h>
@@ -156,6 +157,9 @@
 #endif
 #ifndef XGFX_DXT_EXACT
 #define XGFX_DXT_EXACT 1       /* LOADBLOCK dxt not sized for the line: the RDP's odd-line rule */
+#endif
+#ifndef XGFX_TMEM_WRAP
+#define XGFX_TMEM_WRAP 1       /* a LOADTILE past TMEM's 4 KB wraps and overwrites its start, as on the RDP */
 #endif
 
 /* the game's screen in N64 pixels: 320x240, or the size of the buffer it
@@ -824,11 +828,18 @@ static void set_segment(unsigned n, uint32_t v) {
 #endif
 static uint32_t s_tlut_gen = 1, s_th_gen, s_th_b, s_th_n, s_th_lut, s_th;
 
+/* buffers for a texture bigger than the usual ones (XGFX_TMEM_WRAP's whole-frame
+ * strips: 384 x 224 rows), freed once it is made */
+static uint8_t* s_raw_big;
+static uint32_t* s_conv_big;
+
 /* The texture tile `tidx` samples: converted, padded to powers of two,
  * uploaded once and cached. NULL when it can't be made. */
-static TexEntry* texture_for_tile(int tidx) {
-    static uint8_t raw[8192];
-    static uint32_t conv[1024 * 64];
+static TexEntry* texture_make(int tidx) {
+    static uint8_t s_raw[8192];
+    static uint32_t s_conv[1024 * 64];
+    uint8_t* raw = s_raw;
+    uint32_t* conv = s_conv;
     Tile* t = &R.tile[tidx];
     TmemLoad* ld = &R.loads[(t->tmem >> 3) & 63];
     TmemLoad within;
@@ -840,7 +851,7 @@ static TexEntry* texture_for_tile(int tidx) {
     /* RGBA32 splits each texel across TMEM's two banks: SETTILE's line covers half a row */
     unsigned line = t->line * 8u * (t->siz == 3 ? 2u : 1u), bytes, pw, ph, slot, i, pal;
     uint32_t key, sample, full = 0;
-    int big, hot = 0;
+    int big, hot = 0, wrap;
     uint64_t tex_t0, hash_t0;
     TexEntry* e;
     if (!ld->valid && XGFX_TMEM_WITHIN) {
@@ -891,7 +902,13 @@ static TexEntry* texture_for_tile(int tidx) {
         }
     }
     bytes = line * h;
-    if (bytes > sizeof raw) { tex_miss("too big", tidx); return NULL; }
+    /* a LOADTILE bigger than TMEM (Mario Tennis copies 384 x 15..80 rows of a
+     * frame, 11-61 KB, for a 5-row strip on the screen): the RDP's TMEM
+     * addresses wrap at 4 KB, so the last rows written are what the tile's
+     * rows read, wrapped the same way. -DXGFX_TMEM_WRAP=0: a miss ("too big") */
+    wrap = XGFX_TMEM_WRAP && ld->tile && ld->rows && t->siz < 3 && ld->tmem * 8u + ld->bytes > 4096u;   /* (32-bit: two banks, not modelled) */
+    if (wrap && bytes > sizeof s_raw && bytes <= (1u << 20)) raw = s_raw_big = (uint8_t*)malloc(bytes);
+    if (!raw || (raw == s_raw && bytes > sizeof s_raw)) { tex_miss("too big", tidx); return NULL; }
     key = t->fmt | t->siz << 3 | (w - 1) << 5 | (h - 1) << 15 | (uint32_t)(line & 0xFF) << 24 | (uint32_t)(ld->dxt != 0) << 31;
     pal = t->fmt == F3D_G_IM_FMT_CI ||
           (XGFX_RGBA_LOWBIT && t->fmt == F3D_G_IM_FMT_RGBA && t->siz <= F3D_G_IM_SIZ_8b && f3d_omh_text_lut(R.omh));
@@ -967,7 +984,19 @@ static TexEntry* texture_for_tile(int tidx) {
     }
 build:
     tex_t0 = xhw_time_us();
-    if (ld->tile) {   /* LOADTILE: the rectangle's rows, laid out at the tile's line */
+    if (wrap) {   /* the load's rows into a 4 KB TMEM in order, each at its line, wrapping; then the tile's rows out of it */
+        static uint8_t tm[4096], row[4096];
+        uint32_t src = seg(ld->addr);
+        unsigned r, k, lline = ld->bytes / ld->rows, n = ld->row_bytes < lline ? ld->row_bytes : lline;
+        if (n > sizeof row) n = sizeof row;
+        memset(tm, 0, sizeof tm);
+        for (r = 0; r < ld->rows; r++) {
+            unsigned at = ld->tmem * 8u + r * lline;
+            xu_from_rdram(row, src + r * ld->stride, n);
+            for (k = 0; k < n; k++) tm[(at + k) & 4095u] = row[k];
+        }
+        for (k = 0; k < bytes; k++) raw[k] = tm[(t->tmem * 8u + k) & 4095u];
+    } else if (ld->tile) {   /* LOADTILE: the rectangle's rows, laid out at the tile's line */
         uint32_t src = seg(ld->addr);
         unsigned r, n = ld->row_bytes < line ? ld->row_bytes : line;
         memset(raw, 0, bytes);
@@ -993,7 +1022,10 @@ build:
 #endif
     pw = texconv_pow2(w);
     ph = texconv_pow2(h);
-    if (pw * ph > sizeof conv / 4) { tex_miss("too big", tidx); return NULL; }
+    if (pw * ph > sizeof s_conv / 4) {
+        if (wrap && pw * ph <= 512u * 512u) conv = s_conv_big = (uint32_t*)malloc(pw * ph * 4u);
+        if (conv == s_conv || !conv) { tex_miss("too big", tidx); return NULL; }
+    }
     /* RGBA at 4 or 8 bits (no such format: Banjo-Kazooie's start screen,
      * vbk12): the RDP reads it through the palette when the TLUT is on, as
      * CI; with it off, as intensity (I4, I8). -DXGFX_RGBA_LOWBIT=0: a miss */
@@ -1048,6 +1080,15 @@ hit:
         s_memo[m].e = e;
     }
 #endif
+    return e;
+}
+
+static TexEntry* texture_for_tile(int tidx) {
+    TexEntry* e = texture_make(tidx);
+    free(s_raw_big);
+    free(s_conv_big);
+    s_raw_big = NULL;
+    s_conv_big = NULL;
     return e;
 }
 
