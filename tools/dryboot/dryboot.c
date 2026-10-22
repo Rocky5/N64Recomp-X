@@ -96,6 +96,7 @@ enum { EXC_INT = 0, EXC_MOD = 1, EXC_TLBL = 2, EXC_TLBS = 3, EXC_ADEL = 4, EXC_A
 #define SR_IE 1u
 #define SR_EXL 2u
 #define SR_ERL 4u
+#define SR_CU1 0x20000000u
 #define SR_FR 0x04000000u
 #define SX32(v) ((uint64_t)(int64_t)(int32_t)(uint32_t)(v))
 
@@ -974,6 +975,14 @@ static void cop0(uint32_t w) {
 static void step(uint32_t w) {
     uint32_t op = w >> 26;
     uint64_t v;
+    /* the FPU with CU1 clear: coprocessor unusable (CE 1), before it runs. libultra's handler marks the
+     * thread as one that uses the FPU and only then saves its FP registers at a switch: without the
+     * trap, another thread clobbers them (Perfect Dark's inflater keeps integers in $f0/$f1) */
+    if ((op == 17 || op == 49 || op == 53 || op == 57 || op == 61) && !(C.cp0[STATUS] & SR_CU1)) {
+        C.cp0[CAUSE] = (C.cp0[CAUSE] & ~(uint64_t)0x30000000u) | 0x10000000u;
+        C.exc = EXC_CPU + 1;
+        return;
+    }
     switch (op) {
     case 0: {
         uint32_t fn = w & 63;
