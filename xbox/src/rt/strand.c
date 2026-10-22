@@ -40,6 +40,7 @@ typedef struct Strand {
     void* thr;                       /* the N64 thread (thread.c) */
     xhw_event* ev;                   /* wakes it */
     volatile uint32_t resume_buf, resume_v;
+    uint32_t resume_regs[11], resume_fregs[12];   /* the buffer as the longjmp read it (XRC_STRAND_SNAP) */
     volatile int die;
     volatile int parked;             /* waiting in park() */
     int has_base;
@@ -141,12 +142,31 @@ void xrc_setjmp_recomp(uint8_t* rdram, recomp_context* ctx) {
     ctx->r2 = 0;
 }
 
+/* A longjmp loads the buffer's registers at once; the resumed strand read
+ * them again only when its host thread woke, and other N64 threads run in
+ * between here. Bomberman 64: The Second Attack!'s task yield (8000797C:
+ * setjmp(task + 0x34), longjmp to its scheduler's 0x800A5960) came back
+ * with sp 0 and stored v0 at N64 0x38; the dry boot shows that buffer
+ * (0x80311064) only ever holding sp 0x80312038 and ra 0x800079C0. Kept
+ * from the longjmp, as the CPU would have them. -DXRC_STRAND_SNAP=0: read
+ * at the resume, as before */
+#ifndef XRC_STRAND_SNAP
+#define XRC_STRAND_SNAP 1
+#endif
+
 /* XRC_SETJMP's second return: the buffer's registers, the value the longjmp gave */
 void xrc_strand_resumed(uint8_t* rdram, recomp_context* ctx, uint32_t buf) {
     Strand* me = current();
     int i;
-    for (i = 0; i < 11; i++) sreg(ctx, SREGS[i], (uint32_t)MEM_W(4 * i, buf));
-    for (i = 0; i < 12; i++) *freg(ctx, i) = (uint32_t)MEM_W(0x2C + 4 * i, buf);
+    if (XHW_TEST_BUILD) {   /* diagnosis: the buffer changed between the longjmp and here, or holds sp 0 */
+        static unsigned s_n;
+        uint32_t now = (uint32_t)MEM_W(0, buf);
+        if (XRC_STRAND_SNAP && (now != me->resume_regs[0] || !now) && s_n++ < 8)
+            xhw_logf("[STRAND] resume at buffer %08x: sp %08x at the longjmp, %08x now (ra %08x)", (unsigned)buf,
+                     (unsigned)me->resume_regs[0], (unsigned)now, (unsigned)me->resume_regs[1]);
+    }
+    for (i = 0; i < 11; i++) sreg(ctx, SREGS[i], XRC_STRAND_SNAP ? me->resume_regs[i] : (uint32_t)MEM_W(4 * i, buf));
+    for (i = 0; i < 12; i++) *freg(ctx, i) = XRC_STRAND_SNAP ? me->resume_fregs[i] : (uint32_t)MEM_W(0x2C + 4 * i, buf);
     ctx->r2 = (gpr)(int32_t)me->resume_v;
     me->resume_buf = 0;
 }
@@ -257,6 +277,10 @@ void xrc_longjmp_recomp(uint8_t* rdram, recomp_context* ctx) {
     b = find(buf, 1);
     if (b->owner && b->ra == ra && b->sp == sp) {   /* back to the setjmp that filled it */
         to = b->owner;
+        for (i = 0; i < 11; i++) to->resume_regs[i] = (uint32_t)MEM_W(4 * i, buf);
+        for (i = 0; i < 12; i++) to->resume_fregs[i] = (uint32_t)MEM_W(0x2C + 4 * i, buf);
+        if (XHW_TEST_BUILD && !sp)
+            xhw_logf("[STRAND] longjmp to %08x with sp 0 (ra %08x) matched its setjmp", (unsigned)buf, (unsigned)ra);
         to->resume_buf = buf, to->resume_v = v;
         unlock();
         if (to == me) __builtin_longjmp(b->jb, 1);
