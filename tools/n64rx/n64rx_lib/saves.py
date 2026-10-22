@@ -143,15 +143,20 @@ def faulted_thread(rom_data: bytes):
     return [f'-DXRC_FAULTED_THREAD=0x{found[0]:08X}u', f'-DXRC_TH_BADVADDR=0x{found[1]:X}u']
 
 
-def os_exception(rom_data: bytes):
+def os_exception(rom_data: bytes, segments=()):
     """-DXRC_OS_EXCEPTION=<vram>: libultra's __osException, from
     __osExceptionPreamble (lui k0, hi; addiu k0, lo; jr k0; nop) followed by
     __osException's start (lui k0; addiu k0; sd at, 0x20(k0); mfc0 k1,
     Status). The runtime does not install the preamble (its osInitialize is
     its own); a TLB miss runs the game's exception code from here (rt/interp.c:
-    Conker's pages its code in from it). The last copy found: a game's own."""
+    Conker's pages its code in from it). Of several copies, the one the
+    analysis's `segments` load where it is linked (its preamble's target is
+    its own __osException, 16 bytes on): Turok 2's image holds three, and the
+    last (the rule before) was another image's, whose libultra fault path ran
+    for its TLB misses instead of the code that pages its world in. Else the
+    last copy found: a game's own."""
     key = bytes.fromhex('FF410020401B6000')
-    found, i = None, rom_data.find(key)
+    copies, i = [], rom_data.find(key)
     while i >= 0:
         o = i - 24
         if o >= 0 and i % 4 == 0:
@@ -159,8 +164,12 @@ def os_exception(rom_data: bytes):
             if w[0] >> 16 == 0x3C1A and w[1] >> 16 == 0x275A and w[2] == 0x03400008 and w[3] == 0 \
                     and w[4] >> 16 == 0x3C1A and w[5] >> 16 == 0x275A:
                 lo = w[1] & 0xFFFF
-                found = ((w[0] & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF
+                copies.append((o, ((w[0] & 0xFFFF) << 16) + (lo - 0x10000 if lo & 0x8000 else lo) & 0xFFFFFFFF))
         i = rom_data.find(key, i + 4)
+    linked = [t for o, t in copies for s in segments
+              if isinstance(getattr(s, 'rom', None), int) and s.rom <= o + 16 < s.rom + s.size
+              and (s.vram + o + 16 - s.rom) & 0xFFFFFFFF == t]
+    found = linked[-1] if linked else copies[-1][1] if copies else None
     return [f'-DXRC_OS_EXCEPTION=0x{found:08X}u'] if found else []
 
 

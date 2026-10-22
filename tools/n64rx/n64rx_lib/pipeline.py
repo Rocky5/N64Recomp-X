@@ -849,7 +849,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     recomp_bytes = recomp_rom.read_bytes()
     flags += saves.consistent_threads(saves.running_thread(pack, recomp_bytes),   # __osRunningThread, kept by thread.c
                                       saves.faulted_thread(recomp_bytes))          # libultra's fault path (tlb.c)
-    flags += saves.os_exception(recomp_bytes)           # the game's exception code, for a TLB miss (interp.c)
+    flags += saves.os_exception(recomp_bytes, ainfo['analysis'].img.segments if ainfo else ())   # its exception code, for a TLB miss (interp.c)
     flags += saves.os_runqueue(recomp_bytes)            # its run queue, a sentinel while that code runs
     fr = saves.thread_fr(recomp_bytes)                   # the float mode its osCreateThread gives (recomp.h XRC_FR)
     flags += [f'-DXRC_FR={fr}'] if fr else []

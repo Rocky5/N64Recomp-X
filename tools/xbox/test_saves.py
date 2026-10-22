@@ -59,8 +59,30 @@ def test_thread_fr():
     return len(bad)
 
 
+def test_os_exception():
+    """saves.os_exception: of several copies of the preamble and __osException,
+    the one a segment loads where it is linked"""
+    from n64rx_lib.analyze.funcs import Segment
+    bad = []
+
+    def copy(target):   # lui k0, hi; addiu k0, lo; jr k0; nop; then __osException's start
+        hi, lo = (target + 0x8000) >> 16, target & 0xFFFF
+        return words(0x3C1A0000 | hi, 0x275A0000 | lo, 0x03400008, 0, 0x3C1A0000 | hi, 0x275A0000 | lo,
+                     0xFF410020, 0x401B6000)
+    img = bytes(0x100) + copy(0x00200110) + bytes(0x100) + copy(0x00300230)   # at 0x100 and 0x220
+    if saves.os_exception(img) != ['-DXRC_OS_EXCEPTION=0x00300230u']:
+        bad.append('no segments: the last copy')
+    if saves.os_exception(img, [Segment('a', 0, 0x00200000, 0x400)]) != ['-DXRC_OS_EXCEPTION=0x00200110u']:
+        bad.append('the copy linked where a segment loads it')
+    if saves.os_exception(img, [Segment('a', 0, 0x00400000, 0x400)]) != ['-DXRC_OS_EXCEPTION=0x00300230u']:
+        bad.append('no copy linked where it sits: the last')
+    for b in bad:
+        print(f'  FAIL os_exception: {b}')
+    return len(bad)
+
+
 def main():
-    nbad = test_cont_max() + test_thread_fr()
+    nbad = test_cont_max() + test_thread_fr() + test_os_exception()
     rc = hostcc.run(['tests/xbox/test_saves.c', 'xbox/src/rt/ultra/savedev.c', 'xbox/src/rt/ultra/pfs.c',
                      'xbox/src/rt/ultra/pi.c'],
                     includes=['xbox/include', 'xbox/include/xrc', 'xbox/src/rt', 'xbox/src/rt/ultra'],
