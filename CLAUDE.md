@@ -27,7 +27,7 @@ camera), Majora's Mask (boot crash: fix staged), Jet Force Gemini, Kirby 64
 for 480i).
 In xemu: 720p on the working
 games, GoldenEye's Dam right (textures, sky, Bond's gun, the pause watch: its cosf fell into sinf), Pokémon Snap through its Beach course (the camera lock is the first run's tutorial: three photos with a Pokémon in focus; the photo check now finds one and the tutorial prompts), Kirby 64 (E) to its tutorial, Mario Tennis's matches, Castlevania: Legacy of Darkness to Foggy Lake, All-Star Baseball 2000 / 2001 / '99 in a game, Ocarina and Majora's relocated overlays recompiled, Jet Force Gemini to its menus, Perfect Dark past its boot, Paper Mario past its
-copy-protection boot to its effects, Diddy Kong Racing whole (Rare's DKR microcode), Star Fox 64 through its intro. The library sweep (s12, with two learning rounds: 163 of 246 still presenting at
+copy-protection boot to its effects, Diddy Kong Racing whole (Rare's DKR microcode), Star Fox 64 through its intro, Acclaim's Turok-engine games (Turok 1, 2 and 3, Rage Wars, Shadow Man, South Park) and both Ken Griffey games presenting frames from the ROM alone with the dry boot. The library sweep (s12, with two learning rounds: 163 of 246 still presenting at
 30 s) (`tools/xbox/sweep.py`) ranks what blocks the rest
 (`docs/analyzer.md`). CI is manual-only (free minutes). The desktop app (`app/`, `docs/app.md`)
 is the way in for users: portable, a prebuilt toolchain download, Windows

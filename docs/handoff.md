@@ -2709,3 +2709,90 @@ on `dev`, none pushed.
 - Gaps: Mario Tennis's matches in the dry boot; Banjo-Tooie's CIC 6105;
   BattleTanx's NULL node; Traveller's Tales' `0xC0001000` probe; F1 World
   Grand Prix II and NBA Courtside's waits; CyberTiger's race.
+
+## 2026-10-22 (night, continued; no hardware): the review's runtime items, Turok 2's fault path, the dry boot's versions (host + xemu only)
+
+Commits 10786f5..da84afb on `dev`, none pushed; nothing deployed to red.
+
+- **Build failures from the dry-boot sweep (s13db)**: a branch out of its
+  function becomes a tail call through the lookup (`fix_stray_goto`:
+  Bust-A-Move '99 builds again); ll/lld/sc/scd send their function to the
+  interpreter (N64Recomp stopped the whole run on one: Ken Griffey's);
+  a function with a `bal`/`bgezal`/`bltzal` into a function's body is
+  interpreted (`N64RX_XBAL`). N64Recomp made a static there and could not
+  place its branches ("Unhandled branch in static_2_800B6844"): one
+  hand-written routine with several entry points, the same in Resident
+  Evil 2 and both Ken Griffey games (Angel Studios'), which also reads `ra`
+  as a value after a `bltzal $zero` (compiled code never sets `ra`).
+- **The dry boot's versions** (71c3a90): a page's version superseded after
+  the first graphics task is kept (`--versions boot`, the default). Mario
+  Tennis with its scenario script: 2,280 functions in 16 segments (was
+  1,372 in 14; the console's 32 rounds: 2,375 in 29), its match reached;
+  Banjo-Kazooie 6,806 in 6; GoldenEye unchanged. `--snap` writes the
+  task's OSTask too and `tools/xbox/dryboot_frame.py` turns a snapshot into
+  a DLDUMP log for `bench_dl.py --png` (scratch only: the picture is the
+  game's). Jet Force Gemini's name entry drawn whole that way.
+- **Turok 2 presents frames** (e88d6a7). The fault path (7e041d3,
+  `__osFaultedThread` with its loads in either order: the six games of
+  Acclaim's engine, nothing else changes) and `__osRunQueue` (809cdec,
+  either order: 118 ROMs had none) are found in the `__osException` the
+  game installs, and demand paging works (the fault thread maps each
+  miss). Then every thread waited on a queue that read "0 of 0". A runtime
+  write watch (`-DXRC_WATCH=0x8011ADE0`, an N64 address) caught
+  `asp_hle_run` zeroing the scheduler's queue: an audio command list's
+  addresses are physical, but the runtime took those below 0x80000000
+  through the game's TLB, and Turok 2 maps KUSEG 0x00300000 to physical
+  0x00100000, so its audio went 2 MB low. Now read as KSEG0
+  (`XRC_ASP_PHYS`). xemu, dry boot plus one learning round, 150 s: 305
+  frames presented and audio running (before: 0). What it draws is not
+  judged (no screenshot kept: game frames).
+- **The rest of Acclaim's engine**, the same fix (xemu, slot 11, 120 s,
+  dry boot, no learnt facts; in s12 every one presented 0): Turok 3 238
+  frames, Shadow Man 242, Turok: Rage Wars 249, South Park 229. A/B: South
+  Park with `-DXRC_ASP_PHYS=0` presents 0 and crashes writing 0xEFFCEC7D.
+  Armorines restarts silently (no card) right after the interpreter runs
+  its hand-written 0x002A42F4, every boot.
+- **Turok: Dinosaur Hunter presents** (da84afb, 238 frames): it inflates its
+  code over its boot segment, and the learnt functions there were walked
+  over the ROM's compressed bytes (499 functions, then a jump to 0). The
+  build's copy of the ROM now takes RDRAM's bytes where the learnt starts
+  look like starts only there (`N64RX_RDRAM_CODE`): 2,323 functions.
+- **Ken Griffey's Slugfest and Major League Baseball Featuring Ken Griffey
+  Jr. build and present** (eb7483b: 296 and 292 frames; s12: 0); Resident
+  Evil 2's dry-boot build works and presents 2 (as s12 without it), then
+  its threads sit at interpreted pcs with no graphics task.
+- **The review's runtime items** (`docs/review-2026-10.md`), each with its
+  switch and a host test where one can reach it:
+  - 5a.10: `XRC_SETJMP`'s call is never a tail call.
+  - 5a.15: round.w/round.l round a half to even (`XRC_ROUND_EVEN`).
+    FCSR.FS flushes denormal results (`XRC_FTZ`, MXCSR.FZ).
+  - 5a.9: a KSEG1 heal refused because another thread healed the page
+    retries.
+  - 5a.14: capture through the TLB never reads past RDRAM.
+  - 5b.18: 64 timers, and osSetTime leaves pending timers alone.
+  - 5b.20: the 64DD's windows are open bus, not the save
+    (`XRC_SAVE_64DD`).
+  - 5b.21: the OSIoMesg header filled as libultra's (`XRC_PI_HDR`).
+- **The library's dry-boot scan with each region's TV type**: 239 of 246
+  reach their tasks (Banjo-Tooie (E) and F1 World Grand Prix II now run;
+  PAL ROMs had NTSC timing).
+- **s13db is not a result**: 30 s runs with two xemus at once (this machine
+  runs about 2 fps; Banjo, GoldenEye and Blast Corps need 90 s to show
+  frames). Stopped at run 73 of 95; only its build failures are used above.
+- Verified how: host tests after each commit; the 14-game regression set
+  rebuilt at b70dc81 and booted one at a time in xemu (slot 11, 90 s,
+  `head2`): all 14 present with no crash (Banjo-Kazooie, Mario Tennis and
+  both Kirby 64s stalled at the loading screen while a build ran beside
+  them and presented when booted again alone; Majora's Mask's audio stall
+  line is in every baseline too). The audio, `bal` and decompressed-code
+  fixes came after that build: the audio one changes only games whose TLB
+  maps that low (none of the 14's logged entries), the `bal` one only
+  builds with an N64Recomp static (none of the 14), the third replaces no
+  span in any of the 14 (a dry run of the learn step with their logs).
+- Not verified: **nothing ran on a console.** `[MEM]`/`[CLOCK]` are xemu's
+  only (Super Mario 64's test build: 53,588 KB free at boot, `[CLOCK] cpu
+  733 MHz`). Set 18 is staged, not deployed.
+- Gaps: Resident Evil 2 after its first 2 frames; Armorines' silent
+  restart; what the Acclaim games draw (not judged: no frames kept); NBA Courtside's scheduler messages stop;
+  Conker's KUSEG-0 read; contiguous TLB pages want one section; JFG's 3D
+  past its menus (xemu reaches only the Nintendo logo in 150 s).
