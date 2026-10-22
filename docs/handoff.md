@@ -2919,3 +2919,14 @@ staged, not deployed.
 - The s15 library sweep (the dry boot, the shipped learnt facts, 90 s
   runs, one xemu) is running; built at 5948f77 plus default-off
   diagnostics.
+- **Mario Tennis on the host renderer** (ed98180): the dry boot's
+  snapshots drawn by the real renderer showed two gaps, both fixed behind
+  switches: the VI origin's column (its 384-wide buffer is shown from
+  column 320: the picture moves 64 pixels right, `XGFX_VI_ORIGIN`; the
+  likely "right side cut off" on red) and small pictures it makes for
+  itself drawn on the screen (`XGFX_SMALL_CIMG`). Correction to that
+  commit's message: the glow box in the intro's corner (draws 64-137 of
+  task 1200, into the framebuffer's own top-left after the
+  scene) is not moved off the screen by the origin shift (it lands at
+  columns 64-147); whether the N64 shows that corner is not known. Not
+  yet seen on a console.
