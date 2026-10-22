@@ -181,6 +181,23 @@ def _triples(rom, rom_size):
 
 
 OVERLAYS = os.environ.get('N64RX_OVERLAYS', '1') != '0'
+# Body Harvest loads three code blocks at 0x80070270 from three constant DMAs
+# (800115F4: ROM 0x40720, 0x3EB00 bytes, the title; 80011674: ROM 0x7F220,
+# 0xD9110; 800117D8: ROM 0x158330, 0x354B0) and calls 0x80070270 after each.
+# find() kept one segment per address (the smallest, 0x158330), so the
+# runtime ran that block's code where the title's was loaded: its 8007290C
+# read the bank buffer *0x8006AA6C before any bank was loaded, DMA'd an MIO0
+# block to address 0 (over the exception vectors), and the next call into
+# 0x80000B14 ran the MIO0 header. Loads at the same address from ROM ranges
+# that do not overlap, their size in its natural argument, are kept
+# together, overlays of one another (the runtime switches on the DMA;
+# Analysis.overlays keys them apart). N64RX_OVERLAY_SIBLINGS=0: one per
+# address, as before
+SIBLINGS = os.environ.get('N64RX_OVERLAY_SIBLINGS', '1') != '0'
+# The DMA's own destination, called, is a function start whatever its first
+# word (Body Harvest's title block opens with `addiu t6, a0, -1`, its frame
+# one word later). N64RX_LOAD_START=0: as before
+LOAD_START = os.environ.get('N64RX_LOAD_START', '1') != '0'
 # loads described in ROM data to KSEG2/3 addresses (0xC0000000-0xEFFFFFFF): code the game maps
 # through its TLB where it loaded it (Paper Mario's 128 effects, each its own vram at 0xE0xxxxxx; the
 # runtime reaches their data through the game's TLB, XRC_HIGH_TLB). Most such triples are other words
@@ -251,7 +268,7 @@ def find(img, funcs_by_seg, rom_size):
         seg = Segment(_name(img, r, v), r, v, n, img.text_ends.get((r, v), 0) if natural == 3 else 0)
         img.segments.append(seg)
         prev, img.focus = img.focus, seg
-        like = [t for t in inside if _starts_like_function(img, t)]
+        like = [t for t in inside if (LOAD_START and t == v) or _starts_like_function(img, t)]
         if natural == 3:
             # the text starts with a function (the walks from it must be
             # clean); targets that do not look like starts are another
@@ -273,8 +290,13 @@ def find(img, funcs_by_seg, rom_size):
             trials.append((-natural, -score, -len(inside), n, seg, inside, pc))
     found = []
     for _a, _s, _l, _n, seg, inside, pc in sorted(trials, key=lambda t: t[:4]):
-        if any(o.has(seg.vram) or seg.has(o.vram) for o, _i, _p in found):
+        if any((o.has(seg.vram) or seg.has(o.vram)) and
+               not (SIBLINGS and -_a >= 1 and o.vram == seg.vram and
+                    not (o.rom < seg.rom + seg.size and seg.rom < o.rom + o.size))
+               for o, _i, _p in found):
             continue
+        if any(o.name == seg.name for o, _i, _p in found):   # siblings: named apart (keys: Analysis.key)
+            seg.name = f'{seg.name}_{seg.rom:X}'
         found.append((seg, inside, pc))
     return found
 
