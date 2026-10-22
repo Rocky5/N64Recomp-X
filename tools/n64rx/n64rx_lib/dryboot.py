@@ -11,7 +11,8 @@ build folder; the files are facts and the RDRAM pages the CPU wrote, as the
 console's learn files are.
 
 N64RX_DRYBOOT=1 to use it (0, the default, until a console set has run
-builds made with it); N64RX_DRYBOOT_FRAMES: how long (600 frames, 10 s)."""
+builds made with it); N64RX_DRYBOOT_FRAMES: how long (1800 frames, 30 s of
+game time: a few seconds here)."""
 import hashlib
 import os
 import pathlib
@@ -71,7 +72,7 @@ def run(rom, a, pack, bdir, prog, log):
     known = d / 'known.txt'
     known.write_text(''.join(f'{k & 0xFFFFFFFF:08x}\n' for k in sorted({k & 0xFFFFFFFF for k in a.all_funcs()})))
     boot = next((s for s in a.img.segments if s.name == 'boot'), None)
-    frames = os.environ.get('N64RX_DRYBOOT_FRAMES', '600')
+    frames = os.environ.get('N64RX_DRYBOOT_FRAMES', '1800')
     cmd = [str(exe), str(rom_file), str(d), '--entry', f'{a.entry:08x}',
            '--boot-size', str(pack.boot_size if pack else (boot.size if boot else 0x100000)),
            '--cic', str(rom.cic or 6102), '--tv', str(tv_of_region(rom.code)),

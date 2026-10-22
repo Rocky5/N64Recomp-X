@@ -8,8 +8,9 @@
  * SP memory and a register model of the RCP that answers as the hardware
  * would and finishes every task at once:
  *   - PI DMA from the ROM (logged: where code came from), its interrupt
- *   - SI and the PIF: controller 1 there (no buttons, no pak), a 4 Kbit
- *     EEPROM, nothing on the other channels
+ *   - SI and the PIF: controller 1 there (no pak; START and A pressed on a
+ *     schedule from frame 90, --press), a 4 Kbit EEPROM, nothing on the
+ *     other channels
  *   - SP: a task "runs" when the halt bit clears and ends at once (halt,
  *     broke, the task-done signal); its interrupt, and the DP's for a
  *     graphics task, a little later
@@ -32,7 +33,7 @@
  * 1 MB of KUSEG the TLB maps code into; "rdram 8" when code runs past 4 MB.
  *
  * Usage: dryboot <rom.z64> <out dir> --entry X --boot-size N [--cic N]
- *        [--tv 0|1|2] [--rdram 4|8] [--known file] [--frames N] [-v]
+ *        [--tv 0|1|2] [--rdram 4|8] [--known file] [--frames N] [--press F|0] [-v]
  * The ROM in z64 order (n64rx's rom.z64: the image the console runs).
  * Exit 0 with the files written, 1 on bad arguments, 2 when the CPU met an
  * instruction it does not know (said on stderr; the files are still
@@ -191,23 +192,43 @@ static void pi_dma(void) {   /* PI_WR_LEN: the cartridge to RDRAM */
     raise_mi(MI_PI);
 }
 
-/* the PIF's joybus block: controller 1 (no buttons, no pak), the EEPROM on 4 */
+/* Controller 1's buttons: from --press's frame on, START, then A, A, A, every 45 frames, each held
+ * for 4 (title screens and menus give way to the game, whose code then loads: Mario Tennis's
+ * matches); none before it (the boot), none with --press 0 */
+static uint32_t s_press_from = 90;
+static unsigned s_pad_reads, s_pad_pressed, s_pif_runs, s_pif_cmds[256];
+static uint16_t pad_buttons(void) {
+    uint32_t f;
+    if (!s_press_from || s_frames < s_press_from) return 0;
+    f = s_frames - s_press_from;
+    if (f % 45 >= 4) return 0;
+    return (f / 45) % 4 == 0 ? 0x1000 : 0x8000;   /* START, A */
+}
+
+/* the PIF's joybus block: controller 1 (no pak), the EEPROM on 4 */
 static void pif_run(void) {
     int i = 0, ch = 0;
+    s_pif_runs++;
     while (i < 63) {
         int tx = s_pif[i], rx, at;
         if (tx == 0xFE) break;
         if (tx == 0xFF || tx == 0xFD) { i++; continue; }
         if (tx == 0) { ch++, i++; continue; }
         if (i + 1 >= 63) break;
-        rx = s_pif[i + 1] & 0x3F;
+        s_pif[i + 1] &= 0x3F;   /* the error bits: this run's */
+        rx = s_pif[i + 1];
         at = i + 2 + (tx & 0x3F);
         if (at + rx > 63) break;
         {
             uint8_t cmd = s_pif[i + 2], *res = &s_pif[at];
+            s_pif_cmds[(ch << 4 | (cmd & 15)) & 255]++;
             int ok = 1;
             if (ch == 0 && (cmd == 0x00 || cmd == 0xFF) && rx >= 3) res[0] = 0x05, res[1] = 0x00, res[2] = 0x00;
-            else if (ch == 0 && cmd == 0x01 && rx >= 4) memset(res, 0, 4);
+            else if (ch == 0 && cmd == 0x01 && rx >= 4) {   /* the buttons: the press schedule's (--press) */
+                uint16_t b = pad_buttons();
+                s_pad_reads++, s_pad_pressed += b != 0;
+                res[0] = (uint8_t)(b >> 8), res[1] = (uint8_t)b, res[2] = 0, res[3] = 0;
+            }
             else if (ch == 4 && (cmd == 0x00 || cmd == 0xFF) && rx >= 3) res[0] = 0x00, res[1] = 0x80, res[2] = 0x00;
             else if (ch == 4 && cmd == 0x04 && rx >= 8) memcpy(res, &s_eep[(s_pif[i + 3] & 63) * 8], 8);
             else if (ch == 4 && cmd == 0x05 && tx >= 10) memcpy(&s_eep[(s_pif[i + 3] & 63) * 8], &s_pif[i + 4], 8), res[0] = 0;
@@ -219,13 +240,18 @@ static void pif_run(void) {
     }
 }
 
+/* the joybus block runs on every read of PIF RAM once a write armed it (bit 0 of its last byte):
+ * libultra writes the read command once and then only reads (osContStartReadData) */
+static int s_pif_armed;
 static void si_dma(int to_pif) {
     uint32_t ram = s_si_dram & 0x00FFFFFCu, i;
     if (to_pif) {
         for (i = 0; i < 64 && ram + i < s_ramsize; i++) s_pif[i] = s_ram[ram + i];
-        if (s_pif[63] & 1) pif_run();
+        s_pif_armed = s_pif[63] & 1;
+        if (s_pif_armed) pif_run();
         s_pif[63] = 0;
     } else {
+        if (s_pif_armed) pif_run();
         for (i = 0; i < 64 && ram + i < s_ramsize; i++) s_ram[ram + i] = s_pif[i];
         cpuw_mark(ram, 64, 1);
     }
@@ -466,6 +492,9 @@ static void exception(int code, int bd_vec_refill) {
     uint64_t sr = C.cp0[STATUS];
     s_excs[code & 31]++;
     uint32_t vec = 0x80000180u;
+    if (s_verbose && code && s_excs[code & 31] <= 8)   /* -v: what faulted, the first of each kind */
+        fprintf(stderr, "exception %d at %08x%s (badvaddr %08llx, ra %08llx, frame %u)\n", code, C.pc,
+                C.delay ? " (delay slot)" : "", (unsigned long long)C.cp0[BADVADDR], (unsigned long long)C.r[31], s_frames);
     if (!(sr & SR_EXL)) {
         C.cp0[EPC] = SX32(C.delay ? C.pc - 4 : C.pc);
         epc_add((uint32_t)C.cp0[EPC]);
@@ -1241,7 +1270,7 @@ static uint32_t* load_known(const char* path, size_t* n) {
 
 static int usage(void) {
     fprintf(stderr, "usage: dryboot <rom.z64> <out dir> --entry X --boot-size N [--cic N] [--tv 0|1|2] [--rdram 4|8]\n"
-                    "               [--known file] [--frames N] [--dump addr bytes file] [-v]\n");
+                    "               [--known file] [--frames N] [--press frame|0] [--dump addr bytes file] [-v]\n");
     return 1;
 }
 
@@ -1266,6 +1295,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(a, "--rdram")) mb = (uint32_t)strtoul(v, NULL, 10);
         else if (!strcmp(a, "--known")) known_path = v;
         else if (!strcmp(a, "--frames")) frames = (uint32_t)strtoul(v, NULL, 10);
+        else if (!strcmp(a, "--press")) s_press_from = (uint32_t)strtoul(v, NULL, 10);
         else if (!strcmp(a, "--dump") && i + 3 < (uint32_t)argc) {   /* --dump <addr> <bytes> <file>: RDRAM after the run */
             dump_at = (uint32_t)strtoul(v, NULL, 16) & 0x1FFFFFFFu;
             dump_n = (uint32_t)strtoul(argv[i + 2], NULL, 0);
@@ -1372,6 +1402,9 @@ int main(int argc, char** argv) {
         for (i = 0; i < 32; i++)
             if (s_excs[i]) fprintf(stderr, "  exception %u: %u\n", i, s_excs[i]);
         fprintf(stderr, "  %llu instructions run (the rest idle)\n", (unsigned long long)s_exec);
+        fprintf(stderr, "  pif runs %u, pad reads %u (%u with buttons)\n", s_pif_runs, s_pad_reads, s_pad_pressed);
+        for (i = 0; i < 256; i++)
+            if (s_pif_cmds[i]) fprintf(stderr, "  pif channel %u command %x: %u\n", i >> 4, i & 15, s_pif_cmds[i]);
         for (i = 0; i < 16; i++) {   /* where the time went */
             uint32_t j, best = 0;
             for (j = 1; j < NHIST; j++)
