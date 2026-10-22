@@ -87,7 +87,10 @@ static uint8_t s_stubs[MAX_LEARN][STUB_BYTES] __attribute__((aligned(16)));
 #endif
 
 static void lock(void) {
-    if (!s_lock) s_lock = xhw_mutex_create();
+    if (!s_lock) {   /* two first callers at once: one mutex wins (review 5a.13) */
+        xhw_mutex* m = xhw_mutex_create();
+        __sync_val_compare_and_swap(&s_lock, (xhw_mutex*)0, m);
+    }
     xhw_mutex_lock(s_lock);
 }
 static void unlock(void) { xhw_mutex_unlock(s_lock); }

@@ -652,6 +652,7 @@ int xu_start_dispatched(uint32_t t) {
     d->entry = pc;
     d->arg = rd32(t + TH_CTX_A0);
     d->sp = sp;
+    d->gp = rd32(t + 0xEC);   /* its context's gp (it ran with 0: review 5b.19) */
     pri = (int)(int32_t)rd32(t + TH_PRIORITY);
     wr16(t + TH_STATE, OS_STATE_RUNNABLE);
     rank_update(pri);
@@ -753,7 +754,7 @@ static void rank_update(int extra) {
     {
         static int s_said;
         int moved = 0;
-        for (i = 0; i < n; i++) moved += lv[i] != fixed_level(pri[i]);
+        for (i = 0; i < n && i < RANK_MAX; i++) moved += lv[i] != fixed_level(pri[i]);   /* (lv holds RANK_MAX: 5b.22) */
         if (moved && s_said < 8 && (n != old_n || !s_said)) {
             s_said++;
             xhw_logf("[OS] thread levels: %d priorities, %d moved off the fixed map to keep them apart", n, moved);
