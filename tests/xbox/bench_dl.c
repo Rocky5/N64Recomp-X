@@ -221,6 +221,14 @@ uint32_t xgfx_tex_create(uint32_t w, uint32_t h, const uint32_t* argb) {
         s_tex[id].px = malloc((size_t)w * h * 4);
         memcpy(s_tex[id].px, argb, (size_t)w * h * 4);
     }
+#ifdef BENCH_TEX_DUMP   /* -D BENCH_TEX_DUMP=<id>: that texture's texels as made (every 4th of rows 0, 8, 16, 24) */
+    if (BENCH_TEX_DUMP < 0 ? w == 32 && h == 32 : id == BENCH_TEX_DUMP)
+        for (uint32_t y = 0; y < h; y += 8) {
+            printf("[BTEX] %ux%u row %u:", w, h, y);
+            for (uint32_t x = 0; x < w; x += 4) printf(" %08x", argb[y * w + x]);
+            printf("\n");
+        }
+#endif
     return id;
 }
 void xgfx_tex_destroy(uint32_t tex) { (void)tex; }
