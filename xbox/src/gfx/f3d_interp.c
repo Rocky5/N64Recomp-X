@@ -1146,7 +1146,7 @@ static void bind_unit(int u, int tidx) {
  * alone fogs, as before; -DXGFX_FOG_LOG=1: release builds log each render
  * mode that loses its fog, once */
 #ifndef XGFX_FOG_BLENDER
-#define XGFX_FOG_BLENDER 1
+#define XGFX_FOG_BLENDER 0   /* opt-in: on red (vbk23) no Banjo draw lost its fog: the shadows are not this */
 #endif
 #ifndef XGFX_FOG_LOG
 #define XGFX_FOG_LOG 0

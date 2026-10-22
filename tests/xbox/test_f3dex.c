@@ -916,6 +916,9 @@ static void test_zimg_copy(void) {
 /* fog is the blender's: G_FOG with a render mode whose P input is not the
  * fog colour draws unfogged (Banjo-Kazooie's PASS models, its orange shadows
  * on red); G_RM_FOG_SHADE_A's P (3) keeps it (XGFX_FOG_BLENDER) */
+#ifndef XGFX_FOG_BLENDER
+#define XGFX_FOG_BLENDER 0   /* f3d_interp.c's default; a -D reaches both */
+#endif
 static int fog_tri(uint32_t rm) {
     GfxUcode u = uc_of("RSP Gfx ucode F3DEX       fifo 1.23 Yoshitaka Yasumoto 1997 Nintendo.");
     s_pc = DL_AT;
@@ -930,7 +933,7 @@ static int fog_tri(uint32_t rm) {
 }
 static void test_fog_blender(void) {
     int pass = fog_tri(0x0C080000u), shade = fog_tri(0xC8000000u);
-    CHECK(pass == 0, "fog: G_FOG with a PASS render mode drew fogged (%d)", pass);
+    CHECK(pass == !XGFX_FOG_BLENDER, "fog: G_FOG with a PASS render mode, fogged %d (XGFX_FOG_BLENDER %d)", pass, XGFX_FOG_BLENDER);
     CHECK(shade == 1, "fog: G_RM_FOG_SHADE_A lost its fog (%d)", shade);
 }
 

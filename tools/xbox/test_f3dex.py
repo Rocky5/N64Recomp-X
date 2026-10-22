@@ -12,10 +12,14 @@ ROOT = hostcc.ROOT
 
 
 def main():
-    rc = hostcc.run(['tests/xbox/test_f3dex.c', 'xbox/src/gfx/f3d_interp.c', 'xbox/src/gfx/texconv.c',
-                     'xbox/src/gfx/ucode.c', 'xbox/src/gfx/fbfx.c'],
-                    includes=['xbox/include', 'xbox/include/xrc', 'xbox/src/rt', 'xbox/src/gfx'],
-                    flags=['-DXGFX_FB_READBACK=1', '-Wno-unused-function', '-Wno-unused-variable', '-include', str(ROOT / 'xbox/include/xrc/xrc_prelude.h')])
+    rc = 0
+    # the defaults, then the opt-in switches a test covers (XGFX_FOG_BLENDER: the blender's fog rule)
+    for extra in ([], ['-DXGFX_FOG_BLENDER=1']):
+        rc |= hostcc.run(['tests/xbox/test_f3dex.c', 'xbox/src/gfx/f3d_interp.c', 'xbox/src/gfx/texconv.c',
+                          'xbox/src/gfx/ucode.c', 'xbox/src/gfx/fbfx.c'],
+                         includes=['xbox/include', 'xbox/include/xrc', 'xbox/src/rt', 'xbox/src/gfx'],
+                         flags=['-DXGFX_FB_READBACK=1', '-Wno-unused-function', '-Wno-unused-variable', '-include',
+                                str(ROOT / 'xbox/include/xrc/xrc_prelude.h')] + extra)
     print('test_f3dex: ' + ('FAILED' if rc else 'passed'))
     return 1 if rc else 0
 
