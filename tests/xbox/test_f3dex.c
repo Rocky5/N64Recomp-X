@@ -48,8 +48,10 @@ static XgfxOutput s_o = { 640, 480, 32, 16777215.0f, 1 };
 void xgfx_output(XgfxOutput* out) { *out = s_o; }
 void xgfx_frame_begin(void) {}
 static uint32_t s_wrap_s, s_wrap_t;   /* the last draw's unit 0 wrap modes */
+static int s_fog;   /* the last draw's fog */
 void xgfx_draw(const XgfxState* st, const XgfxVtx* v, uint32_t ntris) {
     s_wrap_s = st->wrap_s[0], s_wrap_t = st->wrap_t[0];
+    s_fog = st->fog;
     for (uint32_t i = 0; i < ntris * 3 && s_nv < MAXV; i++) s_v[s_nv++] = v[i];
 }
 void xgfx_clear(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t argb, int color, int depth, float z01) {
@@ -910,6 +912,28 @@ static void test_zimg_copy(void) {
     CHECK(nv == 0, "zimg copy: drew %u triangles on the screen", nv);
 }
 
+
+/* fog is the blender's: G_FOG with a render mode whose P input is not the
+ * fog colour draws unfogged (Banjo-Kazooie's PASS models, its orange shadows
+ * on red); G_RM_FOG_SHADE_A's P (3) keeps it (XGFX_FOG_BLENDER) */
+static int fog_tri(uint32_t rm) {
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX       fifo 1.23 Yoshitaka Yasumoto 1997 Nintendo.");
+    s_pc = DL_AT;
+    head_f3d();
+    cmd(0xB7000000u, 0x00010000u);                                  /* SETGEOMETRYMODE G_FOG */
+    cmd(0xB9000000u | (3u << 8) | 29u, rm);                         /* the render mode */
+    cmd(0x04000000u | (0u << 16) | (10u << 10) | 159u, VTX_AT);
+    cmd(0xBF000000u, (0u << 16) | (2u << 8) | 18u);                 /* TRI1 0 1 9 */
+    cmd(0xB8000000u, 0);
+    s_fog = -1;
+    return run(&u) ? s_fog : -1;
+}
+static void test_fog_blender(void) {
+    int pass = fog_tri(0x0C080000u), shade = fog_tri(0xC8000000u);
+    CHECK(pass == 0, "fog: G_FOG with a PASS render mode drew fogged (%d)", pass);
+    CHECK(shade == 1, "fog: G_RM_FOG_SHADE_A lost its fog (%d)", shade);
+}
+
 int main(void) {
     test_ci();
     setup_data();
@@ -936,6 +960,7 @@ int main(void) {
     test_line3d();
     test_dl_guards();
     test_zimg_copy();
+    test_fog_blender();
     test_fast3d();   /* and Fast3D once more after the guards' lists */
     if (s_fail) printf("test_f3dex: %d failed\n", s_fail);
     return s_fail ? 1 : 0;

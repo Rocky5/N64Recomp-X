@@ -1134,6 +1134,23 @@ static void bind_unit(int u, int tidx) {
 #define XGFX_BLEND_MEM 1
 #endif
 /* N64 render mode -> XgfxState pixel choices (wings64-dc draw_state) */
+/* Fog is the blender's: G_FOG in the geometry mode only makes the RSP work
+ * out each vertex's fog amount; the colour is blended toward the fog colour
+ * only where the render mode's P input is G_BL_CLR_FOG (3) in the first
+ * cycle (G_RM_FOG_SHADE_A, G_RM_FOG_PRIM_A), or in the second when it is two
+ * cycles. Banjo-Kazooie's models all draw with G_RM_PASS in the first cycle
+ * (its decomp, modelRender.c's tables) and leave G_FOG as the last model set
+ * it: its actor shadows (badShad.c: the shadow model, depth compare, PASS)
+ * were fogged toward the level's fog colour, orange now and then on red
+ * (vbk22). Found by a subagent from the decomp. -DXGFX_FOG_BLENDER=0: G_FOG
+ * alone fogs, as before; -DXGFX_FOG_LOG=1: release builds log each render
+ * mode that loses its fog, once */
+#ifndef XGFX_FOG_BLENDER
+#define XGFX_FOG_BLENDER 1
+#endif
+#ifndef XGFX_FOG_LOG
+#define XGFX_FOG_LOG 0
+#endif
 static void pixel_state(int depth_override_always) {
     uint32_t rm = R.oml;
     int cycle = (R.omh >> F3D_G_MDSFT_CYCLETYPE) & 3;
@@ -1191,6 +1208,20 @@ static void pixel_state(int depth_override_always) {
     s_st.color_write = 1;
     s_st.stencil = XGFX_STENCIL_OFF;
     s_st.fog = (R.geom & F3D_G_FOG) && cycle < 2;
+    if (XGFX_FOG_BLENDER && s_st.fog) {
+        uint32_t p0 = (rm >> 30) & 3, p1 = (rm >> 28) & 3;
+        if (p0 != 3 && !(cycle == 1 && p1 == 3)) {
+            s_st.fog = 0;
+            if (XHW_TEST_BUILD || XGFX_FOG_LOG) {   /* which render modes lose it, once each */
+                static uint32_t s_seen[8];
+                unsigned k;
+                for (k = 0; k < 8 && s_seen[k] && s_seen[k] != rm; k++) {}
+                if (k < 8 && !s_seen[k])
+                    s_seen[k] = rm, xhw_logf("[GFX] render mode %08x: G_FOG on, the blender takes no fog colour: unfogged "
+                                             "(fog colour %02x%02x%02x)", (unsigned)rm, R.fogc[0], R.fogc[1], R.fogc[2]);
+            }
+        }
+    }
     memcpy(s_st.fog_color, R.fogc, 4);
     memcpy(s_st.prim, R.prim, 4);
     memcpy(s_st.env, R.env, 4);
