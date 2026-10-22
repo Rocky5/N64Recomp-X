@@ -253,6 +253,8 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXHW_SPLASH_MENU=0` | 1 | BACK held at boot does nothing (no menu before the game) |
 | `N64RX_J_LATER=0` | 1 | the analyser decides a far `j` at once (a tail call) instead of after the walk |
 | `N64RX_MESG_NODIV=0` | 1 | the message-queue rules want IDO's divide (no compare-wrapped osSendMesg/osRecvMesg) |
+| `N64RX_NAME_UNIQUE=1` | 0 | (analyser) a libultra name the probe pass finds a second, different function fitting goes to the fit nearest the other libultra names; otherwise the first fit keeps it, as before. Either way `analysis.txt` lists each such name (`libultra: <name> fits ...`; review 4.1). In 27 library games: second copies of `__osDisableInt`/`__osRestoreInt` (Star Fox 64, Blast Corps), the EEPROM writers (Kirby 64, DK64, Majora's Mask), `osMapTLB` (Castlevania LoD), `osContStartReadData` (Yoshi's Story), `__osSetSR` and `osWritebackDCacheAll` (Excitebike 64) |
+| `N64RX_NAME_BITS=0` | 1 | (analyser) `osViBlack` without its state bit (0x20: `osViRepeatLine`'s 0x40 fit too and came first in Star Fox 64), `osMapTLBRdb` without its 0xC0000000 entry (GoldenEye's and Conker's own fixed TLB writers fit), `osEepromProbe` with no call besides the SI access pair (Dr. Mario 64's `osContSetCh` fit), as before |
 | `-DXRC_COMBOS=0` | 1 | no exit combos (diagnosis builds only) |
 | `-DXRC_COMBO_WATCHDOG=0` | 1 | no last-resort combo look from the watchdog |
 | `-DXRC_GPR32=1` | per pack | 32-bit registers (n64rx sets it from the scan or the pack) |

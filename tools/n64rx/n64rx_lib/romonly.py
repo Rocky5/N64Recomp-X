@@ -86,6 +86,10 @@ def make(rom, bdir, base=None, learnt=None):
     ids, _N = libultra.identify(a.img, {k: f for k, f in a.all_funcs().items() if k < 1 << 32})
     ids.pop(a.entry, None)   # the entry code is the game's own, whatever it looks like (South Park's clears the TLB)
     ids.pop(a.main, None)    # and so is main (Conker's and GoldenEye's set up the TLB, osMapTLBRdb's shape)
+    for n, cands in sorted(_N.ambiguous.items()):   # libultra.py's probe pass: a second, different fit
+        a.notes.append(f'libultra: {n} fits {", ".join(f"{c & 0xFFFFFFFF:08X}" for c in cands)} '
+                       f'({"the nearest the other names" if libultra.NAME_UNIQUE else "the first"} named; '
+                       f'docs/review-2026-10.md 4.1)')
     ovl_keys, reloc_hooks = _reloc_overlays(a, learnt)   # overlays the game relocates itself (analyze/zovl.py)
     lists = emit.recomp_lists(ROOT)
     replaced = lists['reimplemented_funcs'] | lists['ignored_funcs']

@@ -213,11 +213,28 @@ def write_table(sdir, results, skipped):
     if runs:
         out += ['', '| in xemu | games |', '|---|---|'] + [f'| {k} | {v} |' for k, v in
                                                           sorted(runs.items(), key=lambda kv: -kv[1])]
-    out += ['', '| game | code | stage | category | s | first error | run |', '|---|---|---|---|---|---|---|']
+    gfam, afam = {}, {}
+    for r in rows:
+        for g in (r.get('run') or {}).get('gfx', []):
+            k = g[g.rfind('(') + 1:-1] if not g.startswith('unknown') else 'unknown'
+            gfam.setdefault(k, set()).add(r['code'])
+        for a in (r.get('run') or {}).get('audio', []):
+            afam.setdefault(a, set()).add(r['code'])
+        if r.get('run') and not r['run'].get('audio'):
+            afam.setdefault('none seen', set()).add(r['code'])
+    if gfam:
+        out += ['', '| graphics microcode | games |', '|---|---|'] + [f'| {k} | {len(v)} |' for k, v in
+                                                                     sorted(gfam.items(), key=lambda kv: -len(kv[1]))]
+    if afam:
+        out += ['', '| audio microcode | games |', '|---|---|'] + [f'| {k} | {len(v)} |' for k, v in
+                                                                  sorted(afam.items(), key=lambda kv: -len(kv[1]))]
+    out += ['', '| game | code | stage | category | s | first error | graphics | audio | run |',
+            '|---|---|---|---|---|---|---|---|---|']
     for r in rows:
         e = (r['error'] or '').replace('|', '\\|')[:160]
+        run = r.get('run') or {}
         out.append(f"| {r['title']} | {r['code']} | {r['stage']} | {r['category']} | {r['seconds']} | {e} | "
-                   f"{(r.get('run') or {}).get('summary', '')} |")
+                   f"{'; '.join(run.get('gfx', []))} | {', '.join(run.get('audio', []))} | {run.get('summary', '')} |")
     (sdir / 'table.md').write_text('\n'.join(out) + '\n', encoding='utf-8')
 
 
@@ -249,6 +266,7 @@ def run_summary(lines):
     missing = sorted({m.group(1) for l in lines for m in [re.search(r'\[ULTRA\] missing (\S+)', l)] if m})
     learn = sum(1 for l in lines if '[LEARN]' in l)
     ucode = next((l.strip()[6:] for l in lines if l.startswith('[GFX] ucode')), '')
+    gfx, audio = microcodes(lines)
     if fatal:
         cat = 'fatal: ' + re.sub(r'[0-9a-fA-F]{8}', 'X', fatal[8:])[:60]
     elif crash:
@@ -276,7 +294,37 @@ def run_summary(lines):
         + (f', {learn} LEARN' if learn else '') + (f', missing {" ".join(missing)[:60]}' if missing else '') \
         + (f', ucode {ucode[:40]}' if ucode else '')
     return {'category': cat, 'presented': presented, 'retrace': retrace, 'fatal': fatal, 'crash': crash,
-            'missing': missing, 'learn': learn, 'ucode': ucode, 'summary': summary.replace('|', '/')}
+            'missing': missing, 'learn': learn, 'ucode': ucode, 'gfx': gfx, 'audio': audio,
+            'summary': summary.replace('|', '/')}
+
+
+GFX_UC = re.compile(r'^\[GFX\] ucode (.*?) \(data [0-9a-f]+\): (.*)$')
+GFX_NOTEXT = re.compile(r'^\[GFX\] ucode at [0-9a-f]+ has no version text: its display lists read as (.*)$')
+AUD_UC = re.compile(r'^\[AUDIO\] microcode [0-9a-f]+ .*\): (\S+(?: \(ABI\d\))?) \(')
+
+
+def microcodes(lines):
+    """the graphics microcodes a boot switched to (version text: family) and
+    the audio ABIs the HLE took (docs/roadmap.md B3: count them before
+    choosing which to write); 'unknown' for a graphics one with no version
+    text"""
+    gfx, audio = [], []
+    for l in lines:
+        l = l.strip()
+        m = GFX_UC.match(l)
+        if m:
+            v = re.sub(r'\s+', ' ', m.group(1)).replace('RSP Gfx ucode ', '').replace('RSP SW Version: ', 'Fast3D ')
+            e = f'{v} ({m.group(2).split(",")[0]})'
+        elif GFX_NOTEXT.match(l):
+            e = f'unknown (read as {GFX_NOTEXT.match(l).group(1)})'
+        else:
+            m = AUD_UC.match(l)
+            if m and m.group(1) not in audio:
+                audio.append(m.group(1))
+            continue
+        if e not in gfx:
+            gfx.append(e)
+    return gfx, audio
 
 
 def run_one(r, secs, sdir, keep_as=None):
@@ -296,7 +344,11 @@ def run_one(r, secs, sdir, keep_as=None):
         run_dir = run_dir[1].upper() + ':' + run_dir[2:]
     log = pathlib.Path(run_dir) / 'serial.log'
     lines = log.read_text(encoding='utf-8', errors='replace').replace('\r', '').splitlines() if log.is_file() else []
-    keep = [l for l in lines if RUN_KEYS.search(l)][:120] + ['--- tail ---'] + lines[-40:]
+    keep = [l for l in lines if RUN_KEYS.search(l)][:120]
+    # every microcode line too, past the 120 (the audio set-up and [LEARN] lines crowded them out: --rescan's
+    # graphics and audio columns came out empty for games that switch microcodes late)
+    keep += [l for l in lines if (l.startswith('[GFX] ucode') or l.startswith('[AUDIO] microcode')) and l not in keep]
+    keep += ['--- tail ---'] + lines[-40:]
     (sdir / 'run' / f"{r['code']}.txt").write_text('\n'.join(keep) + '\n', encoding='utf-8')
     if keep_as and log.is_file():
         shutil.copyfile(log, sdir / 'learn' / f'{keep_as}.log')

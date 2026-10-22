@@ -25,6 +25,45 @@ MESG_NODIV = os.environ.get('N64RX_MESG_NODIV', '1') != '0'
 TWINS = os.environ.get('N64RX_ULTRA_TWINS', '1') != '0'
 # kill switch: N64RX_KSEG_PROBE=0 names a tlbp function with the KSEG0 mask __osProbeTLB, as before
 KSEG_PROBE = os.environ.get('N64RX_KSEG_PROBE', '1') != '0'
+# "exactly one candidate" for the rules that test one function at a time (N.fit,
+# docs/review-2026-10.md 4.1): they name the first function that fits, and a
+# second fit was silent. Deciding at a pass's end instead moved names in seven
+# of 27 library games (the rules read each other's names within a pass: Mario
+# Party's osSetEventMesg went to __osSetHWIntrRoutine), so the first fit stays
+# and a probe pass after the names settle finds each name another function of a
+# different shape also fits (Namer.ambiguous, written to analysis.txt).
+# N64RX_NAME_UNIQUE=1: an ambiguous name goes to the fit nearest the other
+# libultra names (libultra is linked as one block; a game's own copy of a leaf
+# sits in its code). 0, the default: the first fit, as before
+NAME_UNIQUE = os.environ.get('N64RX_NAME_UNIQUE', '0') != '0'
+# kill switch: N64RX_NAME_BITS=0 drops the state-bit tests the probe pass asked for (osViBlack's 0x20)
+NAME_BITS = os.environ.get('N64RX_NAME_BITS', '1') != '0'
+
+
+def _shape(img, a, size):
+    """the function's instructions with its addresses dropped: jump targets,
+    lui immediates and the low halves added to a lui'd register (what differs
+    between two copies of one function linked at two places). Struct offsets
+    and constants stay: two different functions of one structure (two setters
+    of different fields) are told apart"""
+    out, hi = [], set()
+    for pc in range(a, a + min(size, 0x2000), 4):
+        w = img.word(pc)
+        if w is None:
+            break
+        op, rs, rt = w >> 26, (w >> 21) & 31, (w >> 16) & 31
+        if op in (2, 3):                    # j, jal: the opcode
+            out.append(w & 0xFC000000)
+        elif op == 15:                      # lui: the register
+            out.append(w & 0xFFFF0000)
+            hi.add(rt)
+        elif op and op not in (16, 17, 18) and rs in hi:   # %lo(sym)(reg), addiu reg, reg, %lo(sym)
+            out.append(w & 0xFFFF0000)
+        else:
+            out.append(w)
+            if op == 0 and ((w >> 11) & 31) in hi:   # a SPECIAL that writes it: no longer an address
+                hi.discard((w >> 11) & 31)
+    return tuple(out)
 
 AI, PI, SI, SP, VI, MI, DP = 0x04500000, 0x04600000, 0x04800000, 0x04040000, 0x04400000, 0x04300000, 0x04100000
 
@@ -43,21 +82,65 @@ class Namer:
             for c in ft.calls:
                 self.callers.setdefault(c, set()).add(a)
         self.changed = False
+        self.probe = False   # the probe pass: fits recorded, nothing named
+        self.fits = {}       # name -> {addr: why}: other functions the probe pass found fitting a given name
+        self.ambiguous = {}  # name -> [the named one, the others that fit and differ from it]
 
     def set(self, a, name, why):
-        if a in self.name or name in self.addr or a not in self.f:
+        if self.probe or a in self.name or name in self.addr or a not in self.f:
             return
         self.name[a], self.addr[name], self.why[a] = name, a, why
         self.changed = True
 
     def one(self, cands, name, why):
+        """a rule that looked at every function: named when one fits"""
         cands = [c for c in set(cands) if c not in self.name and c not in self.twins]
         if len(cands) == 1 and name not in self.addr:
             self.set(cands[0], name, why)
 
+    def fit(self, a, name, why):
+        """a rule that looks at one function at a time: the first that fits is
+        named; in the probe pass, another that fits a given name is kept"""
+        if not self.probe:
+            self.one([a], name, why)
+        elif name in self.addr and a != self.addr[name] and a not in self.name and a not in self.twins:
+            self.fits.setdefault(name, {}).setdefault(a, why)
+
+    def check(self):
+        """the probe pass: every rule once more with every name known, nothing
+        named; a name another function of a different shape fits is ambiguous.
+        NAME_UNIQUE: it goes to the fit nearest the other libultra names"""
+        self.probe, self.fits = True, {}
+        for r in RULES:
+            r(self)
+        self.probe = False
+        for name, by in self.fits.items():
+            a = self.addr.get(name)
+            if a is None:
+                continue
+            mine = _shape(self.img, a, self.f[a].size)
+            others = sorted(c for c in by if _shape(self.img, c, self.f[c].size) != mine)
+            if not others:
+                continue
+            self.ambiguous[name] = [a] + others
+            if NAME_UNIQUE:
+                rest = sorted(x for x in self.name if x != a)
+
+                def gap(c):
+                    import bisect
+                    i = bisect.bisect_left(rest, c)
+                    return min(abs(c - rest[j]) for j in (i - 1, i) if 0 <= j < len(rest)) if rest else 0
+                best = min([a] + others, key=lambda c: (gap(c), c != a))
+                if best != a:
+                    why = self.why.pop(a)
+                    del self.name[a]
+                    self.addr.pop(name)
+                    self.set(best, name, by[best] + ' (the fit nearest the other libultra names)')
+                    self.why.setdefault(best, why)
+
     def twin(self, a, name, why):
         """a fits the rule that named `name` at another address: the game's second copy of it"""
-        if TWINS and a not in self.name and a not in self.twins and self.addr.get(name, a) != a:
+        if TWINS and not self.probe and a not in self.name and a not in self.twins and self.addr.get(name, a) != a:
             self.twins[a] = (name, why + ' (a second copy)')
 
     def has(self, name):
@@ -113,58 +196,60 @@ def _anchors(N):
         c0, leaf, sz = ft.cop0, ft.leaf, ft.size
         # osGetMemSize: writes 0x12345678 and 0x87654321 through uncached RDRAM a MB at a time
         if {0x12340000, 0x87650000, 0xA0000000} <= ft.consts and not c0 and sz <= 0x200:
-            N.one([a], 'osGetMemSize', 'the 0x12345678 / 0x87654321 probe through KSEG1 RDRAM')
+            N.fit(a, 'osGetMemSize', 'the 0x12345678 / 0x87654321 probe through KSEG1 RDRAM')
         if leaf and c0 == {('mf', 12), ('mt', 12)} and not ft.hw:
             if ft.returns_value and 0 not in ft.args_used:
-                N.one([a], '__osDisableInt', 'mfc0/mtc0 Status, clears IE, returns the old IE')
+                N.fit(a, '__osDisableInt', 'mfc0/mtc0 Status, clears IE, returns the old IE')
             elif 0 in ft.args_used and not ft.returns_value:
-                N.one([a], '__osRestoreInt', 'mfc0/mtc0 Status, ors in its argument')
+                N.fit(a, '__osRestoreInt', 'mfc0/mtc0 Status, ors in its argument')
         if c0 == {('mf', 12), ('mt', 12)} and N.hw(a, MI, 0xC):
-            N.one([a], 'osSetIntMask', 'Status and MI_INTR_MASK')
+            N.fit(a, 'osSetIntMask', 'Status and MI_INTR_MASK')
         if leaf and c0 == {('mf', 9)} and sz <= 0x10:
-            N.one([a], 'osGetCount', 'mfc0 Count, returns it')
+            N.fit(a, 'osGetCount', 'mfc0 Count, returns it')
         if leaf and c0 == {('mt', 9)} and sz <= 0x10:
-            N.one([a], 'osSetCount', 'mtc0 Count')
+            N.fit(a, 'osSetCount', 'mtc0 Count')
         if leaf and c0 == {('mt', 11)} and sz <= 0x10:
-            N.one([a], '__osSetCompare', 'mtc0 Compare')
+            N.fit(a, '__osSetCompare', 'mtc0 Compare')
         if leaf and c0 == {('mf', 12)} and sz <= 0x10 and not ft.hw:
-            N.one([a], '__osGetSR', 'mfc0 Status only')
+            N.fit(a, '__osGetSR', 'mfc0 Status only')
         if leaf and c0 == {('mt', 12)} and sz <= 0x14:
-            N.one([a], '__osSetSR', 'mtc0 Status only')
+            N.fit(a, '__osSetSR', 'mtc0 Status only')
         if leaf and c0 == {('mf', 13)} and sz <= 0x10:
-            N.one([a], '__osGetCause', 'mfc0 Cause only')
+            N.fit(a, '__osGetCause', 'mfc0 Cause only')
         if leaf and not c0 and ft.fcr == {('cf', 31), ('ct', 31)} and sz <= 0x14:
-            N.one([a], '__osSetFpcCsr', 'cfc1/ctc1 $31, returns the old one')
+            N.fit(a, '__osSetFpcCsr', 'cfc1/ctc1 $31, returns the old one')
         if leaf and ft.cache:
             if ft.cache == {1} and not ft.args_used:
-                N.one([a], 'osWritebackDCacheAll', 'index writeback-invalidate over the whole D-cache')
+                N.fit(a, 'osWritebackDCacheAll', 'index writeback-invalidate over the whole D-cache')
             elif ft.cache == {1, 25}:
-                N.one([a], 'osWritebackDCache', 'hit writeback over a range (index over all when large)')
+                N.fit(a, 'osWritebackDCache', 'hit writeback over a range (index over all when large)')
             elif ft.cache == {5, 25} and not ft.args_used:   # Camelot's: each line's tag loaded, then hit writeback
-                N.one([a], 'osWritebackDCacheAll', 'index load tag and hit writeback over the whole D-cache')
+                N.fit(a, 'osWritebackDCacheAll', 'index load tag and hit writeback over the whole D-cache')
             elif ft.cache == {5, 25} or ft.cache == {25} and ft.args_used == {0, 1}:
-                N.one([a], 'osWritebackDCache', 'hit writeback over a range (tag loads over all when large)')
+                N.fit(a, 'osWritebackDCache', 'hit writeback over a range (tag loads over all when large)')
             elif 17 in ft.cache or 21 in ft.cache:
-                N.one([a], 'osInvalDCache', 'hit invalidate D-cache over a range')
+                N.fit(a, 'osInvalDCache', 'hit invalidate D-cache over a range')
             elif 16 in ft.cache:
-                N.one([a], 'osInvalICache', 'hit invalidate I-cache over a range')
+                N.fit(a, 'osInvalICache', 'hit invalidate I-cache over a range')
         if 'tlbp' in ft.special and 'tlbwi' not in ft.special:
             if KSEG_PROBE and _kseg_mask(N.img, a, sz):   # Camelot's: osVirtualToPhysical with the probe inside
-                N.one([a], 'osVirtualToPhysical', 'masks KSEG0/KSEG1 addresses to 29 bits, tlbp for the rest')
+                N.fit(a, 'osVirtualToPhysical', 'masks KSEG0/KSEG1 addresses to 29 bits, tlbp for the rest')
             else:
-                N.one([a], '__osProbeTLB', 'tlbp')
+                N.fit(a, '__osProbeTLB', 'tlbp')
         # the TLB writers: osMapTLB(index, pm, vaddr, even, odd, asid) takes
         # everything from its arguments, osUnmapTLB(index) only the index,
         # osUnmapTLBAll loops over every entry, osMapTLBRdb maps a fixed one
         if 'tlbwi' in ft.special and 'tlbp' not in ft.special and not ft.calls:
             if ft.args_used >= {0, 1, 2, 3}:
-                N.one([a], 'osMapTLB', 'tlbwi of an entry made from its arguments')
+                N.fit(a, 'osMapTLB', 'tlbwi of an entry made from its arguments')
             elif ft.args_used == {0}:
-                N.one([a], 'osUnmapTLB', 'tlbwi of an invalid entry at the index in arg0')
+                N.fit(a, 'osUnmapTLB', 'tlbwi of an invalid entry at the index in arg0')
             elif not ft.args_used and ft.branches:
-                N.one([a], 'osUnmapTLBAll', 'tlbwi of an invalid entry at every index, in a loop')
-            elif not ft.args_used:
-                N.one([a], 'osMapTLBRdb', 'tlbwi of a fixed entry, no arguments')
+                N.fit(a, 'osUnmapTLBAll', 'tlbwi of an invalid entry at every index, in a loop')
+            elif not ft.args_used and (not NAME_BITS or 0xC0000000 in ft.consts):
+                # the entry maps RDB_BASE_VIRTUAL_ADDR (lui 0xC000): GoldenEye's own boot code that maps its
+                # 0x7F000000 segment with a fixed tlbwi fit too, came first, and was replaced by a no-op
+                N.fit(a, 'osMapTLBRdb', 'tlbwi of the fixed entry at 0xC0000000, no arguments')
     _ll_helpers(N)
 
 
@@ -271,7 +356,7 @@ def _structure(N):
         # OSMesgQueue init: six stores at arg0 +0..+20, nothing else
         if ft.leaf and ft.args_used >= {0, 1, 2} and all(N.arg_w(a, 0, o) for o in (0, 4, 8, 12, 16, 20)) and \
                 not ft.hw and not ft.cop0 and ft.size <= 0x40:
-            N.one([a], 'osCreateMesgQueue', 'stores the six fields of an OSMesgQueue at arg0')
+            N.fit(a, 'osCreateMesgQueue', 'stores the six fields of an OSMesgQueue at arg0')
         # IDO's long helpers that never divide: shifts and multiplies on register pairs (64-bit, leaf, tiny)
     if di and ri:
         mesg = [a for a, ft in f.items() if di in ft.calls and ri in ft.calls and 'div' in ft.special
@@ -285,20 +370,20 @@ def _structure(N):
                      N.arg_r(a, 0, 16) and N.arg_r(a, 0, 20) and ft.size <= 0x200]
         for a in mesg:
             if N.arg_w(a, 1, 0) or any(k[0] == 1 and 'w' in v for k, v in f[a].arg.items()):
-                N.one([a], 'osRecvMesg', 'queue at arg0: validCount, msgCount, first; stores the message at *arg1')
+                N.fit(a, 'osRecvMesg', 'queue at arg0: validCount, msgCount, first; stores the message at *arg1')
             elif 'div' not in f[a].special and N.arg_w(a, 0, 12) and N.arg_r(a, 0, 4) and not N.arg_r(a, 0, 0):
                 # arg1 spilled and reloaded (Mario Tennis): advances `first`, wakes the fullqueue (+4)
-                N.one([a], 'osRecvMesg', 'queue at arg0: takes from `first`, wakes a sender (no divide)')
+                N.fit(a, 'osRecvMesg', 'queue at arg0: takes from `first`, wakes a sender (no divide)')
             elif N.arg_w(a, 0, 12):
-                N.one([a], 'osJamMesg', 'queue at arg0: moves `first` back and puts the message there')
+                N.fit(a, 'osJamMesg', 'queue at arg0: moves `first` back and puts the message there')
             else:
-                N.one([a], 'osSendMesg', 'queue at arg0: validCount < msgCount, appends')
+                N.fit(a, 'osSendMesg', 'queue at arg0: validCount < msgCount, appends')
         for a, ft in f.items():
             if a in N.name or di not in ft.calls or ri not in ft.calls:
                 continue
             # OSThread: arg0 + 16 is the state (u16), + 20 the id, a big register context
             if N.arg_w(a, 0, 16) and N.arg_w(a, 0, 20) and any(k[0] == 0 and k[1] >= 0x100 for k in ft.arg):
-                N.one([a], 'osCreateThread', 'fills an OSThread at arg0: state, id, the context')
+                N.fit(a, 'osCreateThread', 'fills an OSThread at arg0: state, id, the context')
     # the thread helpers the queue functions share
     for nm in ('osSendMesg', 'osRecvMesg', 'osJamMesg'):
         a = N.a_(nm)
@@ -317,7 +402,7 @@ def _structure(N):
             continue
         if ft.args_used == {0} and N.arg_r(a, 0, 8) and N.arg_w(a, 0, 16) and eay and eay in ft.calls and \
                 sum(1 for c in ft.calls if c not in (di, ri, eay)) >= 2:
-            N.one([a], 'osStartThread', 'reads the thread\'s queue (+8), sets its state (+16), dispatches')
+            N.fit(a, 'osStartThread', 'reads the thread\'s queue (+8), sets its state (+16), dispatches')
             # Mario Tennis links two: one with the `__osRunningThread == NULL` dispatch, one without
             N.twin(a, 'osStartThread', 'reads the thread\'s queue (+8), sets its state (+16), dispatches')
     st = N.a_('osStartThread')
@@ -382,7 +467,7 @@ def _structure(N):
             # (osCreateScheduler starts a thread too, but also another manager: a callee that starts one)
             starts_mgr = any(f.get(c) and ct in f[c].calls for c in callees if c not in (ct, st))
             if vi:
-                N.one([a], 'osCreateViManager', 'starts the VI thread and calls the VI init (writes the VI registers)')
+                N.fit(a, 'osCreateViManager', 'starts the VI thread and calls the VI init (writes the VI registers)')
             elif (cq and list(f[a].calls).count(cq) >= 2 or any(f.get(c) and cq in f[c].calls for c in callees
                                                                 if c != cq)) and not starts_mgr:
                 pim += [a] if len(f[a].args_used) >= 3 else []
@@ -435,19 +520,21 @@ def _vi(N):
             # the current or the next framebuffer: which global decides, settled below
             continue
         if 8 in offs and 12 in offs:
-            N.one([a], 'osViSetMode', 'stores arg0 as the next context\'s mode (+8) and its control word (+12)')
+            N.fit(a, 'osViSetMode', 'stores arg0 as the next context\'s mode (+8) and its control word (+12)')
         elif 16 in offs and 20 in offs:
-            N.one([a], 'osViSetEvent', 'stores (queue, message, retrace count) in the next context')
+            N.fit(a, 'osViSetEvent', 'stores (queue, message, retrace count) in the next context')
         elif 4 in offs and ft.args_used == {0}:
-            N.one([a], 'osViSwapBuffer', 'stores arg0 as the next context\'s framebuffer (+4)')
+            N.fit(a, 'osViSwapBuffer', 'stores arg0 as the next context\'s framebuffer (+4)')
         elif 24 in offs and ft.float_args:
-            N.one([a], 'osViSetXScale', 'stores a float as the x scale (+24)')
+            N.fit(a, 'osViSetXScale', 'stores a float as the x scale (+24)')
         elif 36 in offs and ft.float_args:
-            N.one([a], 'osViSetYScale', 'stores a float as the y scale (+36)')
+            N.fit(a, 'osViSetYScale', 'stores a float as the y scale (+36)')
         elif 12 in offs and ft.args_used == {0} and ft.size > 0x100:
-            N.one([a], 'osViSetSpecialFeatures', 'rewrites the next context\'s control word (+12) bit by bit')
-        elif offs == {0} and ft.args_used == {0}:
-            N.one([a], 'osViBlack', 'sets or clears the blank bit in the next context\'s state (+0)')
+            N.fit(a, 'osViSetSpecialFeatures', 'rewrites the next context\'s control word (+12) bit by bit')
+        elif offs == {0} and ft.args_used == {0} and (not NAME_BITS or (0x20 in ft.consts and 0x40 not in ft.consts)):
+            # VI_STATE_BLACK (0x20): osViRepeatLine sets VI_STATE_REPEATLINE (0x40) the same way and was
+            # named osViBlack where it came first (Star Fox 64; the probe pass found Paper Mario's two fits)
+            N.fit(a, 'osViBlack', 'sets or clears the blank bit (0x20) in the next context\'s state (+0)')
     # the framebuffer getters: return context->framep; the one reading the global osViSwapBuffer writes through is "next"
     swb = N.a_('osViSwapBuffer')
     nxt = None
@@ -460,7 +547,7 @@ def _vi(N):
     for a in getters:
         g = [g for g in ctx if g in f[a].globals_][0]
         if nxt is not None:
-            N.one([a], 'osViGetNextFramebuffer' if g == nxt else 'osViGetCurrentFramebuffer',
+            N.fit(a, 'osViGetNextFramebuffer' if g == nxt else 'osViGetCurrentFramebuffer',
                   'returns the ' + ('next' if g == nxt else 'current') + ' context\'s framebuffer (+4)')
     # osViGetCurrentMode: the current context's mode (+8), its type byte; the game's own __osViCurr stays
     # NULL under the runtime's VI (Donkey Kong 64 read NULL+3)
@@ -484,12 +571,12 @@ def _io(N):
                 continue
             io = 1 if any(k[0] == 1 and k[1] in (8, 12, 16) for k in ft.arg) else 0
             if all(N.arg_w(a, io, o) for o in (4, 8, 12, 16)):
-                N.one([a], 'osEPiStartDma' if io == 1 else 'osPiStartDma',
+                N.fit(a, 'osEPiStartDma' if io == 1 else 'osPiStartDma',
                       'fills the OSIoMesg at arg%d and sends or jams it to the PI manager' % io)
             elif ft.args_used >= {0, 1, 2} and N.arg_w(a, 1, 20) and N.arg_w(a, 1, 0) and \
                     not any(N.arg_w(a, 1, o) for o in (8, 12, 16)):
                 # the caller filled the message: only its type and handle (+20) are set here (2.0L's)
-                N.one([a], 'osEPiStartDma', 'sets the type and handle of the OSIoMesg at arg1, sends or jams it')
+                N.fit(a, 'osEPiStartDma', 'sets the type and handle of the OSIoMesg at arg1, sends or jams it')
     # the SI and PI access queues: get = recv on a global queue, rel = send to it
     for kind in ('Si', 'Pi'):
         pass
@@ -525,7 +612,7 @@ def _io(N):
                                                   and any(f.get(c) and any(f.get(cc) and N.a_('__osSetCompare') in
                                                                            f[cc].calls for cc in f[c].calls)
                                                           for c in ft.calls)):
-            N.one([a], 'osSetTimer', 'fills an OSTimer at arg0 and arms the Compare interrupt')
+            N.fit(a, 'osSetTimer', 'fills an OSTimer at arg0 and arms the Compare interrupt')
     st_ = N.a_('osSetTimer')
     gc, sc = N.a_('osGetCount'), N.a_('__osSetCompare')
     di, ri = N.a_('__osDisableInt'), N.a_('__osRestoreInt')
@@ -557,18 +644,20 @@ def _io(N):
             if sid in ft.calls and rs in ft.calls and ft.args_used == {0}:
                 # osContStartReadData / osContStartQuery: pack, two SI DMAs, wait
                 packs = [c for c in ft.calls if c not in (sga, sra, sid, rs)]
-                N.one([a] if packs else [], 'osContStartReadData' if not _packs_request(N, packs) else
-                      'osContStartQuery', 'packs a controller command, two SI DMAs between the access calls')
-            elif sid not in ft.calls and ncalls <= 4 and ft.args_used == {0}:
-                N.one([a], 'osEepromProbe', 'asks the EEPROM its status between the SI access calls')
+                if packs:
+                    N.fit(a, 'osContStartReadData' if not _packs_request(N, packs) else
+                          'osContStartQuery', 'packs a controller command, two SI DMAs between the access calls')
+            elif sid not in ft.calls and 3 <= ncalls <= 4 and ft.args_used == {0}:
+                # (a call besides the two: __osEepStatus. osContSetCh, between the same two, calls nothing else)
+                N.fit(a, 'osEepromProbe', 'asks the EEPROM its status between the SI access calls')
         for a in [x for x in si_users if x not in N.name]:
             ft = f[a]
             # (mq, address, buffer): __osContRamRead/Write take a channel too (arg 3 used)
             if sid in ft.calls and ft.args_used >= {0, 1, 2} and 3 not in ft.args_used:
                 if any(k[0] == 2 and 'w' in v for k, v in ft.arg.items()):
-                    N.one([a], 'osEepromRead', 'an EEPROM block read into *arg2')
+                    N.fit(a, 'osEepromRead', 'an EEPROM block read into *arg2')
                 else:
-                    N.one([a], 'osEepromWrite', 'an EEPROM block written from arg2')
+                    N.fit(a, 'osEepromWrite', 'an EEPROM block written from arg2')
     if sid and rs and not sga:
         # an older libultra with no SI access queue (Mario Party): osContStartReadData / osContStartQuery
         # pack, raw SI DMA, wait on the queue at arg0, raw SI DMA
@@ -577,16 +666,16 @@ def _io(N):
                 continue
             packs = [c for c in ft.calls if c not in (sid, rs)]
             if packs:
-                N.one([a], 'osContStartReadData' if not _packs_request(N, packs) else 'osContStartQuery',
+                N.fit(a, 'osContStartReadData' if not _packs_request(N, packs) else 'osContStartQuery',
                       'packs a controller command, raw SI DMAs and a wait (no SI access queue)')
     er, ew = N.a_('osEepromRead'), N.a_('osEepromWrite')
     for a, ft in f.items():
         if a in N.name:
             continue
         if er and er in ft.calls and ft.args_used >= {0, 1, 2, 3}:
-            N.one([a], 'osEepromLongRead', 'osEepromRead in a loop')
+            N.fit(a, 'osEepromLongRead', 'osEepromRead in a loop')
         if ew and ew in ft.calls and ft.args_used >= {0, 1, 2, 3}:
-            N.one([a], 'osEepromLongWrite', 'osEepromWrite in a loop with a delay')
+            N.fit(a, 'osEepromLongWrite', 'osEepromWrite in a loop with a delay')
     # osContGetQuery(status): __osContGetInitData(&pattern, status), which osContInit calls too
     ci = N.a_('osContInit')
     if ci:
@@ -637,22 +726,22 @@ def _sp_init(N):
         if a in N.name:
             continue
         if spc and rsd and spc in ft.calls and rsd in ft.calls and ft.args_used == {0}:
-            N.one([a], 'osSpTaskLoad', 'loads the task: SP PC, the boot microcode and the task by SP DMA')
+            N.fit(a, 'osSpTaskLoad', 'loads the task: SP PC, the boot microcode and the task by SP DMA')
         if sss and set(ft.calls) == {sss} and not ft.args_used and ft.size <= 0x30:
-            N.one([a], 'osSpTaskYield', 'sets SP_SET_YIELD')
+            N.fit(a, 'osSpTaskYield', 'sets SP_SET_YIELD')
     gs = N.a_('__osSpGetStatus')
     for a, ft in f.items():
         if a in N.name:
             continue
         if gs and gs in ft.calls and len(set(ft.calls)) == 1 and ft.returns_value:
-            N.one([a], 'osSpTaskYielded', 'reads SP_STATUS: did the task yield')
+            N.fit(a, 'osSpTaskYielded', 'reads SP_STATUS: did the task yield')
         if sss and sss in ft.calls and not (rsd and rsd in ft.calls) and \
                 not (spc and spc in ft.calls) and len(set(ft.calls)) == 2 and ft.size <= 0x60:
-            N.one([a], 'osSpTaskStartGo', 'waits for the SP, then clears halt')
+            N.fit(a, 'osSpTaskStartGo', 'waits for the SP, then clears halt')
     # osInitialize: installs the exception vectors at 0x80000000/0x80000080/0x80000180
     for a, ft in f.items():
         if all(v in ft.globals_ for v in (0x80000000, 0x80000080, 0x80000180)):
-            N.one([a], '__osInitialize_common' if any(N.name.get(c) == '__osInitialize_isv' for c in ft.calls) else
+            N.fit(a, '__osInitialize_common' if any(N.name.get(c) == '__osInitialize_isv' for c in ft.calls) else
                   'osInitialize', 'writes the exception vectors at 0x80000000, 0x80000080, 0x80000180')
     oi = N.a_('osInitialize') or N.a_('__osInitialize_common')
     # osVirtualToPhysical: K0/K1 masks, the TLB probe otherwise
@@ -675,13 +764,13 @@ def _tlb(N):
         if a in N.name or 'tlbwi' not in ft.special or not TLB_WRITE <= ft.cop0:
             continue
         if {0, 1, 2, 3} <= ft.args_used and ('mt', 5) in ft.cop0:
-            N.one([a], 'osMapTLB', 'PageMask, EntryHi, EntryLo0/1 from its arguments, tlbwi')
+            N.fit(a, 'osMapTLB', 'PageMask, EntryHi, EntryLo0/1 from its arguments, tlbwi')
         elif ft.args_used == {0}:
-            N.one([a], 'osUnmapTLB', 'tlbwi of an invalid entry at the index in arg0')
-        elif not ft.args_used and ('mt', 5) in ft.cop0:
-            N.one([a], 'osMapTLBRdb', 'PageMask and a fixed entry (the debugger port), no arguments')
+            N.fit(a, 'osUnmapTLB', 'tlbwi of an invalid entry at the index in arg0')
+        elif not ft.args_used and ('mt', 5) in ft.cop0 and (not NAME_BITS or 0xC0000000 in ft.consts):
+            N.fit(a, 'osMapTLBRdb', 'PageMask and the fixed entry at 0xC0000000 (the debugger port), no arguments')
         elif not ft.args_used:
-            N.one([a], 'osUnmapTLBAll', 'tlbwi of invalid entries over the whole TLB, PageMask untouched')
+            N.fit(a, 'osUnmapTLBAll', 'tlbwi of invalid entries over the whole TLB, PageMask untouched')
     di, ri, eay = N.a_('__osDisableInt'), N.a_('__osRestoreInt'), N.a_('__osEnqueueAndYield')
     if di and ri and eay:
         cands = [a for a, ft in N.f.items() if a not in N.name and not ft.args_used and ft.calls == [di, eay, ri]]
@@ -700,4 +789,5 @@ def identify(img, funcs):
             r(N)
         if not N.changed:
             break
+    N.check()
     return {a: (n, N.why[a]) for a, n in N.name.items()}, N

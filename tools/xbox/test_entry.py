@@ -99,8 +99,44 @@ def main():
     check(funcs.parse_entry(rom_with([jal(mainf), NOP] + [NOP] * 40), ENTRY) is None, 'a bare jal is refused')
     check(funcs.parse_entry(rom_with([NOP] * 48), ENTRY) is None, 'no entry at all')
 
+    test_names()
     print(f'test_entry: {"passed" if not fails else f"{fails} failed"}')
     return 1 if fails else 0
+
+
+def test_names():
+    """libultra.py's naming (docs/review-2026-10.md 4.1, 4.2): one fit is
+    named; a second fit of a different shape is reported (the probe pass),
+    a copy of the same shape is not; with N64RX_NAME_UNIQUE the nearest to
+    the other names wins"""
+    from n64rx_lib.analyze import libultra
+    V0, RA = 2, 31
+
+    def mfc0(rt, rd): return (16 << 26) | (rt << 16) | (rd << 11)
+    count = [mfc0(V0, 9), jr(RA), NOP, NOP]                 # osGetCount
+    other = [mfc0(V0, 9), jr(RA), addiu(V0, V0, 1), NOP]    # a game's leaf of the same kind, another shape
+
+    def ident(*bodies, unique=False):
+        words = [w for b in bodies for w in b]
+        img = funcs.Image(rom_with(words))
+        img.segments.append(funcs.Segment('boot', 0x1000, ENTRY, 4 * len(words)))
+        fs = {ENTRY + 16 * k: funcs.Func(ENTRY + 16 * k, ENTRY + 16 * k + 12) for k in range(len(bodies))}
+        old, libultra.NAME_UNIQUE = libultra.NAME_UNIQUE, unique
+        try:
+            ids, N = libultra.identify(img, fs)
+        finally:
+            libultra.NAME_UNIQUE = old
+        return {a: n for a, (n, _w) in ids.items()}, N
+
+    ids, N = ident(count)
+    check(ids.get(ENTRY) == 'osGetCount' and not N.ambiguous, 'one fit: named, nothing ambiguous')
+    ids, N = ident(count, other)
+    check(list(ids.values()).count('osGetCount') == 1, 'two fits: one name')
+    check(N.ambiguous.get('osGetCount') == [ENTRY, ENTRY + 16], f'two fits of two shapes: reported ({N.ambiguous})')
+    ids, N = ident(count, count)
+    check('osGetCount' not in N.ambiguous, 'a copy of the same shape: not ambiguous')
+    ids, N = ident(count, other, unique=True)
+    check(list(ids.values()).count('osGetCount') == 1, 'N64RX_NAME_UNIQUE: still one name')
 
 
 if __name__ == '__main__':
