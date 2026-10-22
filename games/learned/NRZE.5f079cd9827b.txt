@@ -1,0 +1,42 @@
+# RIDGE RACER 64 (NRZE): what the console's learning rounds found (tools/xbox/learned_facts.py).
+# Facts only: function starts, the DMAs that put code there, the TLB regions. No code bytes.
+dma 00225cc0 800c3a00 7ca20
+func 800c571c 0 from 8000184c
+func 8001c7ec 0 from 800c57fc
+func 8001c7ec 64 from 800c57fc
+dma 00a5e9e0 80140450 1c40
+func 801411ec 0 from 800c5804
+func 80141174 0 from 801413f4
+func 80141174 78 from 801413f4
+func 801411ec 2e8 from 800c5804
+func 8001c850 0 from 800c5858
+func 8001c850 70 from 800c5858
+func 800c571c 23c from 8000184c
+func 800c5e00 0 from 8000184c
+func 800149c0 0 from 800c5e40
+func 800149c0 470 from 800c5e40
+func 800c3a40 0 from 800c62a4
+func 800c3a40 104 from 800c62a4
+func 800c3b44 0 from 800c63dc
+func 800c3b44 1bd8 from 800c63dc
+func 8001526c 0 from 800c6568
+func 8001526c 220 from 800c6568
+func 80014f64 0 from 800c6764
+func 80014e30 0 from 80014f74
+func 80014e30 134 from 80014f74
+func 80014f64 24 from 800c6764
+func 800c5e00 994 from 8000184c
+func 800c5958 0 from 8000184c
+func 80013bb8 0 from 800c5970
+func 80013bb8 128 from 800c5970
+func 80013ce0 0 from 800c59ec
+func 80002590 0 from 80013d3c
+func 80002590 74 from 80013d3c
+func 80013ce0 1ac from 800c59ec
+func 80140518 0 from 800c5a20
+func 80140490 0 from 80140910
+func 80140490 40 from 80140910
+func 801404d0 0 from 80140b04
+func 801404d0 48 from 80140b04
+func 80140518 62c from 800c5a20
+func 800c5958 4a8 from 8000184c

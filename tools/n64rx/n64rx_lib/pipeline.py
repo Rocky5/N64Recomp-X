@@ -721,6 +721,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
         pack = packs.match(rom, packs.all_packs())
     except N64rxError:
         pack = None   # no pack: the ROM alone (PLAN.md 3.14)
+    rom_sha1 = rom.sha1   # the ROM as supplied (games/learned/ is keyed by it, before a Yaz0 rebuild)
     if pack is None and os.environ.get('N64RX_YAZ0', '1') != '0':
         rom = _inflate(rom, prog)   # Yaz0 games (the Zeldas): the image they run from (yaz0.py)
     eng = eng or engines.pick(engine)
@@ -728,6 +729,12 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     if eng.name == 'docker':
         return _build_in_docker(eng, rom, out_root, video, fast, gpr, prog, rom_beside, learn, events)
     ainfo = None
+    # games/learned/<code>.<sha1>.txt: the facts the project's console rounds found for this exact ROM
+    # (tools/xbox/learned_facts.py; addresses and sizes, no bytes), read first. N64RX_LEARNED=0: not read
+    shipped = ROOT / 'games' / 'learned' / f'{rom.code}.{rom_sha1[:12]}.txt'
+    if pack is None and os.environ.get('N64RX_LEARNED', '1') != '0' and shipped.is_file():
+        learn = [shipped] + list(learn)
+        prog.note(f'the project\'s learnt facts for this ROM: {shipped.relative_to(ROOT)}')
     learnt = learnmod.read(learn) if learn else None   # --learn: the console's learn.txt (learn.py)
     if analyze or pack is None or learnt is not None:
         base = pack

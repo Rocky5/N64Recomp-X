@@ -1,0 +1,6 @@
+# JET FORCE GEMINI (NJFE): what the console's learning rounds found (tools/xbox/learned_facts.py).
+# Facts only: function starts, the DMAs that put code there, the TLB regions. No code bytes.
+func 800755b0 0 from 800755a0
+func 800755b0 b4 from 800755a0
+func 800757f8 0 from 8007580c
+func 800757f8 10 from 8007580c

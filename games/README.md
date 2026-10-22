@@ -88,3 +88,17 @@ A pack starts from the analysis: build the ROM with no pack, read
 3. Build; the first boot's log names an unknown microcode by its hash
    (`[GFX]`) and any function a pointer reaches that the table doesn't know.
 4. Write the README: what works, what doesn't, how it was checked.
+
+## Learnt facts (`games/learned/`)
+
+`games/learned/<code>.<sha1[:12]>.txt` holds what the project's console
+learning rounds found for one ROM (`tools/xbox/learned_facts.py <rom>
+<learn files...>`): the `func`, `dma`, `kuseg`, `rdram 8` and `reloc` lines
+of the console's learn files, addresses and sizes only, never a captured
+code record. A ROM-only build of the ROM with that SHA-1 (the image as
+supplied, before a Yaz0 rebuild) reads it ahead of any `--learn`
+(`N64RX_LEARNED=0`: not read), so a user's first build starts where the
+rounds left off for code a ROM DMA put there: Ocarina of Time's first build
+goes from 3,302 functions in 3 segments to 5,328 in 57 (its relocated
+overlays recompiled). Code the CPU made (Mario Tennis's scenes) needs its
+bytes, which the dry boot (`N64RX_DRYBOOT=1`) or a console round supplies.

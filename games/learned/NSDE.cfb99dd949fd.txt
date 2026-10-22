@@ -1,0 +1,5 @@
+# Shadowman (NSDE): what the console's learning rounds found (tools/xbox/learned_facts.py).
+# Facts only: function starts, the DMAs that put code there, the TLB regions. No code bytes.
+kuseg 00100000 0
+func 00117d18 0 from 00117d08
+func 00117d18 cc from 00117d08
