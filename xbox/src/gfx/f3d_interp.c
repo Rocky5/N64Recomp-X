@@ -1464,6 +1464,11 @@ static int probe_cimg(uint32_t c, unsigned w, unsigned siz) {
 #ifndef XGFX_PROBE_CLIP
 #define XGFX_PROBE_CLIP 1
 #endif
+/* -DXGFX_PROBE_LOG=1: the probe's copy lines and its 30-frame summary in release builds too (Pokémon
+ * Snap on red: the photo check never found a Pokémon in focus, the Beach tutorial never unlocked) */
+#ifndef XGFX_PROBE_LOG
+#define XGFX_PROBE_LOG 0
+#endif
 static int probe_copy(uint32_t w0, uint32_t w1) {
     uint16_t xl, yl, xh, yh;
     uint8_t tile;
@@ -1498,7 +1503,7 @@ static int probe_copy(uint32_t w0, uint32_t w1) {
             wr16(XU_K0(s_probe.target + 2u * (dy * s_probe.tw + dx)),
                  (uint16_t)((s_probe.id[j * s_probe.w + i] << 1) | 1u));
         }
-    if (XHW_TEST_BUILD) {   /* test builds: the first copies that saw something drawn since the one before
+    if (XHW_TEST_BUILD || XGFX_PROBE_LOG) {   /* test builds: the first copies that saw something drawn since the one before
                              * (a frame's first copy, the background, apart: it spent the lines) */
         static unsigned s_said, s_said1;
         int k, changed = 0;
