@@ -177,6 +177,20 @@ main_ws[11:13] = [lui(T0_, 0x2000), addiu(T0_, T0_, 0x1050)]          # a jump o
 rom = b'\0' * 0x1040 + struct.pack(f'>{len(main_ws)}I', *main_ws) + b'\0' * 0x200
 check(AF.tlb_main(rom, 0x80001000, 0x80001040) is None, 'tlb_main: a jump elsewhere')
 
+# a far j whose target a branch of the same function runs into is no tail (review 4.6): a bnez over the j,
+# then straight code to the j's target (past INTRA_J when the j is met), then jr ra
+class _Img:
+    def __init__(self, base, ws): self.base, self.ws = base, ws
+    def word(self, a):
+        k = (a - self.base) // 4
+        return self.ws[k] if 0 <= k < len(self.ws) and not a & 3 else None
+far = 0x2800
+walk_ws = [i_(5, 4, 0, 3), NOP,                        # bnez a0, +0x10
+           (2 << 26) | ((0x80100000 + far) >> 2 & 0x3FFFFFF), NOP]   # j 0x80102800 (past INTRA_J)
+walk_ws += [NOP] * ((far - 0x10) // 4) + [jr(31), NOP]
+f = AF.walk(_Img(0x80100000, walk_ws), 0x80100000, set())
+check(0x80102800 not in f.tails and f.end == 0x80100000 + far + 8, 'walk: a far j the function reaches is no tail')
+
 # a KSEG2/3 TLB mapping on the console (Paper Mario's effects): the next build translates it (XRC_HIGH_TLB)
 with tempfile.TemporaryDirectory() as d:
     lg = pathlib.Path(d) / 'run.log'

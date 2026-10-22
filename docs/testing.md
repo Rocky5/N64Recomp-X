@@ -261,6 +261,7 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXHW_SPLASH_CLASSIC=1` | 0 | the first loading screen (unscii, aurora) instead of the deep-space title card |
 | `-DXHW_SPLASH_MENU=0` | 1 | BACK held at boot does nothing (no menu before the game) |
 | `N64RX_J_LATER=0` | 1 | the analyser decides a far `j` at once (a tail call) instead of after the walk |
+| `N64RX_J_SEEN=0` | 1 | a far `j` whose target the walk reached by another branch is a tail call, as before (a function start there split the function; review 4.6. Paper Mario's check: 17 extra functions, 15 with it on; `test_precheck`) |
 | `N64RX_MESG_NODIV=0` | 1 | the message-queue rules want IDO's divide (no compare-wrapped osSendMesg/osRecvMesg) |
 | `N64RX_LEARNED=0` (env, n64rx) | 1 | a ROM-only build does not read `games/learned/<code>.<sha1>.txt`, the project's console-learnt facts for that exact ROM (`games/README.md`) |
 | `N64RX_DRYBOOT=1` (env, n64rx) | 0 | the dry boot (`tools/dryboot/dryboot.c`, `n64rx_lib/dryboot.py`, `docs/roadmap.md` B2): before a ROM-only build, the ROM's boot runs on this PC in a CPU-only N64 for `N64RX_DRYBOOT_FRAMES` frames (1800: 30 s of game time, a few seconds here), and what it wrote (`<build>/dryboot/learn.txt` and `learn_code.bin`, the console's formats) goes in ahead of any `--learn`. Dr. Mario 64: 998 of its gzip main segment's 1,006 functions on the first build (0 before), `send_mesg` in the boot segment, the libultra names unchanged (decomp_check `--learn`) |

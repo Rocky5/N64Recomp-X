@@ -20,6 +20,11 @@ from .mips import Ins, RA
 MAX_FUNC = 0x10000          # a function larger than this is a walk gone wrong
 INTRA_J = 0x2000            # a j this close and not onto a known start stays in the function
 WALK_LATER = os.environ.get('N64RX_J_LATER', '1') != '0'   # a far j decided after the walk (kill switch)
+# a far j whose target the walk reached by another branch is no tail: it was
+# one (the target became a function start and split the function there, its
+# inner branches cross-function and interpreted; review 4.6). Kill switch
+# N64RX_J_SEEN=0: every far j left in `later` is a tail, as before
+J_SEEN = os.environ.get('N64RX_J_SEEN', '1') != '0'
 
 KUSEG_TABLES = os.environ.get('N64RX_KUSEG_TABLES', '1') != '0'
 GAP_DATA = os.environ.get('N64RX_GAP_DATA', '1') != '0'
@@ -421,7 +426,7 @@ def walk(img, start, starts):
             if ins.is_eret:
                 break
             pc = nxt
-    f.tails.update(later)
+    f.tails.update(t for t in later if not (J_SEEN and t in seen))
     return f
 
 
