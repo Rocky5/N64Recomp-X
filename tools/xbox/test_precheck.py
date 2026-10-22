@@ -123,6 +123,27 @@ an.img.rom = struct.pack(f'>{len(fa) + len(fb)}I', *(fa + fb))
 look = set()
 check(emit.cross_funcs(an, live, nm, set(), look) == {} and look == set(), 'bal to a start: nothing')
 
+# code a game decompressed over its own ROM segment (Turok: Dinosaur Hunter): the build's copy takes RDRAM's
+# bytes where the learnt starts look like starts only there; not where the ROM's look like code too
+SP_ = 29
+frame = [addiu(SP_, SP_, -0x18), NOP, jr(RA_), addiu(SP_, SP_, 0x18)]
+code = struct.pack('>8I', *(frame + frame))                  # two functions, at +0 and +0x10
+packed = bytes(range(0x11, 0x31))                             # "compressed": no frame, no return
+rom = b'\x55' * 0x1000 + packed + b'\0' * 0x20               # nothing before it ends a function either
+seg = F(name='boot', rom=0x1000, vram=0x80001000, size=0x40)
+lt = learn.Learnt()
+lt.funcs = {0x80001000: 1, 0x80001010: 1}
+an = F(img=F(segments=[seg], rom=rom), funcs={'boot': {}})
+sp = learn._decompressed_code(an, lt, {0x80001000: code}, len(rom), [])
+check(sp == {'boot': [(0x80001000, 0x80001020)]} and an.img.rom[0x1000:0x1020] == code, f'decompressed code taken: {sp}')
+an = F(img=F(segments=[seg], rom=b'\0' * 0x1000 + code + b'\0' * 0x20), funcs={'boot': {}})
+other = struct.pack('>8I', *([NOP] * 4 + frame))              # the ROM's code is code too: an overlay over it
+sp = learn._decompressed_code(an, lt, {0x80001000: other}, len(an.img.rom), [])
+check(sp == {} and an.img.rom[0x1000:0x1020] == code, 'plausible ROM code kept')
+lt.dmas = [(0x2000, 0x80001000, 0x20)]
+an = F(img=F(segments=[seg], rom=rom), funcs={'boot': {}})
+check(learn._decompressed_code(an, lt, {0x80001000: code}, len(rom), []) == {}, 'a logged DMA there: kept')
+
 # a KSEG2/3 TLB mapping on the console (Paper Mario's effects): the next build translates it (XRC_HIGH_TLB)
 with tempfile.TemporaryDirectory() as d:
     lg = pathlib.Path(d) / 'run.log'

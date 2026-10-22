@@ -246,6 +246,7 @@ def apply(a, learnt, rom_len):
     todo = {}
     runs = _code_runs(_without_relocated(learnt, notes))
     runs = _rom_backed(a, runs, rom_len, notes)
+    spans_rd = _decompressed_code(a, learnt, runs, rom_len, notes)   # {segment: [(lo, hi)]} now RDRAM's bytes
     _table_sources(a, runs, notes)   # before the walks: they read jump tables there
     runs, spans = _version_spans(runs, learnt.alts)
     pairs = []   # (vram, the DMA whose overlay holds it, the log had none): the one it ran in, as logged
@@ -310,11 +311,14 @@ def apply(a, learnt, rom_len):
         todo.setdefault(seg.name, (seg, []))[1].append(x)
     for name, (seg, xs) in todo.items():
         have = a.funcs.get(name, {})
-        new = [x for x in xs if x not in have]
-        if not new:
+        # starts the first walk found in a span now holding RDRAM's bytes were read from other bytes: not roots
+        stale = spans_rd.get(name, [])
+        new = [x for x in xs if x not in have or any(lo <= x < hi for lo, hi in stale)]
+        if not new and not stale:
             continue
         captured = name.startswith('code_')   # one overlay's bytes: calls into it are weak (funcs.discover)
-        roots = [x for x, f in have.items() if f.how != 'gap' and (f.how == 'entry' or not captured)] + new
+        roots = [x for x, f in have.items() if f.how != 'gap' and (f.how == 'entry' or not captured)
+                 and (f.how == 'entry' or not any(lo <= x < hi for lo, hi in stale))] + new
         # a start learnt where the game loads other code at other times (Mario Tennis's scenes) may be
         # another version's: a root only where these bytes look like one starts, else weak. The same for
         # a DMA overlay's (learn_*): Castlevania: Legacy of Darkness loads its area overlays at one
@@ -477,6 +481,48 @@ def _rom_backed(a, runs, rom_len, notes):
                 left[cur] = b''
             left[cur] += data[off:off + 0x1000]
     return left
+
+
+def _decompressed_code(a, learnt, runs, rom_len, notes):
+    """captured KSEG0 code over a ROM segment that the game decompressed over
+    itself (Turok: Dinosaur Hunter inflates its code over its boot segment at
+    0x80001000-0x800B6000): the learnt functions there were walked over the
+    ROM's compressed bytes, garbage to the recompiler. Where most learnt
+    starts inside a capture look like starts in RDRAM and not in the ROM, and
+    no DMA the console logged wrote there (an overlay that comes and goes), the
+    build's copy of the ROM takes RDRAM's bytes for that span: the walks, the
+    recompiler and the guard all read what runs. The ROM in the XBE is the
+    user's, unchanged. N64RX_RDRAM_CODE=0: the ROM's bytes, as before"""
+    if os.environ.get('N64RX_RDRAM_CODE', '1') == '0':
+        return {}
+    rom = bytearray(a.img.rom)
+    funcs = sorted(learnt.funcs)
+    spans = {}
+    for blk, data in sorted(runs.items()):
+        if not 0x80000000 <= blk < 0x80800000:
+            continue
+        for s in a.img.segments:
+            if s.name.startswith(('code_', 'learn_')) or s.rom + s.size > rom_len:
+                continue
+            lo, hi = max(blk, s.vram), min(blk + len(data), s.vram + s.size)
+            if lo >= hi:
+                continue
+            xs = [x for x in funcs if lo <= x < hi]
+            if not xs or any(d[1] < hi and lo < d[1] + d[2] for d in learnt.dmas):
+                continue
+            r = s.rom + (lo - s.vram)
+            if rom[r:r + (hi - lo)] == data[lo - blk:hi - blk]:
+                continue
+            bad = sum(1 for x in xs if not _plausible(rom, s.rom + x - s.vram) and _plausible(data, x - blk))
+            if 2 * bad <= len(xs):
+                continue
+            rom[r:r + (hi - lo)] = data[lo - blk:hi - blk]
+            spans.setdefault(s.name, []).append((lo, hi))
+            notes.append(f'{s.name}: {hi - lo:#x} bytes at {lo:08X} from RDRAM (learnt: {bad} of {len(xs)} '
+                         f'functions start there only in what the game decompressed over its segment)')
+    if spans:
+        a.img.rom = bytes(rom)
+    return spans
 
 
 def _table_sources(a, runs, notes):

@@ -259,7 +259,7 @@ def make(rom, bdir, base=None, learnt=None):
                  save_type=('eep16k' if code[:3] in EEP16K else 'eep4k') if uses_eep else 'none', stage='planned',
                  test=False, raw={})
     info = {'live': live, 'names': nm, 'analysis': a, 'ids': ids,
-            'recomp_rom': a.img.rom if len(a.img.rom) != len(rom.data) else None}   # learnt code appended
+            'recomp_rom': a.img.rom if a.img.rom != rom.data else None}   # learnt code appended, or decompressed code in place
     return p, info
 
 
