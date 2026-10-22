@@ -31,10 +31,43 @@ def cache_dir():
     return d
 
 
+WIN_DEVICES = {'CON', 'PRN', 'AUX', 'NUL'} | {f'COM{i}' for i in range(1, 10)} | {f'LPT{i}' for i in range(1, 10)}
+
+
 def folder_name(title):
-    """a FATX-safe folder name: 42 characters, none of <>:"/\\|?*"""
+    """a FATX-safe folder name: 42 characters, none of <>:"/\\|?*, and not a
+    Windows device name (CON, NUL, COM1: the folder's mkdir failed after the
+    whole build; docs/review-2026-10.md 3.r9)"""
     name = ''.join('_' if c in FATX_BAD or ord(c) < 32 else c for c in title).strip(' .')
-    return (name or 'game')[:42]
+    name = (name or 'game')[:42]
+    if name.split('.')[0].upper() in WIN_DEVICES:
+        name = ('_' + name)[:42]
+    return name
+
+
+OUTPUT_MARK = '.n64rx-output'
+
+
+def output_folder(out_root, name):
+    """the folder to write the build into, made here: an existing folder of
+    that name is replaced only when n64rx made it (it holds OUTPUT_MARK);
+    another one is left alone and the build goes to "<name> (2)" and on. The
+    name comes from the ROM's header, which anyone can edit: a header saying
+    "My Games" deleted Documents\\My Games (docs/review-2026-10.md 3.1)"""
+    for k in range(1, 100):
+        folder = out_root / (name if k == 1 else f'{name[:36]} ({k})')
+        # (a folder an earlier n64rx made has no mark: its XBE and its map say so)
+        ours = folder.is_dir() and ((folder / OUTPUT_MARK).is_file() or
+                                    ((folder / 'default.xbe').is_file() and (folder / 'debug/n64recomp_x.map').is_file()))
+        if folder.exists() and not ours:
+            continue
+        if folder.exists():
+            shutil.rmtree(folder)
+        (folder / 'debug').mkdir(parents=True)
+        (folder / OUTPUT_MARK).write_text('made by n64rx: a build folder it may replace\n', encoding='utf-8')
+        return folder
+    raise N64rxError(f'Every folder name for this build in {out_root} is taken by folders n64rx did not make.',
+                     'choose another output folder (--out).')
 
 
 def c_str(s):
@@ -808,10 +841,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
 
     prog.step('Finishing the XBE (title ID, icon' + (')' if rom_beside else ', the ROM inside)'))
     xbe = bdir / 'xbox/xbe/default.xbe'
-    folder = out_root / folder_name(pack.title)
-    if folder.exists():
-        shutil.rmtree(folder)
-    (folder / 'debug').mkdir(parents=True)
+    folder = output_folder(out_root, folder_name(pack.title))
     shutil.copy2(xbe, folder / 'default.xbe')
     r = subprocess.run([sys.executable, str(ROOT / 'tools/xbox/xbe_sections.py'), str(folder / 'default.xbe'),
                         '--title-id', pack.title_id_hex, '--name', pack.title, '--icon', str(pack.icon),

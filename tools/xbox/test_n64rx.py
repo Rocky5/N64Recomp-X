@@ -174,6 +174,30 @@ class Packs(unittest.TestCase):
     def test_folder_name(self):
         self.assertEqual(pipeline.folder_name('N64Rx: Test / Pack?'), 'N64Rx_ Test _ Pack_')
         self.assertEqual(len(pipeline.folder_name('x' * 80)), 42)
+        self.assertEqual(pipeline.folder_name('CON'), '_CON')
+        self.assertEqual(pipeline.folder_name('com1.x'), '_com1.x')
+
+    def test_output_folder_keeps_foreign(self):
+        """a folder n64rx did not make is never deleted, whatever the header says (review 3.1)"""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            mine = root / 'My Games'
+            mine.mkdir()
+            (mine / 'save.dat').write_text('keep me')
+            f = pipeline.output_folder(root, 'My Games')
+            self.assertEqual(f.name, 'My Games (2)')
+            self.assertEqual((mine / 'save.dat').read_text(), 'keep me')
+            self.assertTrue((f / pipeline.OUTPUT_MARK).is_file())
+            (f / 'old.txt').write_text('an earlier build')
+            g = pipeline.output_folder(root, 'My Games')   # its own: replaced
+            self.assertEqual(g.name, 'My Games (2)')
+            self.assertFalse((g / 'old.txt').exists())
+            self.assertTrue((mine / 'save.dat').exists())
+            old = root / 'Old Build'   # an earlier n64rx's folder (no mark): replaced
+            (old / 'debug').mkdir(parents=True)
+            (old / 'default.xbe').write_bytes(b'XBEH')
+            (old / 'debug/n64recomp_x.map').write_text('map')
+            self.assertEqual(pipeline.output_folder(root, 'Old Build').name, 'Old Build')
 
 
 class Learn(unittest.TestCase):
@@ -282,8 +306,8 @@ class Build(unittest.TestCase):
                 shutil.rmtree(ROOT / 'build-xbox/n64rxtest', ignore_errors=True)
             self.assertEqual(folder.name, 'N64Rx_ Test _ Pack_')
             names = sorted(p.name for p in folder.iterdir())
-            self.assertEqual(names, ['README.txt', 'TitleImage.xbx', 'TitleMeta.xbx', 'debug', 'default.tbn',
-                                     'default.xbe'])
+            self.assertEqual(names, ['.n64rx-output', 'README.txt', 'TitleImage.xbx', 'TitleMeta.xbx', 'debug',
+                                     'default.tbn', 'default.xbe'])
             xbe = (folder / 'default.xbe').read_bytes()
             # the ROM is inside, normalised, as a section the kernel never loads (PLAN.md 3.5)
             flags, _, _, raw, size = xbe_sections.find_section(xbe, '$ROM')

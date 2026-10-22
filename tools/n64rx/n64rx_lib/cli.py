@@ -282,7 +282,11 @@ def cmd_log(a):
 
 
 def cmd_clean(a):
-    target = ROOT / 'build-xbox' / a.pack if a.pack else ROOT / 'build-xbox'
+    base = (ROOT / 'build-xbox').resolve()
+    target = (base / a.pack).resolve() if a.pack else base
+    if target != base and base not in target.parents:   # "clean .." was the checkout (review 3.10)
+        print(f'n64rx clean: {a.pack} is not a build folder under {base}')
+        return 1
     if target.exists():
         shutil.rmtree(target)
         print(f'removed {target}')
