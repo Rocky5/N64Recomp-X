@@ -53,7 +53,6 @@ static uint8_t s_sp[0x2000];
 static uint8_t s_pif[64];
 static uint8_t s_eep[512];
 static uint32_t* s_cpuw;    /* a bit per RDRAM word: written by the CPU (or the RSP) since a DMA from the ROM */
-static uint32_t* s_ran;     /* a bit per RDRAM word: an instruction ran there */
 static int s_verbose;
 
 static inline uint32_t be32(const uint8_t* p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
@@ -117,11 +116,26 @@ typedef struct { uint32_t rom, ram, size; } Dma;
 static Dma* s_dma;
 static unsigned s_ndma, s_cap_dma;
 
-static uint8_t s_pdirty[2048], s_pexec[2048];   /* a 4 KB page: written by the CPU since its capture; code ran there */
+/* A 4 KB page: its code overwritten since its capture (a DMA over it, or a CPU store to a word that
+ * ran: data beside code changing is no new version of the code, and versions of every page made the
+ * naming see each libultra function twice); captured; code ran there (KSEG0). s_pgen: the same
+ * overwrites counted, for TLB-mapped pages */
+static uint8_t s_pdirty[2048], s_pcap[2048], s_pexec[2048];
+static uint32_t s_pgen[2048];
+static uint32_t* s_ran;     /* a bit per RDRAM word: an instruction ran there */
 static void cpuw_mark(uint32_t pa, uint32_t n, int cpu) {
     uint32_t w = pa >> 2, e = (pa + n + 3) >> 2;
     if (e > s_ramsize >> 2) e = s_ramsize >> 2;
-    if (cpu && pa < s_ramsize) s_pdirty[pa >> 12] = 1, s_pdirty[((pa + n - 1) >> 12) & 2047] = 1;
+    if (!cpu && pa < s_ramsize) {
+        uint32_t pg;
+        for (pg = pa >> 12; pg <= ((pa + n - 1) >> 12) && pg < 2048; pg++) s_pgen[pg]++, s_pdirty[pg] = 1;
+    }
+    for (; cpu && w < e; w++)
+        if (s_ran[w >> 5] & (1u << (w & 31))) {
+            s_pgen[w >> 10]++, s_pdirty[w >> 10] = 1;
+            break;
+        }
+    w = pa >> 2;
     for (; w < e; w++) {
         if (cpu) s_cpuw[w >> 5] |= 1u << (w & 31);
         else s_cpuw[w >> 5] &= ~(1u << (w & 31));
@@ -135,6 +149,19 @@ static int page_cpu(uint32_t pa) {
     if (pa >= s_ramsize) return 0;
     for (k = 0; k < 32; k++) bits += (unsigned)__builtin_popcount(s_cpuw[(pa >> 12) * 32 + k]);
     return bits >= 512;
+}
+
+/* a page that looks like code: a jr $ra and a stack frame (addiu sp, sp, -n), or two returns (the
+ * block around code that ran is taken page by page while it does: Banjo-Kazooie's heap is CPU-written too) */
+static int page_code(uint32_t pa) {
+    uint32_t k, jr = 0, frame = 0;
+    if (pa + 4096 > s_ramsize) return 0;
+    for (k = 0; k < 4096; k += 4) {
+        uint32_t w = be32(&s_ram[(pa & ~0xFFFu) + k]);
+        if (w == 0x03E00008u) jr++;
+        else if ((w >> 16) == 0x27BDu && (w & 0x8000u)) frame++;
+    }
+    return (jr && frame) || jr >= 2;
 }
 
 static void update_ip(void) {
@@ -554,27 +581,85 @@ static int seen(uint32_t v) {
     return 1;
 }
 
-/* the 4 KB page at va (its words through the TLB now) as a code record, unless that version is saved */
+/* the 4 KB page at va (its words through the TLB now) as a code record, unless that version is
+ * saved; kept in memory and written at the end (write_captures) */
+typedef struct { uint32_t va, hash; uint8_t* data; } Rec;
+static Rec* s_recs;
+static unsigned s_nrecs, s_cap_recs;
 static void capture(uint32_t va) {
-    uint8_t rec[8 + 4096];
+    uint8_t* rec;
     uint32_t vp = va & ~0xFFFu, h = 0x811C9DC5u, k;
     unsigned i;
+    rec = (uint8_t*)malloc(4096);
+    if (!rec) return;
     for (k = 0; k < 4096; k += 4) {
         int64_t pa = translate_q(vp + k, 0, 1);
         uint32_t w;
-        if (pa < 0) return;
+        if (pa < 0) { free(rec); return; }
         w = (uint32_t)phys_read((uint32_t)pa, 4);
-        wbe32(rec + 8 + k, w);
+        wbe32(rec + k, w);
         h = (h ^ w) * 0x01000193u;
     }
     for (i = 0; i < s_npages; i++)
-        if (s_pages[i].va == vp && s_pages[i].hash == h) return;
+        if (s_pages[i].va == vp && s_pages[i].hash == h) { free(rec); return; }
     if (s_npages < MAX_PAGES) s_pages[s_npages].va = vp, s_pages[s_npages].hash = h, s_npages++;
-    wbe32(rec, (int32_t)vp >= 0 || vp >= 0xC0000000u ? vp : 0x80000000u | (vp & 0x1FFFFFFFu));
-    wbe32(rec + 4, 4096);
-    fwrite(rec, 1, sizeof rec, s_bin);
-    fprintf(s_txt, "code %08x 1000\n", (unsigned)vp);
-    s_ncode++;
+    if (s_nrecs == s_cap_recs) {
+        s_cap_recs = s_cap_recs ? s_cap_recs * 2 : 1024;
+        s_recs = (Rec*)realloc(s_recs, s_cap_recs * sizeof *s_recs);
+        if (!s_recs) exit(3);
+    }
+    s_recs[s_nrecs].va = (int32_t)vp >= 0 || vp >= 0xC0000000u ? vp : 0x80000000u | (vp & 0x1FFFFFFFu);
+    s_recs[s_nrecs].hash = h, s_recs[s_nrecs].data = rec, s_nrecs++;
+}
+
+/* the records out: a page's versions all when an older one came back (an overlay the game loads at
+ * that address again and again: Mario Tennis's scenes), else its last one alone (a loader the code
+ * it unpacked replaced for good: one early version made learn.py keep Banjo-Kazooie's whole block
+ * twice, as an overlay, whose libultra copy is then never named) */
+static void write_captures(void) {
+    unsigned i, j;
+    for (i = 0; i < s_nrecs; i++) {
+        const Rec* r = &s_recs[i];
+        int later = 0, back = 0;
+        for (j = i + 1; j < s_nrecs; j++)
+            if (s_recs[j].va == r->va) {
+                later = 1;
+                if (s_recs[j].hash == r->hash) back = 1;
+            }
+        if (later && !back) {   /* superseded: unless a version before it comes back after it */
+            unsigned k;
+            for (k = 0; k < i && !back; k++)
+                if (s_recs[k].va == r->va)
+                    for (j = i + 1; j < s_nrecs && !back; j++)
+                        if (s_recs[j].va == r->va && s_recs[j].hash == s_recs[k].hash) back = 1;
+            if (!back) continue;
+        }
+        {
+            uint8_t head[8];
+            wbe32(head, r->va), wbe32(head + 4, 4096);
+            fwrite(head, 1, 8, s_bin);
+            fwrite(r->data, 1, 4096, s_bin);
+            fprintf(s_txt, "code %08x 1000\n", (unsigned)r->va);
+            s_ncode++;
+        }
+    }
+}
+
+/* a TLB-mapped page code runs in, saved at its first run and again once its physical page has
+ * been written (GoldenEye pages its 0x7F000000 code in from the ROM 8 KB at a time) */
+#define MAX_VPAGE 8192
+static struct { uint32_t vp, pa, gen; } s_vpage[MAX_VPAGE];
+static void vpage_ran(uint32_t va, uint32_t pa) {
+    uint32_t vp = va & ~0xFFFu, h = (vp >> 12) * 2654435761u, i, pg = pa >> 12;
+    for (i = 0; i < 64; i++) {
+        uint32_t k = (h + i) & (MAX_VPAGE - 1);
+        if (s_vpage[k].vp == vp && s_vpage[k].pa == (pa & ~0xFFFu) && s_vpage[k].gen == s_pgen[pg]) return;
+        if (!s_vpage[k].vp || s_vpage[k].vp == vp) {
+            s_vpage[k].vp = vp, s_vpage[k].pa = pa & ~0xFFFu, s_vpage[k].gen = s_pgen[pg];
+            capture(vp);
+            return;
+        }
+    }
 }
 
 /* a function entered at va from caller: written down as the console's net would */
@@ -598,7 +683,9 @@ static void entered(uint32_t va, uint32_t caller) {
         s_rdram8 = 1;
         fprintf(s_txt, "rdram 8\n");
     }
-    if ((s_cpuw[p >> 7] & (1u << ((p >> 2) & 31))) && page_cpu(p)) {
+    if ((int32_t)va >= 0) {
+        capture(va);   /* through the TLB: its page by its virtual address (learn.c capture_locked's KUSEG path) */
+    } else if ((s_cpuw[p >> 7] & (1u << ((p >> 2) & 31))) && page_cpu(p)) {
         capture(va);   /* the CPU put its bytes there */
     } else {
         for (i = s_ndma; i-- > 0;)   /* newest first */
@@ -1051,8 +1138,10 @@ static void run(uint64_t frames) {
                 pa = s_lpa == 0xFFFFFFFFu ? s_lpa : s_lpa | (cur & 0xFFFu);
             }
             if (pa < s_ramsize) s_ran[pa >> 7] |= 1u << ((pa >> 2) & 31);
-            if (pa < s_ramsize && s_pdirty[pa >> 12] && (s_cpuw[pa >> 7] & (1u << ((pa >> 2) & 31))) && page_cpu(pa)) {
-                s_pdirty[pa >> 12] = 0;
+            if ((int32_t)cur >= 0 && pa < s_ramsize) vpage_ran(cur, pa);
+            if (pa < s_ramsize && (!s_pcap[pa >> 12] || s_pdirty[pa >> 12]) && (s_cpuw[pa >> 7] & (1u << ((pa >> 2) & 31))) &&
+                page_cpu(pa)) {
+                s_pdirty[pa >> 12] = 0, s_pcap[pa >> 12] = 1;
                 if ((cur & 0xC0000000u) == 0x80000000u) s_pexec[pa >> 12] = 1;
                 capture(cur);
             }
@@ -1248,8 +1337,8 @@ int main(int argc, char** argv) {
         for (pg = 0; pg < np; pg++) {
             uint32_t lo, hi;
             if (!s_pexec[pg]) continue;
-            for (lo = pg; lo > 0 && page_cpu((lo - 1) << 12); lo--) {}
-            for (hi = pg + 1; hi < np && page_cpu(hi << 12); hi++) {}
+            for (lo = pg; lo > 0 && page_cpu((lo - 1) << 12) && page_code((lo - 1) << 12); lo--) {}
+            for (hi = pg + 1; hi < np && page_cpu(hi << 12) && page_code(hi << 12); hi++) {}
             for (k = lo; k < hi; k++) s_take[k] = 1;
         }
         if (s_verbose)
@@ -1260,8 +1349,9 @@ int main(int argc, char** argv) {
                                                  s_pexec[pg] ? ", ran" : "", s_take[pg] ? ", taken" : "");
             }
         for (pg = 0; pg < np; pg++)
-            if (s_take[pg]) capture(0x80000000u | pg << 12);   /* (in the boot copy too: rewritten, it is not the ROM's) */
+            if (s_take[pg] && !s_pcap[pg]) capture(0x80000000u | pg << 12);   /* (in the boot copy too: rewritten, it is not the ROM's) */
     }
+    write_captures();
     fprintf(s_txt, "# %u frames, %llu instructions, %u RSP tasks (%u graphics), %u PI DMAs\n", s_frames,
             (unsigned long long)s_cycles, s_tasks, s_gfx_tasks, s_ndma);
     fclose(s_txt);
