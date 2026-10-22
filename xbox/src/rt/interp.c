@@ -27,9 +27,9 @@
  * moves and conversions (mtc1, lwc1, cvt.w ...) through f_odd (XRC_FODD: FR) for an odd
  * register, the 64-bit ones on fN.u64. The arithmetic is the generated
  * code's too (recomp.h's helpers, the same triple): the FCR31 rounding mode
- * is MXCSR and the x87 control word (set_cop1_cs), round.w is lround (half
- * away from zero, as upstream: DIVERGES from the VR4300's round-to-even,
- * so an interpreted and a recompiled run agree), the comparisons ignore
+ * is MXCSR and the x87 control word (set_cop1_cs), round.w is recomp.h's
+ * lround (a half to even, as the VR4300; XRC_ROUND_EVEN=0: away from zero,
+ * as upstream), so an interpreted and a recompiled run agree, the comparisons ignore
  * NaN-ness as upstream does. Integer divide by zero gives the VR4300's
  * results instead of an x86 fault.
  *

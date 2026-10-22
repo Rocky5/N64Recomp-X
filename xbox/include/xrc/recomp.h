@@ -353,33 +353,38 @@ static inline int64_t do_cvt_l_d(double val) {
 #define CVT_W_D(val) do_cvt_w_d(val)
 #define CVT_L_D(val) do_cvt_l_d(val)
 
-/* round.w.*: half away from zero, whatever the rounding mode */
+/* round.w.* and round.l.*: to the nearest, a half to the even one, as the
+ * VR4300 rounds (0.5 gives 0, 1.5 and 2.5 give 2), whatever the rounding
+ * mode; the fraction x - trunc(x) is exact, so the half is seen exactly.
+ * -DXRC_ROUND_EVEN=0: a half away from zero, as upstream (review 5a.15) */
+#ifndef XRC_ROUND_EVEN
+#define XRC_ROUND_EVEN 1
+#endif
+#define XRC_ROUND_HALF(t, d, half) \
+    do { if ((d) > (half) || ((d) == (half) && (!XRC_ROUND_EVEN || ((t) & 1)))) (t)++; \
+         else if ((d) < -(half) || ((d) == -(half) && (!XRC_ROUND_EVEN || ((t) & 1)))) (t)--; } while (0)
 static inline long xrc_lroundf(float x) {
     int32_t t = (int32_t)x;
     float d = x - (float)t;
-    if (d >= 0.5f) t++;
-    else if (d <= -0.5f) t--;
+    XRC_ROUND_HALF(t, d, 0.5f);
     return t;
 }
 static inline long xrc_lround(double x) {
     int32_t t = (int32_t)x;
     double d = x - (double)t;
-    if (d >= 0.5) t++;
-    else if (d <= -0.5) t--;
+    XRC_ROUND_HALF(t, d, 0.5);
     return t;
 }
 static inline long long xrc_llroundf(float x) {
     int64_t t = (int64_t)x;
     float d = x - (float)t;
-    if (d >= 0.5f) t++;
-    else if (d <= -0.5f) t--;
+    XRC_ROUND_HALF(t, d, 0.5f);
     return t;
 }
 static inline long long xrc_llround(double x) {
     int64_t t = (int64_t)x;
     double d = x - (double)t;
-    if (d >= 0.5) t++;
-    else if (d <= -0.5) t--;
+    XRC_ROUND_HALF(t, d, 0.5);
     return t;
 }
 #define lroundf(x) xrc_lroundf(x)

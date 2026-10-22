@@ -12,7 +12,8 @@
  * lwl/lwr/swl/swr, ldl/ldr/sdl/sdr (64-bit registers only), the RDRAM image
  * after every store sequence, DMULT/DMULTU/DDIV/DDIVU, the conversions
  * under all four rounding modes (set_cop1_cs / get_cop1_cs), the truncations,
- * round-half-away. */
+ * round.w (to the nearest, a half to even, as the VR4300; upstream's
+ * lroundf rounds a half away, so the reference is lrintf under mode 0). */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -178,7 +179,7 @@ static void floats(void) {
         float f = rf();
         double d = rd();
 #ifdef XRC_TEST_UPSTREAM
-        printf("32 round %08x %016llx -> %ld %ld\n", fbits(f), dbits(d), (long)lroundf(f), (long)lround(d));
+        printf("32 round %08x %016llx -> %ld %ld\n", fbits(f), dbits(d), (long)lrintf(f), (long)lrint(d));   /* to even (mode 0) */
 #else
         printf("32 round %08x %016llx -> %ld %ld\n", fbits(f), dbits(d), (long)xrc_lroundf(f), (long)xrc_lround(d));
 #endif

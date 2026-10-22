@@ -298,7 +298,7 @@ static void t_fpu(void) {
         FT(L_, 0, 10, 12, 33) /* cvt.d.l */, IT(61, t3, 12, 8) /* sdc1 */, FT(D_, 0, 8, 14, 32) /* cvt.s.d */,
         FT(D_, 8, 8, 0, 50) /* c.eq.d */, IT(17, 8, 0, 2) /* bc1f */, NOP, ADDIU(s6, zero, 1), JR_RA, NOP);
     CHECK("cvt.w.s 2.5", REG(s0), 2);
-    CHECK("round.w 2.5 (lround, as upstream)", REG(s1), 3);
+    CHECK("round.w 2.5 (to even, as the VR4300)", REG(s1), XRC_ROUND_EVEN ? 2 : 3);
     CHECK("cvt.w.s -3.5", REG(s2), G(-4));
     CHECK("cvt.w.s toward zero", REG(s3), 2);
     CHECK("cfc1 rm", REG(s4), 1);
