@@ -503,7 +503,7 @@ static void thread_body(void* p) {
     if (XRC_THREAD_GP) ctx.r28 = (gpr)(int32_t)d->gp;
     d->ctx = &ctx;
     ctx.r4 = (gpr)(int32_t)d->arg;
-    set_cop1_cs(0);
+    set_cop1_cs(0x01000000u);   /* FCSR as osCreateThread leaves it: FS (recomp.h XRC_FTZ), round to nearest */
     get_function((int32_t)d->entry)(xrc_rdram, &ctx);
     /* an N64 thread that returns stops (libultra's __osCleanupThread) */
     xhw_logf("[OS] thread %d returned", (int)(int32_t)rd32(d->t + TH_ID));

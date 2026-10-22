@@ -307,6 +307,15 @@ static void t_fpu(void) {
     CHECKF("cvt.s.d", C.f14.fl, 3.14f);
     CHECK("bc1f not taken", REG(s6), 1);
     set_cop1_cs(0);
+
+    fresh();   /* FCSR.FS: a denormal single result flushed to zero (recomp.h XRC_FTZ), and cfc1 reads FS back */
+    C.r8 = 0x0DA24260u /* 1e-30f */, C.r9 = 0x2EDBE6FFu /* 1e-10f */, C.r10 = 0x01000000u /* FS */;
+    RUN(C1(6, t2, 31) /* ctc1 FS */, C1(4, t0, 2), C1(4, t1, 4), FT(S_, 4, 2, 6, 2) /* mul.s: 1e-40 */,
+        C1(0, s0, 6), C1(2, s1, 31) /* cfc1 */, C1(6, zero, 31), FT(S_, 4, 2, 8, 2), C1(0, s2, 8), JR_RA, NOP);
+    CHECK("FS: the denormal flushed", REG(s0), XRC_FTZ ? 0u : 0x000116C2u);
+    CHECK("FS read back", REG(s1), XRC_FTZ ? 0x01000000u : 0u);
+    CHECK("no FS: the denormal kept", REG(s2), 0x000116C2u);
+    set_cop1_cs(0);
 }
 
 static void t_misc(void) {

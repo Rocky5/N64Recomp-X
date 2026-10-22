@@ -256,10 +256,19 @@ static inline void do_sdr(uint8_t* rdram, gpr offset, gpr reg, gpr val) {
 static const uint8_t xrc_rm_to_rc[4] = { 0, 3, 2, 1 };
 static const uint8_t xrc_rc_to_rm[4] = { 0, 3, 2, 1 };
 
+/* FCSR.FS (bit 24, flush denormal results to zero, which libultra's
+ * osCreateThread gives every thread) as MXCSR.FZ (bit 15): the single-
+ * precision SSE results the N64 flushed are flushed here too instead of
+ * taking the Pentium III's microcode assist (DAZ, the inputs, is not on a
+ * Pentium III and stays off; doubles are x87's, which has no flush). Kill
+ * switch: -DXRC_FTZ=0 (review 5a.15) */
+#ifndef XRC_FTZ
+#define XRC_FTZ 1
+#endif
 static inline uint32_t get_cop1_cs(void) {
     uint32_t mxcsr;
     __asm__ volatile("stmxcsr %0" : "=m"(mxcsr));
-    return xrc_rc_to_rm[(mxcsr >> 13) & 3];
+    return xrc_rc_to_rm[(mxcsr >> 13) & 3] | (XRC_FTZ && (mxcsr & 0x8000u) ? 0x01000000u : 0u);
 }
 
 static inline void set_cop1_cs(uint32_t val) {
@@ -267,6 +276,7 @@ static inline void set_cop1_cs(uint32_t val) {
     uint16_t cw;
     __asm__ volatile("stmxcsr %0" : "=m"(mxcsr));
     mxcsr = (mxcsr & ~(3u << 13)) | (rc << 13);
+    if (XRC_FTZ) mxcsr = (val & 0x01000000u) ? mxcsr | 0x8000u : mxcsr & ~0x8000u;
     __asm__ volatile("ldmxcsr %0" ::"m"(mxcsr));
     __asm__ volatile("fnstcw %0" : "=m"(cw));
     cw = (uint16_t)((cw & ~(3u << 10)) | (rc << 10));
