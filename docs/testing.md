@@ -448,6 +448,7 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_LEARN_CODE=0` | 1 | the safety net does not save the RDRAM block of code no ROM DMA put there (`learn_code.bin`, `[LEARNCODE]`) |
 | `-DXRC_STATUS_INIT=<value>` | 0x2000FF01 | the COP0 Status a thread starts with (libultra's: COP1 usable, every interrupt line unmasked, IE) |
 | `-DXGFX_HOLD_EVICT=0` | 1 | the BACK menu never drops the game's texture cache when its held frame or card finds the texture pool full (Mario Kart 64 on red: the card was missing) |
+| `-DXGFX_LINES=0` | 1 | `G_LINE3D` (L3DEX, L3DEX2) skipped, as before; otherwise each line is drawn as a quad of two triangles across it, `wd + 2` half N64 pixels wide, both faces (host test `line3d`) |
 | `-DXGFX_UCODE_F3DEX=0` | 1 | F3DEX 0.9x/1.x microcodes (and F3DLX, F3DLP, L3DEX, .NoN/.Rej) read as Fast3D, the build before the registry (`docs/renderer.md`) |
 | `-DXGFX_UCODE_F3DEX2=0` | 1 | F3DEX2 microcodes (F3DZEX, F3DLX2, .NoN/.Rej) read as Fast3D |
 | `-DXGFX_UCODE_S2DEX=0` | 1 | S2DEX 1.x/2.x read as Fast3D (its own commands are skipped either way; not drawn yet) |

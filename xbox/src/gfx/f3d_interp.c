@@ -257,7 +257,7 @@ static struct {
     int num_lights;
     uint8_t light_col[9][3];
     int8_t light_dir[9][3];
-    Vtx vc[VC_MAX];
+    Vtx vc[VC_MAX + 4];   /* (+4: a line's quad, do_line) */
     uint32_t half1, half2;
 } R;
 
@@ -2120,6 +2120,41 @@ static void do_light(unsigned l, uint32_t m) {   /* Light: u8 col[3], pad, colc[
     R.light_dir[l][2] = (int8_t)rd8(m + 10);
 }
 
+/* G_LINE3D (Fast3D, L3DEX, L3DEX2): a line between two loaded vertices,
+ * drawn as a quad of two triangles across it in screen space, wd + 2 half
+ * N64 pixels wide (wd 0: one pixel), both faces, in the slots past the
+ * vertex cache. It was skipped (counted): Pokémon Snap's and Yoshi's Story's
+ * line microcodes drew nothing (docs/roadmap.md B3).
+ * -DXGFX_LINES=0: skipped, as before */
+#ifndef XGFX_LINES
+#define XGFX_LINES 1
+#endif
+static unsigned s_lines_drawn;
+static void do_line(unsigned ia, unsigned ib, unsigned wd) {
+    Vtx *a, *b, *q = &R.vc[VC_MAX];
+    float ax, ay, bx, by, px, py, len, h, nx, ny;
+    uint32_t geom = R.geom;
+    int i;
+    if (!XGFX_LINES || ia >= s_vmax || ib >= s_vmax) return;
+    a = &R.vc[ia], b = &R.vc[ib];
+    if (a->w <= 0.0f || b->w <= 0.0f) return;   /* (behind the eye: a clipped line is left out) */
+    ax = a->x / a->w, ay = a->y / a->w, bx = b->x / b->w, by = b->y / b->w;
+    px = (bx - ax) * R.vp_sx, py = (by - ay) * R.vp_sy;   /* N64 pixels */
+    len = sqrtf(px * px + py * py);
+    if (len < 1e-6f || R.vp_sx == 0.0f || R.vp_sy == 0.0f) return;
+    h = 0.25f * (float)(wd + 2);   /* half the width, N64 pixels */
+    nx = -py / len * h / R.vp_sx, ny = px / len * h / R.vp_sy;   /* across the line, in NDC */
+    q[0] = *a, q[1] = *a, q[2] = *b, q[3] = *b;
+    q[0].x += nx * a->w, q[0].y += ny * a->w, q[1].x -= nx * a->w, q[1].y -= ny * a->w;
+    q[2].x += nx * b->w, q[2].y += ny * b->w, q[3].x -= nx * b->w, q[3].y -= ny * b->w;
+    for (i = 0; i < 4; i++) q[i].ostamp = 0, q[i].oc = outcode(&q[i]);
+    R.geom &= ~(uint32_t)(F3D_G_CULL_FRONT | F3D_G_CULL_BACK);
+    do_tri(VC_MAX, VC_MAX + 1, VC_MAX + 2, 0);
+    do_tri(VC_MAX + 1, VC_MAX + 3, VC_MAX + 2, 0);
+    R.geom = geom;
+    s_lines_drawn++;
+}
+
 static void ex_tri(unsigned a, unsigned b, unsigned c) {
     /* the flag rotates the indices: the flat-shade vertex comes first */
     if (a < s_vmax && b < s_vmax && c < s_vmax && !(s_uc->flags & GFX_UC_F_LINE)) do_tri((int)a, (int)b, (int)c, 0);
@@ -2485,11 +2520,13 @@ static int ex_cmd(uint32_t* pw0, uint32_t* pw1) {
                 f3dex_tri_decode(w0, &a, &b, &c); ex_tri(a, b, c);
                 f3dex_tri_decode(w1, &a, &b, &c); ex_tri(a, b, c);
                 return 1;
-            case F3DEX_G_QUAD:   /* F3D_OLD's; the line microcodes' G_LINE3D otherwise (not drawn) */
+            case F3DEX_G_QUAD:   /* F3D_OLD's; the line microcodes' G_LINE3D otherwise (vertex index * 2) */
                 if (old) {
                     f3dex_old_quad_decode(w1, q);
                     ex_tri(q[0], q[1], q[2]);
                     ex_tri(q[0], q[2], q[3]);
+                } else if (s_uc->flags & GFX_UC_F_LINE) {
+                    do_line(((w1 >> 16) & 0xFFu) / 2u, ((w1 >> 8) & 0xFFu) / 2u, w1 & 0xFFu);
                 }
                 return 1;
             case F3DEX_G_MODIFYVTX:
@@ -2514,7 +2551,10 @@ static int ex_cmd(uint32_t* pw0, uint32_t* pw1) {
     /* F3DEX2, S2DEX2 */
     switch (op) {
         case F3DEX2_G_NOOP: case F3DEX2_G_SPNOOP: case F3DEX2_G_DMA_IO: case F3DEX2_G_SPECIAL_1:
-        case F3DEX2_G_SPECIAL_2: case F3DEX2_G_SPECIAL_3: case F3DEX2_G_LINE3D:
+        case F3DEX2_G_SPECIAL_2: case F3DEX2_G_SPECIAL_3:
+            return 1;
+        case F3DEX2_G_LINE3D:   /* L3DEX2: the vertices (index * 2) and the width in w0 */
+            do_line(((w0 >> 16) & 0xFFu) / 2u, ((w0 >> 8) & 0xFFu) / 2u, w0 & 0xFFu);
             return 1;
         case F3DEX2_G_VTX:
             f3dex2_vtx_decode(w0, &n, &v0);

@@ -825,6 +825,25 @@ static void test_s2dex_obj(void) {
     CHECK(s_tex_creates > before, "obj rect: no texture made from the loaded block");
 }
 
+/* L3DEX2's G_LINE3D: a line between two vertices drawn as two triangles
+ * across it (docs/roadmap.md B3; skipped before) */
+static void test_line3d(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode L3DEX       fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    unsigned t, i, near_line = 1;
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xDB060018u, VTX_AT);                                   /* MOVEWORD SEGMENT 6 = the vertices */
+    cmd(0x01000000u | (32u << 12) | (32u << 1), 0x06000000u);   /* VTX 32 at 0 */
+    cmd(0x08000000u | (0u << 16) | (2u << 8) | 0u, 0);          /* LINE3D 0 1, width 0 */
+    cmd(0xDF000000u, 0);
+    t = run(&u);
+    CHECK(t == 2, "line3d tris %u (want 2)", t);
+    for (i = 0; i < s_nv && i < 6; i++)   /* every corner within a pixel or two of the line (y = -100, x -200..-150) */
+        if (fabsf(s_v[i].y - sy(-100)) > 3.0f || s_v[i].x < sx(-200) - 3.0f || s_v[i].x > sx(-150) + 3.0f) near_line = 0;
+    CHECK(near_line, "line3d corners off the line (%.1f %.1f .. %.1f %.1f)", s_v[0].x, s_v[0].y, s_v[s_nv ? s_nv - 1 : 0].x,
+          s_v[s_nv ? s_nv - 1 : 0].y);
+}
+
 /* lists that would read past the window or never end (docs/review-2026-10.md
  * 5c.1, 5c.3): a G_DL branch to itself ends at the command budget, a list
  * with no G_ENDDL at RDRAM's top ends there, a vertex in its last 12 bytes
@@ -873,6 +892,7 @@ int main(void) {
     test_tlut_offset();
     test_s2dex_bg();
     test_s2dex_obj();
+    test_line3d();
     test_dl_guards();
     test_fast3d();   /* and Fast3D once more after the guards' lists */
     if (s_fail) printf("test_f3dex: %d failed\n", s_fail);
