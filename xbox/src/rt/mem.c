@@ -199,7 +199,7 @@ int xrc_kseg1_heal(uint32_t host) {
 #if XRC_KSEG1 && XRC_KSEG1_HEAL
     static unsigned s_healed, s_refused, s_same;
     static uint32_t s_last;
-    uint32_t base = (uint32_t)(uintptr_t)(xrc_rdram + 0xA0000000u), off = host - base, page, pde, pte;
+    uint32_t base = (uint32_t)(uintptr_t)(xrc_rdram + 0xA0000000u), off = host - base, page, pde, pte, want;
     if (!xrc_rdram_host || off >= xrc_rdram_size) return 0;
     page = base + (off & ~0xFFFu);
     s_same = page == s_last ? s_same + 1 : 0;
@@ -210,12 +210,17 @@ int xrc_kseg1_heal(uint32_t host) {
         return 0;
     }
     xhw_alias_why(page, &pde, &pte);
-    if (xhw_alias_map(page, ((uint32_t)(uintptr_t)xrc_rdram_host & 0x7FFFFFFFu) + (off & ~0xFFFu), 4096)) {
+    want = ((uint32_t)(uintptr_t)xrc_rdram_host & 0x7FFFFFFFu) + (off & ~0xFFFu);
+    if (xhw_alias_map(page, want, 4096)) {
         if (s_healed++ < 16)
             xhw_logf("[MEM] KSEG1 page %08x lost (PDE %08x, PTE %08x): aliased again (%u)", (unsigned)page,
                      (unsigned)pde, (unsigned)pte, s_healed);
         return 1;
     }
+    /* refused because another thread healed the same page in between: the PTE now maps our frame, and the
+     * access only needs retrying (review 5a.9: the second thread crashed) */
+    xhw_alias_why(page, &pde, &pte);
+    if ((pte & 1u) && (pte & ~0xFFFu) == want) return 1;
     if (s_refused++ < 4)
         xhw_logf("[MEM] KSEG1 page %08x taken (PDE %08x, PTE %08x): the access faults", (unsigned)page,
                  (unsigned)pde, (unsigned)pte);
