@@ -3368,6 +3368,9 @@ void f3d_present_held(const uint32_t* img, int tw, int th, int pw, int ph, int f
  * Not done: a colour image drawn and textured from within the same frame
  * (render to texture: Zelda's pause, Banjo's jigsaw) draws on the screen as
  * before (XGFX_FB_RTT is reserved for it; docs/renderer.md). */
+#ifndef XGFX_FB_PROBE
+#define XGFX_FB_PROBE 0   /* 1: the first 8 readbacks' stage and RDRAM bytes logged (Banjo's START-screen static on red) */
+#endif
 #ifndef XGFX_FB_READBACK
 #define XGFX_FB_READBACK 0   /* off by default: Pilotwings 64 touches its frames every ~2 s and ran at half speed in xemu */
 #endif
@@ -3398,6 +3401,18 @@ static void fb_resolve(int i) {
     fbfx_rect(i, (int32_t)s_fb_stage_w, (int32_t)s_fb_stage_h, r);
     fbfx_convert(sl, r, stage, pitch, bpp, xu_host(0), xrc_rdram_size);
     s_fb_reads++;
+#if XGFX_FB_PROBE   /* diagnosis, release builds too: what the first readbacks held (the stage, then RDRAM's frame) */
+    static unsigned s_probe_n;
+    if (++s_probe_n <= 8) {
+        const uint8_t* s0 = stage + (size_t)r[1] * (size_t)pitch + (size_t)r[0] * (size_t)(bpp / 8);
+        uint32_t k, sum = 0, rsum = 0;
+        for (k = 0; k < 256; k++) sum = sum * 31u + s0[k];
+        for (k = 0; k < 256 && k < fbfx_bytes(sl); k++) rsum = rsum * 31u + xu_host(0)[(sl->addr + k) & (xrc_rdram_size - 1)];
+        xhw_logf("[GFX] fb probe %u: rect %d,%d %dx%d, stage %02x%02x%02x%02x %02x%02x%02x%02x sum %08x, rdram %08x sum %08x",
+                 s_probe_n, (int)r[0], (int)r[1], (int)r[2], (int)r[3], s0[0], s0[1], s0[2], s0[3], s0[4], s0[5], s0[6], s0[7],
+                 (unsigned)sum, (unsigned)sl->addr, (unsigned)rsum);
+    }
+#endif
 #if XGFX_FB_DUMP   /* debug: RDRAM's frame as the game reads it, the n-th time, as an [FBDUMP] */
     {
         static unsigned s_n;
@@ -3515,7 +3530,7 @@ static void fb_stage(void) {
             q[k].s0 = (c & 1) ? x1 : x0;
             q[k].t0 = (c & 2) ? y1 : y0;
         }
-        xgfx_draw(&st, q, 2);
+        if (!xgfx_stage_cpu(r, x0, y0, x1, y1)) xgfx_draw(&st, q, 2);   /* nv2a.c XGFX_FB_READBACK_CPU, else the GPU */
         xgfx_target_stage(0, &sw, &sh);
         DIRTY();
         fbfx_mark(i, 1);

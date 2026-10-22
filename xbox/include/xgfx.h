@@ -129,6 +129,7 @@ uint32_t xgfx_tex_linear_hold(float* w, float* h);
 uint32_t xgfx_tex_linear_back(float* w, float* h);
 int xgfx_target_stage(int on, int32_t* w, int32_t* h);
 const void* xgfx_stage_read(int32_t* pitch, int32_t* bpp);
+int xgfx_stage_cpu(const int32_t r[4], float x0, float y0, float x1, float y1);   /* XGFX_FB_READBACK_CPU (nv2a.c) */
 
 void xgfx_debug_dump(void);   /* debug: the back buffer now, as [FBDUMP] */
 

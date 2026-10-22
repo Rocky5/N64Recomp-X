@@ -232,6 +232,7 @@ void xgfx_debug_dump(void) {}
 uint32_t xgfx_tex_linear_back(float* w, float* h) { *w = 640.0f; *h = 480.0f; return 0; }
 int xgfx_target_stage(int on, int32_t* w, int32_t* h) { (void)on; (void)w; (void)h; return 0; }
 const void* xgfx_stage_read(int32_t* pitch, int32_t* bpp) { (void)pitch; (void)bpp; return NULL; }
+int xgfx_stage_cpu(const int32_t r[4], float x0, float y0, float x1, float y1) { (void)r; (void)x0; (void)y0; (void)x1; (void)y1; return 0; }
 int xhw_watch_pages(uint32_t va, uint32_t bytes, int arm) { (void)va; (void)bytes; (void)arm; return 0; }
 static int s_quiet;
 void xhw_log(const char* s) { if (!s_quiet) printf("%s\n", s); }

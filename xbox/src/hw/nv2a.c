@@ -1393,6 +1393,23 @@ uint32_t xgfx_tex_linear_hold(float* w, float* h) {
 static void* s_stage_mem;
 
 static uint32_t stage_pitch(void) { return STAGE_W * (uint32_t)(s_bpp / 8); }
+
+/* Banjo-Kazooie's START screen on red: its background (the game's copy of
+ * the last frame, read back through this stage) was random-colour noise,
+ * the rest of the screen right; never in xemu, which has no tile regions
+ * and draws at once. Two switches to tell why on the console:
+ * -DXGFX_STAGE_SENTINEL=1 fills the stage with magenta when it is made (a
+ * magenta background: the GPU never wrote it), and -DXGFX_FB_READBACK_CPU=1
+ * fills it by the CPU instead, from the back buffer through the aperture,
+ * as the BACK menu's CPU capture reads frames (xgfx_stage_cpu, nearest
+ * pixel; ~250 ms a read). Both off by default. */
+#ifndef XGFX_STAGE_SENTINEL
+#define XGFX_STAGE_SENTINEL 0
+#endif
+#ifndef XGFX_FB_READBACK_CPU
+#define XGFX_FB_READBACK_CPU 0
+#endif
+static uint8_t* s_stage_cpu;
 static void wbinvd(void) { __asm__ volatile("wbinvd" : : : "memory"); }
 
 uint32_t xgfx_tex_linear_back(float* w, float* h) {
@@ -1411,6 +1428,12 @@ int xgfx_target_stage(int on, int32_t* w, int32_t* h) {
             xhw_log("[NV2A] readback stage: no contiguous memory (framebuffer readback off)");
             return 0;
         }
+#if XGFX_STAGE_SENTINEL   /* diagnosis: magenta until the GPU writes it (a magenta picture on the console: it never did) */
+        {
+            uint32_t k, n = stage_pitch() * STAGE_H / 4;
+            for (k = 0; k < n; k++) ((uint32_t*)s_stage_mem)[k] = s_bpp == 16 ? 0xF81FF81Fu : 0xFFFF00FFu;
+        }
+#endif
         wbinvd();
         xhw_logf("[NV2A] readback stage: %u KB at %08x", (unsigned)(stage_pitch() * STAGE_H / 1024),
                  (unsigned)((uint32_t)(uintptr_t)s_stage_mem & 0x03FFFFFFu));
@@ -1436,6 +1459,11 @@ int xgfx_target_stage(int on, int32_t* w, int32_t* h) {
 }
 
 const void* xgfx_stage_read(int32_t* pitch, int32_t* bpp) {
+    if (XGFX_FB_READBACK_CPU && s_stage_cpu && !s_shut) {
+        *pitch = (int32_t)stage_pitch();
+        *bpp = s_bpp;
+        return s_stage_cpu;
+    }
     if (!s_stage_mem || s_shut) return 0;
     wait_idle();
     wbinvd();
@@ -1443,6 +1471,38 @@ const void* xgfx_stage_read(int32_t* pitch, int32_t* bpp) {
     *pitch = (int32_t)stage_pitch();
     *bpp = s_bpp;
     return s_stage_mem;
+}
+
+/* XGFX_FB_READBACK_CPU: the stage's rectangle r (x, y, w, h) filled from
+ * the back buffer's x0..x1, y0..y1 (screen pixels), read through the
+ * aperture once the GPU is done; 0 when off or out of memory */
+int xgfx_stage_cpu(const int32_t r[4], float x0, float y0, float x1, float y1) {
+    const uint8_t* fb;
+    uint32_t pitch, bpp = (uint32_t)s_bpp / 8;
+    int32_t x, y;
+    if (!XGFX_FB_READBACK_CPU || s_shut || r[2] <= 0 || r[3] <= 0) return 0;
+    if (!s_stage_cpu) {
+        s_stage_cpu = (uint8_t*)calloc(1, (size_t)stage_pitch() * STAGE_H);
+        if (!s_stage_cpu) return 0;
+        xhw_logf("[NV2A] readback by the CPU through the aperture (XGFX_FB_READBACK_CPU)");
+    }
+    wait_idle();
+    fb = (const uint8_t*)fb_cpu(pb_back_buffer());
+    pitch = pb_back_buffer_pitch();
+    for (y = r[1]; y < r[1] + r[3] && y < STAGE_H; y++) {
+        int32_t sy = (int32_t)(y0 + ((float)(y - r[1]) + 0.5f) * (y1 - y0) / (float)r[3]);
+        const uint8_t* row;
+        if (sy < 0) sy = 0;
+        if (sy >= s_fbh) sy = s_fbh - 1;
+        row = fb + (size_t)sy * pitch;
+        for (x = r[0]; x < r[0] + r[2] && x < STAGE_W; x++) {
+            int32_t sx = (int32_t)(x0 + ((float)(x - r[0]) + 0.5f) * (x1 - x0) / (float)r[2]);
+            if (sx < 0) sx = 0;
+            if (sx >= s_fbw) sx = s_fbw - 1;
+            memcpy(s_stage_cpu + (size_t)y * stage_pitch() + (size_t)x * bpp, row + (size_t)sx * bpp, bpp);
+        }
+    }
+    return 1;
 }
 
 uint32_t xgfx_capture_last(float* u_max, float* v_max) {

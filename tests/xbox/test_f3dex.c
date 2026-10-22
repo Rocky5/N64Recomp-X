@@ -85,6 +85,7 @@ int xgfx_target_stage(int on, int32_t* w, int32_t* h) {
     *h = 480;
     return 1;
 }
+int xgfx_stage_cpu(const int32_t r[4], float x0, float y0, float x1, float y1) { (void)r; (void)x0; (void)y0; (void)x1; (void)y1; return 0; }
 const void* xgfx_stage_read(int32_t* pitch, int32_t* bpp) {
     *pitch = 640 * 4;
     *bpp = 32;
