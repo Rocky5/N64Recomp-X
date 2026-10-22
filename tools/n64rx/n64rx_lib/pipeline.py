@@ -569,6 +569,45 @@ def fix_zero_dest(gen):
     return n
 
 
+FUNC_START = re.compile(r'^(?:RECOMP_FUNC )?void \w+\(uint8_t\* (?:restrict )?rdram, recomp_context\* (?:restrict )?ctx\) \{$', re.M)
+LABEL_DEF = re.compile(r'^\s*(L_[0-9A-F]{8}):', re.M)
+GOTO_L = re.compile(r'goto (L_([0-9A-F]{8}));')
+
+
+def fix_stray_goto(gen):
+    """a branch to an address outside its function comes out of the recompiler
+    as a goto to a label the function does not have, which C rejects (a
+    function the analysis sized into data: Bust-A-Move '99's and NBA
+    Courtside's entry code past the jal to main that never returns; Banjo-
+    Tooie and Forsaken with the dry boot's code). The CPU would go on at that
+    address, so it becomes a tail call there through the lookup (the safety
+    net's when nothing is known there), as the recompiler makes a j out of
+    its function. Returns the number of branches."""
+    n = 0
+    for c in sorted(gen.glob('funcs_*.c')):
+        text = c.read_text(encoding='utf-8', errors='replace')
+        starts = [m.start() for m in FUNC_START.finditer(text)] + [len(text)]
+        out, k, pos = [], 0, 0
+        for a, b in zip(starts, starts[1:]):
+            body = text[a:b]
+            have = set(LABEL_DEF.findall(body))
+
+            def tail(m):
+                nonlocal k
+                if m.group(1) in have:
+                    return m.group(0)
+                k += 1
+                return f'{{ LOOKUP_FUNC(0x{m.group(2)}u)(rdram, ctx); return; }}'
+            out.append(text[pos:a])
+            out.append(GOTO_L.sub(tail, body))
+            pos = b
+        out.append(text[pos:])
+        if k:
+            c.write_text(''.join(out), encoding='utf-8', newline='\n')
+            n += k
+    return n
+
+
 CALL = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\(rdram, ctx\);')
 DECL = re.compile(r'^void ([A-Za-z_][A-Za-z0-9_]*)\(uint8_t\* rdram, recomp_context\* ctx\);', re.M)
 
@@ -813,6 +852,9 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
                              f'{tail(log)}\nfull log: {log}')
         if fix_zero_dest(gen):
             prog.note('loads into $zero kept as reads')
+        nstray = fix_stray_goto(gen)
+        if nstray:
+            prog.note(f'{nstray} branches out of their function made tail calls through the lookup')
         extern = write_extern_h(gen)
         ninterp = write_interp_c(pack, gen)
         nsj = write_setjmp_sites(gen)

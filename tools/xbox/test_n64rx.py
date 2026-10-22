@@ -116,6 +116,22 @@ class Rom(unittest.TestCase):
             self.assertIn('xrc_missing("__osSpSetStatus_recomp", rdram, ctx)', m)
             self.assertNotIn('func_80000400', m)
 
+    def test_stray_goto(self):
+        """fix_stray_goto: a goto to a label its function lacks becomes a tail call; one it has stays"""
+        with tempfile.TemporaryDirectory() as tmp:
+            gen = pathlib.Path(tmp)
+            (gen / 'funcs_0.c').write_text(
+                'RECOMP_FUNC void func_80000400(uint8_t* rdram, recomp_context* ctx) {\n'
+                '    L_80000404:\n    if (ctx->r4) {\n        goto L_80000404;\n    }\n'
+                '    if (ctx->r5) {\n        goto L_8001CDE4;\n    }\n;}\n'
+                'RECOMP_FUNC void func_8001CDE0(uint8_t* rdram, recomp_context* ctx) {\n'
+                '    L_8001CDE4:\n    goto L_8001CDE4;\n;}\n')
+            self.assertEqual(pipeline.fix_stray_goto(gen), 1)
+            t = (gen / 'funcs_0.c').read_text()
+            self.assertIn('{ LOOKUP_FUNC(0x8001CDE4u)(rdram, ctx); return; }', t)
+            self.assertEqual(t.count('goto L_80000404;'), 1)
+            self.assertEqual(t.count('goto L_8001CDE4;'), 1)   # the second function's own
+
     def test_fodd_rewrite(self):
         """write_fodd: odd-FPR words through XRC_FODD only in a game whose threads run with Status.FR"""
         with tempfile.TemporaryDirectory() as tmp:

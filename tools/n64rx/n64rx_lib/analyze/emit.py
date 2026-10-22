@@ -492,6 +492,10 @@ def recomp_hazards(a: Analysis, live, nm, replaced, lookups=None):
                 if ins.op == 17 and ins.rs in (16, 17) and 8 <= ins.funct <= 11:   # round/trunc/ceil/floor.l: not in N64Recomp
                     why = f'{("round", "trunc", "ceil", "floor")[ins.funct - 8]}.l.{"s" if ins.rs == 16 else "d"}'
                     break
+                if ins.op in (48, 52, 56, 60):   # ll, lld, sc, scd: not in N64Recomp, which stops the whole run without
+                    # naming the function ("Unhandled instruction: scd": Ken Griffey's two with the dry boot's code)
+                    why = ('ll', 'lld', 'sc', 'scd')[(ins.op - 48) // 4]
+                    break
                 if ins.op == 16 and ins.rs in (0, 4) and ins.rd != 12:   # mfc0/mtc0: N64Recomp takes Status only
                     why = f'{"mfc0" if ins.rs == 0 else "mtc0"} of cop0 register {ins.rd}'
                     break
