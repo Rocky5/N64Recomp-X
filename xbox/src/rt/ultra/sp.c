@@ -82,6 +82,19 @@ ULTRA(osSpTaskLoad) {
 #ifndef XRC_RCP_ROOM
 #define XRC_RCP_ROOM 1
 #endif
+/* A graphics task's done events held at least this many retraces after it
+ * ran, as the RDP takes its time: the task runs here at its start, and its
+ * DP done came out as soon as the scheduler's thread blocked, before the
+ * game's next frame began. Pokemon Snap's photo check queues the analysis
+ * of the frame the RDP is drawing as the next frame starts and runs it at
+ * that task's DP done (sched.c's post-process); the done came first, so it
+ * read a context the game was refilling (red: a Pokemon in focus on a few
+ * frames in thirty, the Beach tutorial's "Press Z to aim" never held).
+ * DIVERGES: a graphics task's done waits up to n retraces. Default 0: at
+ * once, as before (an A/B switch until red says) */
+#ifndef XRC_DP_LATENCY
+#define XRC_DP_LATENCY 0
+#endif
 #define MAX_PEND 16
 static struct { void* thr; int dp; unsigned at; } s_pend[MAX_PEND];   /* oldest first */
 static int s_npend;
@@ -127,6 +140,7 @@ int xu_rcp_flush(void* mine) {
             int go = !XRC_RCP_OWNER ||
                      (mine ? s_pend[i].thr == mine
                            : xu_thr_blocked(s_pend[i].thr) || xu_retrace() - s_pend[i].at >= 2);
+            if (XRC_DP_LATENCY && s_pend[i].dp && xu_retrace() - s_pend[i].at < (unsigned)XRC_DP_LATENCY) go = 0;
             if (!go) continue;
             if (XRC_RCP_ROOM) {
                 int nsp = 1 + (s_pend[i].dp && same), ndp = s_pend[i].dp && !same;
@@ -146,6 +160,7 @@ int xu_rcp_flush(void* mine) {
         int go = !XRC_RCP_OWNER ||
                  (mine ? s_pend[i].thr == mine
                        : xu_thr_blocked(s_pend[i].thr) || xu_retrace() - s_pend[i].at >= 2);
+        if (XRC_DP_LATENCY && s_pend[i].dp && xu_retrace() - s_pend[i].at < (unsigned)XRC_DP_LATENCY) go = 0;
         if (go && XRC_RCP_ROOM && !room(s_pend[i].dp))
             break;   /* no room: this one and those after it wait for the next flush */
         if (go) take(i), n++;

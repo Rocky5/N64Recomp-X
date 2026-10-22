@@ -195,6 +195,43 @@ static void dl_bench(uint32_t task) {
              (unsigned)XRC_DLBENCH_RUNS);
 }
 
+/* diagnosis: -DXRC_PEEK_TASK=<N64 address> logs 32 bytes there as each
+ * graphics task starts, with the retrace (XRC_PEEK_TASK2 and 3: two more
+ * addresses on the same line), for the first XRC_PEEK_TASK_N tasks after
+ * the first word turns non-zero: what a game's own frame-to-frame state
+ * looks like at the RDP's start (Pokemon Snap's photo check: its two
+ * detector contexts and their message queue, red only) */
+#ifdef XRC_PEEK_TASK
+#ifndef XRC_PEEK_TASK_N
+#define XRC_PEEK_TASK_N 4000
+#endif
+static void peek_task(void) {
+    static unsigned s_n;
+    static const uint32_t at[3] = { (uint32_t)(XRC_PEEK_TASK),
+#ifdef XRC_PEEK_TASK2
+                                    (uint32_t)(XRC_PEEK_TASK2),
+#else
+                                    0,
+#endif
+#ifdef XRC_PEEK_TASK3
+                                    (uint32_t)(XRC_PEEK_TASK3)
+#else
+                                    0
+#endif
+    };
+    int k;
+    if (s_n >= XRC_PEEK_TASK_N || (!s_n && !rd32(at[0]))) return;
+    s_n++;
+    for (k = 0; k < 3; k++) {
+        uint32_t a = at[k];
+        if (!a) continue;
+        xhw_logf("[PEEKT] r%u %08x: %08x %08x %08x %08x %08x %08x %08x %08x", xu_retrace(), (unsigned)a, (unsigned)rd32(a),
+                 (unsigned)rd32(a + 4), (unsigned)rd32(a + 8), (unsigned)rd32(a + 12), (unsigned)rd32(a + 16),
+                 (unsigned)rd32(a + 20), (unsigned)rd32(a + 24), (unsigned)rd32(a + 28));
+    }
+}
+#endif
+
 /* DIVERGES: a task that comes while the BACK menu is open waits for it to
  * close (the game is frozen under the menu; settings_menu.c) */
 static int s_dp = 1;
@@ -219,6 +256,9 @@ void xrc_gfx_task(uint32_t task) {
     before = f3d_presents();
 #if defined(XRC_DLDUMP) && XRC_DLDUMP > 0
     dl_dump(task);
+#endif
+#ifdef XRC_PEEK_TASK
+    peek_task();
 #endif
     if (XRC_DLBENCH) dl_bench(task);
     s_busy = 1;
