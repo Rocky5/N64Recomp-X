@@ -2613,3 +2613,99 @@ with both (`vsf1`, title ID 4E5260B9).
   be redone. The top-100 facts come from the No-Intro DAT and the
   mupen64plus database, not from carts; the engine column waits for the
   sweep's microcode columns (roadmap B3).
+
+## 2026-10-22 (night, no hardware): the roadmap's phase 0 and phase 1, the dry boot, the float mode (host + xemu only)
+
+The maintainer merged the roadmap PR and asked for it to be worked through
+overnight. Their answers before going: commit locally, never push; the
+run token (B1) and the dry boot (B2) built behind switches that default to
+off; packs may ship learnt facts (addresses and sizes, no bytes); xemu and
+full sweeps allowed; no hardware; no subagents. Commits 28dacab..6c96027
+on `dev`, none pushed.
+
+- **Phase 0 (review fixes)**: the highs and most mediums of
+  `docs/review-2026-10.md`, each behind a switch where it changes behaviour
+  (`docs/testing.md`'s table):
+  - 3.1: `n64rx` only replaces a folder carrying its own `.n64rx-output`
+    marker.
+  - 5b.1: `XRC_VI_RESERVE_SMALL`. 5a.1: `section_addresses` sized by the
+    largest index.
+  - 5b.2, 5b.23: `XRC_PI_BOUNDS`. 5b.3: `XRC_RCP_ORDER`. 5b.4:
+    `XRC_INTERP_COUNT`. 5b.5-7: `XRC_STOP_UNLOCK`, the bounded start wait,
+    `XRC_PRI_LOCKED`.
+  - 5b.8, 5b.12: the EEPROM and Pfs lengths. `XRC_SAVE_COPY`: images
+    written outside the lock.
+  - 5b.15: 4 KB of slack before the register shadow. 5b.19: a dispatched
+    thread's gp. 5b.22: rank_update's bound. 5a.2: `XHW_FIXUP_STORM`.
+  - 5c.1-4: the display-list bounds and budget.
+  - 1.1, 1.2: the host tests under GCC and Linux.
+  - 3.r1-r9: `n64rx` robustness.
+  - `rom_leak_check` hardened (archives, shifted and encoded headers,
+    generated code, images by hash) with a pre-commit hook.
+  - `[PERF]` split by phase and a `[PERF2]` line (`XHW_PERF_DETAIL`), with
+    `ab_report.py`.
+  - `restrict` on the generated code (`N64RX_RESTRICT=1`, opt-in): 7.6 %
+    fewer instructions and 12.3 % fewer memory operands, counted statically
+    in Pilotwings' code.
+  - L3DEX/L3DEX2 lines drawn.
+  - The analyser's probe pass for second fits (`N64RX_NAME_UNIQUE`,
+    `N64RX_NAME_BITS`, opt-in).
+- **B1, the run token** (`XRC_RUN_TOKEN=1`, off): libultra's one thread at
+  a time in `ultra/thread.c`; host harness `test_thread` (pthreads, both
+  ways). xemu: all 14 regression games present with it, no crash.
+- **B2, the dry boot** (`N64RX_DRYBOOT=1`, off; `tools/dryboot/`,
+  `docs/analyzer.md`). It is a CPU-only N64 on the PC that writes the
+  console's learn files before the first build. First builds from the ROM
+  alone: GoldenEye 3,797 functions in 7 segments (30 console rounds:
+  3,821); Banjo-Kazooie 6,567 in 5; Dr. Mario 64's gzip main segment 998
+  of 1,006; Blast Corps 1,508; Perfect Dark 2,286 in 38 (2 without).
+  - xemu, dry-boot build against the console-learnt build, 90 s each:
+    every build presents with no crash; at boot they learn 11/0 (Banjo),
+    13/6 (GoldenEye), 9/2 (Blast Corps), 4/4 (Dr. Mario) and 262/6 (Mario
+    Tennis, whose matches the dry boot never reaches).
+  - Library: 237 of 246 ROMs reach their RSP tasks.
+  - The CU1 trap (4c8b6e3) is what moved Perfect Dark, Banjo-Kazooie's
+    frame-293 fault and Mario Party 3. CyberTiger is a timing race in the
+    model: it runs with PAL timing.
+- **Learnt facts** (042ff2c): `games/learned/` holds addresses and sizes
+  from the console's rounds for 22 ROMs, read by a ROM-only build of that
+  exact ROM (`N64RX_LEARNED=0`: not). Ocarina 1.2's first build: 5,328
+  functions in 57 segments against 3,302 in 3. Mario Tennis gains nothing:
+  its code is CPU-made.
+- **The float mode** (6c96027, on by default for the games it finds):
+  Jet Force Gemini's NaN matrices (renderer.md's open question) were our
+  FPU code, not the game's. The dry boot made them right at the same
+  addresses. Rare's osCreateThread gives threads Status.FR, and its
+  hand-written matrix code uses odd FPRs as singles; the generated code's
+  moves treated them as FR = 0 halves. Now odd FPRs follow each context's
+  FR (`XRC_FR`, from the ROM by `saves.thread_fr`: JFG, the Turok-engine
+  five, Conker, Shadow Man, Perfect Dark). xemu: 0 of 2 bad matrices per
+  list against 2 of 2 with `N64RX_FR=0`, the matrix word for word the dry
+  boot's.
+- Verified how: the 24 CI host tests pass after each commit (clang, plus
+  GCC for `test_f3dex`). The 14-game xemu regression set ran at the
+  baseline, after phase 0 and with the token; all present with no crash.
+  `test_analyze`: unchanged, 0 wrong names. The A/B runs above in xemu
+  (slot 11; this machine's xemu runs about 2 fps, so frame counts are
+  noise).
+- Not verified: **nothing ran on a console.** The `[MEM]` and `[CLOCK]`
+  lines are xemu's only (JFG's test build: 54,224 KB free at boot, 30,316
+  KB after nv2a; `[CLOCK] cpu 733 MHz`), not red's. Set 18 is scripted
+  (`build-host/hwbuild18.sh`, `deploy-set18.sh`) and not deployed. Whether
+  JFG's letters and 3D now draw is not checked (xemu here reaches only its
+  Nintendo logo in 150 s). The other FR games' first builds are blocked
+  before the float mode matters: Turok 2 and Shadow Man crash the same with
+  and without it, Conker presents nothing either way (A/B in xemu, 120 s).
+- **Turok 2's TLB misses** (d56c20b): its image holds three copies of
+  libultra's preamble and `__osException`; `saves.os_exception` took the
+  last, but the game installs the one at `0x0029BFF0` (the dry boot's
+  vectors), whose code pages its world in. Now the copy a segment loads
+  where it is linked wins. xemu: the KUSEG-0 write crash of s12 is gone; it
+  stops at the first paged-in function (`0x00425604`), the learning loop's
+  or the dry boot's to supply.
+- Also: a function's size stops at the recompiler image's end (f3df9f8:
+  Indiana Jones's dry-boot build was refused whole); `bench_dl` links again
+  (f17ad7f).
+- Gaps: Mario Tennis's matches in the dry boot; Banjo-Tooie's CIC 6105;
+  BattleTanx's NULL node; Traveller's Tales' `0xC0001000` probe; F1 World
+  Grand Prix II and NBA Courtside's waits; CyberTiger's race.
