@@ -61,6 +61,13 @@ ULTRA(osEPiStartDma) {
     uint32_t mq = rd32(mb + IO_RETQUEUE), dram = rd32(mb + IO_DRAMADDR), dev = rd32(mb + IO_DEVADDR), n = rd32(mb + IO_SIZE);
     (void)rdram;
     epi_dma(handle_addr(h, dev), dram, n, dir != 0);
+#ifndef XRC_PI_HDR
+#define XRC_PI_HDR 1
+#endif
+    if (XRC_PI_HDR) {   /* as libultra's osEPiStartDma: the handle and the type (review 5b.21; -DXRC_PI_HDR=0: not) */
+        wr32(mb + IO_PIHANDLE, h);
+        wr16(mb + IO_TYPE, dir != 0 ? MESG_EDMAWRITE : MESG_EDMAREAD);
+    }
     if (mq) xu_send(mq, mb, 0, 0);
     RET(0);
 }

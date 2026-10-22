@@ -168,7 +168,11 @@ int xu_pi_save_io(uint32_t addr, uint32_t* word, int write) {
     return 1;
 }
 
-/* osPiStartDma(mb, pri, dir, devAddr, vAddr (0x10), nbytes (0x14), mq (0x18)) */
+/* osPiStartDma(mb, pri, dir, devAddr, vAddr (0x10), nbytes (0x14), mq (0x18)).
+ * -DXRC_PI_HDR=0: the message's header left as the game had it (as before) */
+#ifndef XRC_PI_HDR
+#define XRC_PI_HDR 1
+#endif
 ULTRA(osPiStartDma) {
     uint32_t mb = ARG(0), dir = ARG(2), dev = ARG(3), dram = ARG(4), n = ARG(5), mq = ARG(6);
     (void)rdram;
@@ -178,6 +182,10 @@ ULTRA(osPiStartDma) {
         xu_pi_dma(dev, dram, n);
     }
     if (mb) {
+        if (XRC_PI_HDR) {   /* the header as libultra's fills it (review 5b.21): type and priority */
+            wr16(mb + IO_TYPE, dir != 0 ? MESG_DMAWRITE : MESG_DMAREAD);
+            wr8(mb + IO_PRI, (uint8_t)ARG(1));
+        }
         wr32(mb + IO_RETQUEUE, mq);
         wr32(mb + IO_DRAMADDR, dram);
         wr32(mb + IO_DEVADDR, dev);
