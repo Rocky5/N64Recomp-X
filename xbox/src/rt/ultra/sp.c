@@ -160,11 +160,24 @@ int xrc_jpeg_task(uint32_t task);   /* ../jpeg.c */
 #define XRC_SP_BY_TYPE 1
 #endif
 
+/* A graphics task with no display list is another kind of task: Resident
+ * Evil 2's own microcode (0x80031460, its parameters in ucode_data, data_ptr
+ * 0; six a frame from its scheduler's slot 0xB) was read as a list from RDRAM
+ * 0. DIVERGES: its microcode does not run (what it draws is missing); SP done
+ * goes out as for any task, no DP done (its scheduler waits for none).
+ * -DXRC_GFX_NO_LIST=0: run as a graphics task, as before */
+#ifndef XRC_GFX_NO_LIST
+#define XRC_GFX_NO_LIST 1
+#endif
+int xu_task_has_list(uint32_t task) {
+    return !XRC_GFX_NO_LIST || (rd32(task + TK_DATA_PTR) & 0x1FFFFFFFu) != 0;
+}
+
 /* the task run, its done events held for the starting thread: osSpTaskStartGo,
  * and mmio.c for a game's own osSpTaskStartGo through SP_STATUS */
 void xu_sp_run(uint32_t task) {
     uint32_t type = rd32(task + TK_TYPE);
-    int gfx = type == M_GFXTASK;
+    int gfx = type == M_GFXTASK && xu_task_has_list(task);
 #ifdef XRC_LOG_SP_STARTS
     {   /* diagnosis: the first SP starts, their type and thread */
         static unsigned s_n;

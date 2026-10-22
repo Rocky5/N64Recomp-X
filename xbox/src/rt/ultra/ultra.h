@@ -144,6 +144,7 @@ unsigned xu_gfx_tasks(void);
 unsigned xu_aud_tasks(void);
 void xu_count_task(int gfx);
 void xu_sp_run(uint32_t task);   /* sp.c: a task run as osSpTaskStartGo runs it */
+int xu_task_has_list(uint32_t task);   /* sp.c: a graphics task with a display list (XRC_GFX_NO_LIST) */
 uint32_t xu_thr_t(void* thr);   /* the OSThread of a runtime thread (thread.c) */
 int xu_rcp_flush(void* mine);   /* sp.c: held done events out (under the lock): `mine`'s, or (NULL) a retrace's; how many */
 

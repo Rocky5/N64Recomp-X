@@ -271,6 +271,10 @@ static void sp_status(uint32_t w) {
              * for this thread, DP done only after a FullSync); posted at once, Star Fox 64's scheduler
              * lost its graphics task's done now and then and its graphics thread waited for good */
             xu_sp_run(task);
+        } else if (type == M_GFXTASK && !xu_task_has_list(task)) {
+            /* another kind of task, not run (sp.c XRC_GFX_NO_LIST): SP done only; never to the
+             * audio HLE, whose next task would take it for a microcode switch */
+            xu_post_event_first(OS_EVENT_SP);
         } else if (type == M_GFXTASK) {
             xu_count_task(1);
             xrc_gfx_task(task);

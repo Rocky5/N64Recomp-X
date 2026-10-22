@@ -87,6 +87,19 @@ ULTRA(osAiSetFrequency) {
     RET(s_rate);
 }
 
+/* A buffer queued while the DAC has nothing left of its backlog (the
+ * carried deficit already covers it) starts at once, and the AI interrupts
+ * as it starts: posted then. Resident Evil 2 queues 0x300-byte buffers (192
+ * samples, under a retrace's 367 at 22 kHz) and waits on OS_EVENT_AI alone:
+ * after its second buffer the backlog stayed at or below 0, the drain posts
+ * only when a positive backlog runs out, and its DAC thread waited for good.
+ * Its synthesizer makes a list only as the DAC's index moves, so no audio
+ * task ran, and its scheduler starts its own RSP task only after an audio
+ * task: no picture after the second frame. -DXRC_AI_SPENT=0: as before */
+#ifndef XRC_AI_SPENT
+#define XRC_AI_SPENT 1
+#endif
+
 /* osAiSetNextBuffer(buf, size) */
 ULTRA(osAiSetNextBuffer) {
     uint32_t buf = ARG(0), size = ARG(1);
@@ -101,6 +114,7 @@ ULTRA(osAiSetNextBuffer) {
     s_queued = (int32_t)(size >> 2);
     s_pending += s_queued;
     s_samples += size >> 2;
+    if (XRC_AI_SPENT && s_queued > 0 && s_pending <= 0) xu_post_event(OS_EVENT_AI);
     xu_unlock();
     xrc_audio_buffer(buf, size);
     RET(0);

@@ -69,6 +69,7 @@ int xu_pi_save_io(uint32_t addr, uint32_t* word, int write) { (void)addr, (void)
 void xrc_gfx_task(uint32_t task) { s_gfx = task; }
 void xu_count_task(int gfx) { (void)gfx; }                                 /* ultra/sp.c */
 void xu_sp_run(uint32_t task) { (void)task; }                              /* ultra/sp.c */
+int xu_task_has_list(uint32_t task) { (void)task; return 1; }               /* ultra/sp.c */
 void xrc_audio_task(uint32_t task) { s_aud = task; }
 #undef ARG
 #define ARG(i) ((uint32_t)ctx->r##i)
