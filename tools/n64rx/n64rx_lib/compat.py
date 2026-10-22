@@ -21,8 +21,8 @@ TIERS = {
         'The road markings flicker.',
         'The frame rate dips in busy scenes (to about 40 fps).')),
     ('NBKE', 0): (SILVER, 'Banjo-Kazooie (US)', (
-        'Some textures draw wrong.',
-        'Static over the START screen.')),
+        'Static behind the START screen menu.',
+        'A dark, fog-like texture error in the opening intro.')),
     ('CZLE', 2): (SILVER, 'Ocarina of Time 1.2 (US)', (
         'Short hitches and small audio skips when a new area loads.',
         'Some textures pop in late.',
@@ -32,7 +32,8 @@ TIERS = {
         'Some textures on the board are mixed up.')),
     ('NPFE', 0): (EXPERIMENTAL, 'Pokémon Snap (US)', (
         'On a new save the Beach tutorial locks the camera until three photos of a Pokémon '
-        '(follow its prompts: Z, then A); on a real Xbox the camera does not move yet.',)),
+        '(follow its prompts: Z, then A); on a real Xbox the camera does not move yet.',
+        'Photos cannot be viewed after a course; grass shows through the mountains.')),
     ('NZSE', 0): (EXPERIMENTAL, 'Majora\'s Mask (US)', (
         'Crashes after the Nintendo logo (a fix waits for a console test).',)),
     ('NJFE', 0): (EXPERIMENTAL, 'Jet Force Gemini (US)', (
@@ -42,7 +43,8 @@ TIERS = {
     ('NK4P', 0): (EXPERIMENTAL, 'Kirby 64 - The Crystal Shards (E)', (
         'Not run on a real Xbox yet; in the xemu emulator it plays its intro and tutorial.',)),
     ('NM8E', 0): (EXPERIMENTAL, 'Mario Tennis (US)', (
-        "Plays, but freezes in the BACK menu's Controller Pak page.",)),
+        'A line flickers at the bottom of the screen; the right side is cut off.',
+        "The ball's textures draw wrong.")),
     ('ND4E', 0): (SILVER, 'Castlevania - Legacy of Darkness (US)', (
         'Some textures draw wrong.',)),
     ('NBEE', 0): (EXPERIMENTAL, 'All-Star Baseball 2000 (US)', (
