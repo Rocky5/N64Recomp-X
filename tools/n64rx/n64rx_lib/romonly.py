@@ -263,13 +263,20 @@ def make(rom, bdir, base=None, learnt=None):
     else:
         code = rom.code
         p = Pack(dir=pdir, id=re.sub(r'[^a-z0-9]', '', code.lower()) or 'game', title=rom.title.title(), code=code,
-                 title_id=_title_id(code), sha1=[rom.sha1], rom_size=rom.size, entrypoint=a.entry,
+                 title_id=_title_override() or _title_id(code), sha1=[rom.sha1], rom_size=rom.size, entrypoint=a.entry,
                  boot_size=0x100000, rdram_mb=8 if _wants_8mb(a) or learnt.rdram_mb == 8 else 4, gpr='auto', compressed='none',
                  save_type=('eep16k' if code[:3] in EEP16K else 'eep4k') if uses_eep else 'none', stage='planned',
                  test=False, raw={})
     info = {'live': live, 'names': nm, 'analysis': a, 'ids': ids,
             'recomp_rom': a.img.rom if a.img.rom != rom.data else None}   # learnt code appended, or decompressed code in place
     return p, info
+
+
+def _title_override():
+    """N64RX_TITLE_ID=<hex>: a test build's own title ID (its own save and log folder on the console:
+    A/B variants of one game run in one session without overwriting each other's logs)"""
+    v = os.environ.get('N64RX_TITLE_ID', '')
+    return int(v, 16) if v else 0
 
 
 def _wants_8mb(a):

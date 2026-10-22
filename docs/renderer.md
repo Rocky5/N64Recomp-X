@@ -265,6 +265,17 @@ Luigi Raceway's (the Mario GP's first course). What is built
   720p is unchanged by the staging. Staged for the console in `vbk10`;
 - `[GFX] framebuffer readback` (every 600 frames) and `[NV2A] ... stage
   reads` count it.
+- Banjo-Kazooie's START screen (its decomp, `src/core2/code_8DC20.c`): on
+  pausing, `func_80315084` has the RDP copy the last frame into the depth
+  buffer's memory (the colour image set to the Z buffer, 32x32 texture
+  rectangles from the frame), and every paused frame `func_80315110` draws
+  it back from there as textures. So the paused background is RDP output
+  read back as texture data, through this stage. On red it is random-
+  colour noise (xemu: right; the long-open "static on the START screen").
+  `XGFX_FB_PROBE`, `XGFX_STAGE_SENTINEL` and `XGFX_FB_READBACK_CPU` (9b9e3c1)
+  tell why on the console: three builds, `vbk21a` (probe + magenta stage),
+  `vbk21b` (the CPU fills the stage through the aperture), `vbk21c` (tile
+  regions off), each its own title ID (`N64RX_TITLE_ID`).
 
 Tried and dropped: guarding the pages (not present) and converting on the
 fault. The probe (a page read from the boot thread) reached the crash
