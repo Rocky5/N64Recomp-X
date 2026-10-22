@@ -52,7 +52,8 @@ static uint8_t* s_ram;      /* N64 byte order */
 static uint32_t s_ramsize;
 static uint8_t s_sp[0x2000];
 static uint8_t s_pif[64];
-static uint8_t s_eep[512];
+static uint8_t s_eep[2048];
+static int s_eep16;   /* --eep 16: a 16 Kbit EEPROM (2 KB), else 4 Kbit */
 static uint32_t* s_cpuw;    /* a bit per RDRAM word: written by the CPU (or the RSP) since a DMA from the ROM */
 static int s_verbose;
 
@@ -229,9 +230,11 @@ static void pif_run(void) {
                 s_pad_reads++, s_pad_pressed += b != 0;
                 res[0] = (uint8_t)(b >> 8), res[1] = (uint8_t)b, res[2] = 0, res[3] = 0;
             }
-            else if (ch == 4 && (cmd == 0x00 || cmd == 0xFF) && rx >= 3) res[0] = 0x00, res[1] = 0x80, res[2] = 0x00;
-            else if (ch == 4 && cmd == 0x04 && rx >= 8) memcpy(res, &s_eep[(s_pif[i + 3] & 63) * 8], 8);
-            else if (ch == 4 && cmd == 0x05 && tx >= 10) memcpy(&s_eep[(s_pif[i + 3] & 63) * 8], &s_pif[i + 4], 8), res[0] = 0;
+            else if (ch == 4 && (cmd == 0x00 || cmd == 0xFF) && rx >= 3)
+                res[0] = 0x00, res[1] = s_eep16 ? 0xC0 : 0x80, res[2] = 0x00;   /* the EEPROM's type */
+            else if (ch == 4 && cmd == 0x04 && rx >= 8) memcpy(res, &s_eep[(s_pif[i + 3] & (s_eep16 ? 255 : 63)) * 8], 8);
+            else if (ch == 4 && cmd == 0x05 && tx >= 10)
+                memcpy(&s_eep[(s_pif[i + 3] & (s_eep16 ? 255 : 63)) * 8], &s_pif[i + 4], 8), res[0] = 0;
             else ok = 0;
             if (!ok) s_pif[i + 1] |= 0x80;   /* no answer */
         }
@@ -1274,7 +1277,7 @@ static uint32_t* load_known(const char* path, size_t* n) {
 
 static int usage(void) {
     fprintf(stderr, "usage: dryboot <rom.z64> <out dir> --entry X --boot-size N [--cic N] [--tv 0|1|2] [--rdram 4|8]\n"
-                    "               [--known file] [--frames N] [--press frame|0] [--dump addr bytes file] [-v]\n");
+                    "               [--known file] [--frames N] [--press frame|0] [--eep 4|16] [--dump addr bytes file] [-v]\n");
     return 1;
 }
 
@@ -1300,6 +1303,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(a, "--known")) known_path = v;
         else if (!strcmp(a, "--frames")) frames = (uint32_t)strtoul(v, NULL, 10);
         else if (!strcmp(a, "--press")) s_press_from = (uint32_t)strtoul(v, NULL, 10);
+        else if (!strcmp(a, "--eep")) s_eep16 = strtoul(v, NULL, 10) == 16;
         else if (!strcmp(a, "--dump") && i + 3 < (uint32_t)argc) {   /* --dump <addr> <bytes> <file>: RDRAM after the run */
             dump_at = (uint32_t)strtoul(v, NULL, 16) & 0x1FFFFFFFu;
             dump_n = (uint32_t)strtoul(argv[i + 2], NULL, 0);

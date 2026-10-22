@@ -77,7 +77,8 @@ def run(rom, a, pack, bdir, prog, log):
            '--boot-size', str(pack.boot_size if pack else (boot.size if boot else 0x100000)),
            '--cic', str(rom.cic or 6102), '--tv', str(tv_of_region(rom.code)),
            '--rdram', str(pack.rdram_mb if pack and pack.rdram_mb in (4, 8) else 4),
-           '--known', str(known), '--frames', frames]
+           '--known', str(known), '--frames', frames,
+           '--eep', '16' if pack and getattr(pack, 'save_type', '') == 'eep16k' else '4']
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     except subprocess.TimeoutExpired:
