@@ -50,6 +50,16 @@ static uint8_t* s_rom;
 static uint32_t s_romsize;
 static uint8_t* s_ram;      /* N64 byte order */
 static uint32_t s_ramsize;
+/* what the CPU reaches of it through KSEG1: with --rdram 4, 4 MB, as the
+ * console runtime's uncached alias of its window (mem.c) and a 4 MB N64;
+ * past that a load reads 0 and a store goes nowhere. F-Zero X sizes RDRAM
+ * itself (libultra's osGetMemSize: a word at each MB through KSEG1, read
+ * back): it found 8 MB here, ran code past 4 MB and spun there (no RSP
+ * task in 1,800 frames; now its audio tasks run, its graphics still wait
+ * on something else). The console runtime answers osGetMemSize itself. KSEG0 keeps all 8 MB: Army Men and Supercross 2000 run a little
+ * past 4 MB there, as on the console (its guard and the pages after it).
+ * --window keep: KSEG1 too, as before */
+static uint32_t s_k1ram;
 static uint8_t s_sp[0x2000];
 static uint8_t s_pif[64];
 static uint8_t s_eep[2048];
@@ -625,7 +635,7 @@ static int rd(uint32_t va, int n, uint64_t* out) {
     }
     pa = translate(va, 0);
     if (pa < 0) return 0;
-    *out = phys_read((uint32_t)pa, n);
+    *out = (va >> 29) == 5 && pa >= s_k1ram && pa < s_ramsize ? 0 : phys_read((uint32_t)pa, n);
     return 1;
 }
 static uint32_t s_watch_lo, s_watch_hi;   /* --watch: the CPU's stores to these physical bytes, logged */
@@ -643,7 +653,7 @@ static int wr(uint32_t va, uint64_t v, int n) {
         fprintf(stderr, "watch: %08x <- %0*llx (%d bytes) at pc %08x, ra %08x, frame %u\n", (unsigned)pa, n * 2,
                 (unsigned long long)v, n, C.pc, (uint32_t)C.r[31], s_frames);
     }
-    phys_write((uint32_t)pa, v, n);
+    if (!((va >> 29) == 5 && pa >= s_k1ram && pa < s_ramsize)) phys_write((uint32_t)pa, v, n);
     return 1;
 }
 
@@ -1382,7 +1392,7 @@ static int usage(void) {
     fprintf(stderr, "usage: dryboot <rom.z64> <out dir> --entry X --boot-size N [--cic N] [--tv 0|1|2] [--rdram 4|8]\n"
                     "               [--known file] [--frames N] [--press frame|0] [--script autopad.txt] [--eep 4|16]\n"
                     "               [--dump addr bytes file] [--snap gfx-task file] [--watch addr bytes]\n"
-                    "               [--versions boot|all|last] [-v]\n");
+                    "               [--versions boot|all|last] [--window keep] [-v]\n");
     return 1;
 }
 
@@ -1390,6 +1400,7 @@ int main(int argc, char** argv) {
     const char *rom_path, *out, *known_path = NULL, *dump_path = NULL;
     uint32_t dump_at = 0, dump_n = 0;
     uint32_t entry = 0, boot_size = 0x100000, cic = 6102, tv = 1, mb = 4, frames = 600, i;
+    int keep8 = 0;
     char path[1024];
     FILE* f;
     long n;
@@ -1411,6 +1422,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(a, "--press-mode")) s_press_mode = (int)strtoul(v, NULL, 10);
         else if (!strcmp(a, "--script")) script_load(v);
         else if (!strcmp(a, "--eep")) s_eep16 = strtoul(v, NULL, 10) == 16;
+        else if (!strcmp(a, "--window")) keep8 = !strcmp(v, "keep");
         else if (!strcmp(a, "--versions")) s_versions = !strcmp(v, "all") ? 1 : !strcmp(v, "last") ? 0 : 2;
         else if (!strcmp(a, "--watch") && i + 2 < (uint32_t)argc) {   /* --watch <addr> <bytes>: who stores there */
             s_watch_lo = (uint32_t)strtoul(v, NULL, 16) & 0x1FFFFFFFu;
@@ -1445,6 +1457,7 @@ int main(int argc, char** argv) {
      * 2000's entry: sp 0x803FFFF0, the 5th argument at 0x14(sp)) and reads it back, as the console
      * runtime's window lets it (an access past the end went nowhere: the TLB mapped nothing) */
     s_ramsize = 8u << 20;
+    s_k1ram = mb == 8 || keep8 ? s_ramsize : 4u << 20;
     s_ram = (uint8_t*)calloc(1, s_ramsize);
     s_cpuw = (uint32_t*)calloc(s_ramsize / 128, sizeof *s_cpuw);
     s_ran = (uint32_t*)calloc(s_ramsize / 128, sizeof *s_ran);
