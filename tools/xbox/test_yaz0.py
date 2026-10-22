@@ -70,6 +70,18 @@ def main():
                        ('text', b'the quick brown fox ' * 120)):
         check(yaz0.decompress(compress(data)) == data, f'round trip: {name}')
     check(yaz0.decompress(b'\0' * 4 + compress(b'hello hello hello'), 4) == b'hello hello hello', 'offset')
+    # corrupt blocks raise ValueError, nothing allocated from their sizes (review 3.r2)
+    def refused(blk, what, **kw):
+        try:
+            yaz0.decompress(blk, **kw)
+        except ValueError:
+            return
+        check(False, f'not refused: {what}')
+    good = compress(b'abcabcabcabc' * 8)
+    refused(good, 'a size its table entry does not say', want=7)
+    refused(good[:4] + (0x10000000).to_bytes(4, 'big') + good[8:], 'a 256 MB header')
+    refused(good[:20], 'a block cut short')
+    refused(b'Yaz0' + (4).to_bytes(4, 'big') + bytes(8) + bytes([0x00, 0x10, 0x05]), 'a back-reference before the start')
 
     # a ROM: boot (0..0x1060), the table (at 0x1060), then 30 files, half compressed
     files = []

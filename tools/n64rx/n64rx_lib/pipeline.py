@@ -8,6 +8,7 @@ import os
 import pathlib
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -697,7 +698,11 @@ def _inflate(rom, prog):
     import dataclasses
     import hashlib
     from . import yaz0
-    out = yaz0.inflate_rom(rom.data)
+    try:
+        out = yaz0.inflate_rom(rom.data)
+    except (ValueError, IndexError, struct.error) as e:   # a corrupt table or block: the ROM as it is (review 3.r2)
+        prog.note(f'Yaz0: not inflated ({e}); the ROM is used as it is')
+        return rom
     if not out:
         return rom
     img, at, n = out

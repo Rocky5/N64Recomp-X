@@ -13,6 +13,7 @@ import os
 import pathlib
 import pickle
 import re
+import struct
 import tomllib
 
 from . import ROOT, N64rxError
@@ -78,6 +79,9 @@ def make(rom, bdir, base=None, learnt=None):
         raise N64rxError(f'This ROM could not be analysed: {e}.',
                          'It may use a boot or entry code n64rx does not know yet; '
                          'tell the project which game it is.')
+    except (TypeError, ValueError, IndexError, KeyError, struct.error, RecursionError) as e:   # review 3.r1
+        raise N64rxError(f'The analyser stopped on this ROM ({type(e).__name__}: {e}).',
+                         'This is a bug in n64rx: tell the project which game it is and send this message.')
     learn.withhold(a, learn.withheld(learnt))   # the learning loop (learn.py): its test switch,
     if learnt:                                  # then what the console learnt
         learn.apply(a, learnt, len(rom.data))

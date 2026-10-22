@@ -275,7 +275,10 @@ def _table_linear(img, fstart, pc, addr_only=False):
     count = None
     v = pc - 4
     while v >= max(fstart, pc - 4 * 48):
-        i = Ins(img.word(v), v)
+        w = img.word(v)
+        if w is None:   # a gap no segment holds: no bound to find (it raised TypeError: review 3.r1)
+            break
+        i = Ins(w, v)
         if i.op == 11:                                                # sltiu: the bound
             count = i.imm
             break

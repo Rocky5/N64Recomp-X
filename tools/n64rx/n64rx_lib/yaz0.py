@@ -22,34 +22,56 @@ MAGIC = b'Yaz0'
 ENTRY = 16
 
 
-def decompress(src, offset=0):
-    """the inflated bytes of the Yaz0 block at `offset`"""
+MAX_SIZE = 64 << 20   # no N64 file inflates past a cartridge's 64 MB
+
+
+def decompress(src, offset=0, want=None, end=None):
+    """the inflated bytes of the Yaz0 block at `offset`. want: the size its
+    table entry says (checked before anything is allocated); end: where the
+    block stops in `src`. A corrupt block raises ValueError (review 3.r2: a
+    header claiming 256 MB allocated it, a back-reference before the
+    output's start read the far end of the buffer silently)"""
     if src[offset:offset + 4] != MAGIC:
         raise ValueError('not a Yaz0 block')
     size = struct.unpack_from('>I', src, offset + 4)[0]
+    if size > MAX_SIZE or (want is not None and size != want):
+        raise ValueError(f'a Yaz0 header says {size} bytes' + (f', its table entry {want}' if want is not None else ''))
+    end = len(src) if end is None else min(end, len(src))
     out = bytearray(size)
     s, d = offset + 16, 0
     while d < size:
+        if s >= end:
+            raise ValueError('a Yaz0 block ends before its data does')
         code = src[s]
         s += 1
         for bit in range(7, -1, -1):
             if d >= size:
                 break
+            if s >= end:
+                raise ValueError('a Yaz0 block ends before its data does')
             if code & (1 << bit):
                 out[d] = src[s]
                 d += 1
                 s += 1
             else:
+                if s + 1 >= end:
+                    raise ValueError('a Yaz0 block ends inside a back-reference')
                 b1, b2 = src[s], src[s + 1]
                 s += 2
                 dist = ((b1 & 0x0F) << 8 | b2) + 1
                 n = b1 >> 4
                 if n == 0:
+                    if s >= end:
+                        raise ValueError('a Yaz0 block ends inside a back-reference')
                     n = src[s] + 0x12
                     s += 1
                 else:
                     n += 2
+                if dist > d:
+                    raise ValueError(f'a Yaz0 back-reference {dist} bytes back at output byte {d}')
                 for _ in range(n):
+                    if d >= size:
+                        break
                     out[d] = out[d - dist]
                     d += 1
     return bytes(out)
@@ -118,6 +140,8 @@ def inflate_rom(rom):
         return None
     at, ents = found
     size = max(e[1] for e in ents)
+    if size > MAX_SIZE:
+        raise ValueError(f'the DMA table reaches vrom {size:#x}, past 64 MB')
     size = (size + 0xFFFFF) & ~0xFFFFF   # whole MB, as cartridges are
     img = bytearray(size)
     packed = 0
@@ -125,7 +149,7 @@ def inflate_rom(rom):
         if ps == 0xFFFFFFFF:   # a file not in this ROM
             continue
         if pe:   # (absent files were skipped above)
-            data = decompress(rom, ps)
+            data = decompress(rom, ps, want=ve - vs, end=pe)
             if len(data) != ve - vs:
                 raise ValueError(f'a Yaz0 file inflates to {len(data)} bytes, its table entry says {ve - vs}')
             packed += 1
