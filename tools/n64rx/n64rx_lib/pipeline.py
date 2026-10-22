@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 
-from . import ROOT, VERSION, N64rxError, compat, engines, packs, romonly, rom as romlib, saves
+from . import ROOT, VERSION, N64rxError, compat, dryboot, engines, packs, romonly, rom as romlib, saves
 from . import learn as learnmod
 
 GEN_VERSION = 12   # bump when what n64rx writes into gen/ changes (the cache key)
@@ -697,6 +697,12 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
         bdir.mkdir(parents=True, exist_ok=True)
         t0 = time.time()
         pack, ainfo = romonly.make(rom, bdir, base, learnt)
+        if dryboot.enabled():   # the boot run on this PC first (dryboot.py): its learn file before the user's
+            db = dryboot.run(rom, ainfo['analysis'], pack, bdir, prog, bdir / 'dryboot.log')
+            if db:
+                learn = [db] + list(learn)
+                learnt = learnmod.read(learn)
+                pack, ainfo = romonly.make(rom, bdir, base, learnt)
         if learnt is not None:
             prog.note(f'learnt on the console: {len(learnt.funcs)} functions, {len(learnt.dmas)} DMAs ({", ".join(map(str, learn))})')
         a = ainfo['analysis']

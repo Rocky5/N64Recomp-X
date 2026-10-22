@@ -452,9 +452,13 @@ def _lis(items):
 
 # ---------------------------------------------------------------- comparing
 
-def compare(rom_path, key_path, version='us'):
+def compare(rom_path, key_path, version='us', learn_paths=()):
     rom = romlib.read(pathlib.Path(rom_path))
     a = analyze(rom.data)
+    if learn_paths:   # what a learn file adds (the console's, or the dry boot's: n64rx_lib/dryboot.py), as a build applies it
+        from n64rx_lib import learn as learnmod
+        learnt = learnmod.read(learn_paths)
+        a.notes += learnmod.apply(a, learnt, len(rom.data))
     ids, _N = libultra.identify(a.img, {k: f for k, f in a.all_funcs().items() if k < 1 << 32})
     lists = emit.recomp_lists(ROOT)
     replaced = lists['reimplemented_funcs'] | lists['ignored_funcs']
@@ -595,8 +599,9 @@ def main():
     ap.add_argument('--version', default='us')
     ap.add_argument('--json', help='write the full report here (under build-host/)')
     ap.add_argument('-v', '--verbose', action='store_true', help='list every difference')
+    ap.add_argument('--learn', action='append', default=[], help='a learn file to apply first (repeatable)')
     o = ap.parse_args()
-    r = compare(o.rom, o.key, o.version)
+    r = compare(o.rom, o.key, o.version, o.learn)
     print(summary(r))
     if o.verbose:
         print('analysis:')

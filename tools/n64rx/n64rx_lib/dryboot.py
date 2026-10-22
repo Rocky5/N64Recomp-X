@@ -1,0 +1,96 @@
+"""The dry boot (docs/roadmap.md B2): the ROM's boot run on this PC before
+the first build, so a user's first build has what the console's learning
+rounds used to find (code a Rare or Camelot game decompresses with the CPU,
+code copied out of the boot image, code behind the TLB). tools/dryboot/
+dryboot.c is a CPU-only N64 (the VR4300 and a register model of the RCP
+that finishes every task at once); it runs the game's own entry code,
+libultra and threads for a few seconds of game time and writes what the
+console's safety net would have (learn.txt and learn_code.bin, learn.py's
+formats) for the functions the analysis does not have. Nothing leaves the
+build folder; the files are facts and the RDRAM pages the CPU wrote, as the
+console's learn files are.
+
+N64RX_DRYBOOT=1 to use it (0, the default, until a console set has run
+builds made with it); N64RX_DRYBOOT_FRAMES: how long (600 frames, 10 s)."""
+import hashlib
+import os
+import pathlib
+import shutil
+import subprocess
+
+from . import engines
+
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+SRC = ROOT / 'tools/dryboot/dryboot.c'
+EXE = '.exe' if os.name == 'nt' else ''
+
+
+def enabled():
+    return os.environ.get('N64RX_DRYBOOT', '0') != '0'
+
+
+def tv_of_region(code):
+    """osTvType from the header's region letter, as xbox/src/rt/boot.c reads it"""
+    r = (code or 'E')[3:4]
+    return 0 if r in 'DFHILPSUWXY' else 2 if r == 'B' else 1
+
+
+def _exe(log):
+    """the dry boot built for this PC (once per source: build-host/dryboot/<hash>/)"""
+    h = hashlib.sha256(SRC.read_bytes()).hexdigest()[:12]
+    out = ROOT / 'build-host' / 'dryboot' / h / f'dryboot{EXE}'
+    if out.exists():
+        return out
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if os.name == 'nt':
+        eng = engines.Native()
+        rel_src, rel_out = SRC.relative_to(ROOT).as_posix(), out.relative_to(ROOT).as_posix()
+        rc = eng.bash(f'clang -O2 -std=gnu11 -o {rel_out} {rel_src} -static', log, {})
+    else:
+        cc = os.environ.get('CC') or shutil.which('cc') or shutil.which('clang') or shutil.which('gcc')
+        if not cc:
+            return None
+        with open(log, 'a', encoding='utf-8') as f:
+            rc = subprocess.run([cc, '-O2', '-std=gnu11', '-o', str(out), str(SRC), '-lm'], stdout=f,
+                                stderr=subprocess.STDOUT).returncode
+    return out if rc == 0 and out.exists() else None
+
+
+def run(rom, a, pack, bdir, prog, log):
+    """the dry boot of rom (its image as the console runs it) with analysis a;
+    the learn file it wrote, or None (nothing learnt, or no host compiler)"""
+    exe = _exe(log)
+    if exe is None:
+        prog.note('dry boot skipped: no C compiler for this PC (N64RX_DRYBOOT)')
+        return None
+    d = pathlib.Path(bdir) / 'dryboot'
+    d.mkdir(parents=True, exist_ok=True)
+    rom_file = d / 'rom.z64'
+    if not rom_file.exists() or rom_file.read_bytes() != rom.data:
+        rom_file.write_bytes(rom.data)
+    known = d / 'known.txt'
+    known.write_text(''.join(f'{k & 0xFFFFFFFF:08x}\n' for k in sorted({k & 0xFFFFFFFF for k in a.all_funcs()})))
+    boot = next((s for s in a.img.segments if s.name == 'boot'), None)
+    frames = os.environ.get('N64RX_DRYBOOT_FRAMES', '600')
+    cmd = [str(exe), str(rom_file), str(d), '--entry', f'{a.entry:08x}',
+           '--boot-size', str(pack.boot_size if pack else (boot.size if boot else 0x100000)),
+           '--cic', str(rom.cic or 6102), '--tv', str(tv_of_region(rom.code)),
+           '--rdram', str(pack.rdram_mb if pack and pack.rdram_mb in (4, 8) else 4),
+           '--known', str(known), '--frames', frames]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        prog.note('dry boot: stopped after 10 minutes (nothing learnt)')
+        return None
+    with open(log, 'a', encoding='utf-8') as f:
+        f.write(' '.join(cmd) + '\n' + r.stderr)
+    summary = next((l for l in r.stderr.splitlines() if l.startswith('dryboot: ') and 'frames' in l), '')
+    if summary:
+        prog.note(summary.replace('dryboot: ', 'dry boot: '))
+    if r.returncode == 2:
+        prog.note(next((l.replace('dryboot: ', 'dry boot: ') for l in r.stderr.splitlines() if 'does not know' in l), ''))
+    learn = d / 'learn.txt'
+    if r.returncode not in (0, 2) or not learn.exists():
+        return None
+    text = learn.read_text(encoding='utf-8', errors='replace')
+    return learn if any(l.startswith(('func ', 'code ')) for l in text.splitlines()) else None
