@@ -7,7 +7,8 @@
  * deadline, as Wings64-X's shim; each OSTimer's fields stay in RDRAM. */
 #include "ultra.h"
 
-#define MAX_TIMERS 16
+/* libultra keeps a list; 16 ended in a fatal card for a game with more pending (review 5b.18) */
+#define MAX_TIMERS 64
 
 static int64_t s_offset;   /* osSetTime / mtc0 Count against the clock */
 
@@ -24,10 +25,13 @@ ULTRA(osGetTime) {
     RET64(xu_count64());
 }
 
+static void timers_shift(int64_t d);
 /* osSetTime(OSTime): the time in a0/a1 (a 64-bit argument, O32) */
 ULTRA(osSetTime) {
     (void)rdram;
+    int64_t old = s_offset;
     s_offset = (int64_t)(xu_arg64(ctx, 0) - clock_count());
+    timers_shift(s_offset - old);   /* libultra's osSetTime leaves Count alone: pending timers keep their waits */
 }
 
 /* the counter's low word set (osSetCount; interp.c's mtc0 Count) */
@@ -54,6 +58,15 @@ ULTRA(osSetCount) {
 #endif
 
 static struct { uint32_t t; uint64_t due, interval; uint32_t mq, msg; } s_timers[MAX_TIMERS];
+/* deadlines are on the shifted counter: a jump of it (osSetTime) moves them with it (review 5b.18) */
+static void timers_shift(int64_t d) {
+    int i;
+    if (!d) return;
+    xu_lock();
+    for (i = 0; i < MAX_TIMERS; i++)
+        if (s_timers[i].t) s_timers[i].due += (uint64_t)d;
+    xu_unlock();
+}
 static volatile int s_up;
 static xhw_event* s_kick;
 

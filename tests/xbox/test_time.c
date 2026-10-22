@@ -117,6 +117,17 @@ int main(void) {
         s_us += 1000;
         timer_pass();
         CHECK(s_sent == 2, "the next interval: %u messages", s_sent);
+        /* osSetTime 10 s ahead leaves the pending timer's wait as it was (libultra's leaves Count alone) */
+        memset(&c, 0, sizeof c);
+        {
+            uint64_t t = time64() + 468750000ull;
+            c.r4 = (gpr)(int32_t)(uint32_t)(t >> 32), c.r5 = (gpr)(int32_t)(uint32_t)t;
+        }
+        osSetTime_recomp(NULL, &c);
+        s_sent = 0;
+        timer_pass();
+        CHECK(s_sent == 0, "osSetTime 10 s ahead: %u messages at once (want none)", s_sent);
+        CHECK(s_wait_ms <= 2, "osSetTime 10 s ahead: the wait is %u ms", (unsigned)s_wait_ms);
     }
     printf("test_time: %d checks, %d failed\n", s_checks, s_fail);
     return s_fail != 0;
