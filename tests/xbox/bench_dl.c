@@ -245,6 +245,9 @@ void xhw_logf(const char* fmt, ...) {
 }
 uint64_t xhw_time_us(void) { return 0; }
 void xhw_perf_add(int what, uint64_t us) { (void)what; (void)us; }
+void xhw_perf_phase(int dl) { (void)dl; }
+uint64_t xhw_perf_log_us(void) { return 0; }
+int xhw_perf_detail(void) { return 0; }
 void xhw_panel_render(uint32_t* img, int pitch_px, const xhw_panel* p) { (void)img; (void)pitch_px; (void)p; }
 int wx_game_state(void) { return -1; }
 void wx_frame_overlay(void) {}
