@@ -265,9 +265,16 @@ there with the pc and frame, and `--snap n file` writes RDRAM as graphics
 task n starts (its display list as the CPU left it; scratch only: the
 game's bytes).
 
+Mario Tennis's matches: with the console's own scenario script
+(`N64RX_DRYBOOT_SCRIPT`, 9,000 frames, under two minutes here) the dry boot
+plays into a match; `tools/xbox/dryboot_frame.py` draws a `--snap` of it with
+the host renderer (Mario serving to Luigi at graphics task 4,300). Its menu
+scenes are versions of the same pages the match replaced: kept since the
+versions rule (`N64RX_DRYBOOT_VERSIONS`, `docs/testing.md`), the first build
+has 2,280 functions in 16 segments (the console's 32 rounds: 2,375 in 29).
+
 `decomp_check.py --learn <file>` scores a learn file against a decomp.
-Open: Mario Tennis's matches need longer runs or better input than the
-schedule's; nothing here is checked on a console yet.
+Open: nothing here is checked on a console yet.
 
 ## How well it does (checked against decomps)
 
