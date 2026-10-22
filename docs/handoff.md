@@ -2885,3 +2885,37 @@ After it (xemu; host tests after each):
 `[MEM]`/`[CLOCK]` from red's logs: Banjo-Kazooie 50,112 KB free at boot,
 11,772 KB after nv2a (`vbk20`); Kirby 64 50,964 / 27,804 KB (`vk7`); the
 clock line `[CLOCK] cpu 733 MHz`.
+
+## 2026-10-22 (night): three more red rounds, Banjo's START screen fixed (red + host)
+
+Rounds on red after set 19, each a few builds (`build-host/hwbuild20.sh`
+to `hwbuild24.sh`; logs in `C:\xemu\hw\logs<name>`). Then the maintainer
+paused hardware testing until approved; `vsnap16` (`hwbuild25.sh`) is
+staged, not deployed.
+
+- **Mario Tennis** (`vmt8`): the BACK menu's Paks page no longer freezes
+  on red (d41d8cb). New: a line at the bottom of the screen now and then,
+  the right side cut off, the ball's textures. Its log shows a 384x15
+  RGBA16 tile (11,520 bytes) missed as "too big": more than TMEM holds,
+  so the game relies on TMEM's wrap; not changed blind.
+- **Banjo-Kazooie's START screen: fixed on red** (`vbk22`, 527e2c1). The
+  A/B (`vbk21a` magenta sentinel, `vbk21b` CPU readback, `vbk21c` tiles
+  off; 9b9e3c1, own title IDs via `N64RX_TITLE_ID`, 6c42197) showed the
+  readback stage holding the right picture. The decomp (code_8DC20.c)
+  then showed the pause copying the frame into the depth buffer's memory
+  with texrects and drawing it back: our texrects ignored the colour
+  image. `XGFX_ZIMG_TEXRECT` writes such copies into RDRAM.
+- **Banjo-Kazooie's orange shadows: not fixed.** The fog-blender rule
+  (df4a16e) changed no Banjo draw on red (`vbk23` logged none), so it is
+  opt-in now (a99447b). Also open: the intro's dark fog and its jigsaw
+  pieces' textures.
+- **Pokémon Snap** (`vsnap14`, `vsnap15a/b`): the camera stays locked;
+  15b (vertex output cache and word reads off) behaves the same. The
+  probe follows the detector's copies in the course's first seconds
+  (`XGFX_PROBE_LOG`, 0fe5023: "6 / 12 at half or more"), yet the focus
+  flag never set; those runs were 5-10 s of course. `vsnap16` peeks the
+  detector's state over a whole course (protocol in `hwbuild25.sh`).
+- The Gold three on set 19 (`vsm18`, `vpw2`, `vssb15`): ok.
+- The s15 library sweep (the dry boot, the shipped learnt facts, 90 s
+  runs, one xemu) is running; built at 5948f77 plus default-off
+  diagnostics.
