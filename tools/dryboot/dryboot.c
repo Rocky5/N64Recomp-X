@@ -1152,12 +1152,13 @@ static uint32_t* load_known(const char* path, size_t* n) {
 
 static int usage(void) {
     fprintf(stderr, "usage: dryboot <rom.z64> <out dir> --entry X --boot-size N [--cic N] [--tv 0|1|2] [--rdram 4|8]\n"
-                    "               [--known file] [--frames N] [-v]\n");
+                    "               [--known file] [--frames N] [--dump addr bytes file] [-v]\n");
     return 1;
 }
 
 int main(int argc, char** argv) {
-    const char *rom_path, *out, *known_path = NULL;
+    const char *rom_path, *out, *known_path = NULL, *dump_path = NULL;
+    uint32_t dump_at = 0, dump_n = 0;
     uint32_t entry = 0, boot_size = 0x100000, cic = 6102, tv = 1, mb = 4, frames = 600, i;
     char path[1024];
     FILE* f;
@@ -1176,6 +1177,12 @@ int main(int argc, char** argv) {
         else if (!strcmp(a, "--rdram")) mb = (uint32_t)strtoul(v, NULL, 10);
         else if (!strcmp(a, "--known")) known_path = v;
         else if (!strcmp(a, "--frames")) frames = (uint32_t)strtoul(v, NULL, 10);
+        else if (!strcmp(a, "--dump") && i + 3 < (uint32_t)argc) {   /* --dump <addr> <bytes> <file>: RDRAM after the run */
+            dump_at = (uint32_t)strtoul(v, NULL, 16) & 0x1FFFFFFFu;
+            dump_n = (uint32_t)strtoul(argv[i + 2], NULL, 0);
+            dump_path = argv[i + 3];
+            i += 2;
+        }
         else return usage();
         i++;
     }
@@ -1218,6 +1225,9 @@ int main(int argc, char** argv) {
     memset(&C, 0, sizeof C);
     C.pc = entry;
     C.r[29] = SX32(0xA4001FF0u);
+    /* an entry that returns (the test ROM's) idles in IMEM: `b .; nop` (a game never returns) */
+    wbe32(s_sp + 0x1000, 0x1000FFFFu), wbe32(s_sp + 0x1004, 0);
+    C.r[31] = SX32(0xA4001000u);
     C.r[19] = 0, C.r[20] = tv, C.r[21] = 0, C.r[23] = 0;
     C.cp0[STATUS] = 0x34000000u;   /* CU1, CU0, FR */
     C.cp0[CONFIG] = 0x0006E463u;
@@ -1256,6 +1266,13 @@ int main(int argc, char** argv) {
             (unsigned long long)s_cycles, s_tasks, s_gfx_tasks, s_ndma);
     fclose(s_txt);
     fclose(s_bin);
+    if (dump_path && dump_at < s_ramsize) {
+        FILE* d = fopen(dump_path, "wb");
+        if (d) {
+            fwrite(s_ram + dump_at, 1, dump_n < s_ramsize - dump_at ? dump_n : s_ramsize - dump_at, d);
+            fclose(d);
+        }
+    }
     fprintf(stderr, "dryboot: %u frames, %llu instructions, %u tasks (%u graphics), %u DMAs; %u functions, %u code pages learnt\n",
             s_frames, (unsigned long long)s_cycles, s_tasks, s_gfx_tasks, s_ndma, s_nfunc, s_ncode);
     if (s_verbose) {

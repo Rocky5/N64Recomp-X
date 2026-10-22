@@ -26,6 +26,7 @@ python tools/xbox/test_yaz0.py          # Yaz0 ROMs on a synthetic ROM: the deco
 python tools/xbox/test_entry.py         # the analyser's entry-code shapes on hand-assembled entries (SDK, start-to-end + jal, empty clears, the stack and j/jal, refusals)
 python tools/xbox/test_jpeg.py          # the JPEG decoder task: flat macroblocks give the microcode's colours
 python tools/xbox/test_thread.py        # the thread layer on pthreads: the run token's order (libultra's), one thread in game code, a host wait keeping the turn, interrupts off; a stop with interrupts off, osSetThreadPri in a critical section, a polling higher thread on its starter's level
+python tools/xbox/test_dryboot.py       # the dry boot's CPU: make_test_rom.py's self-checking program (calls, a jump table, mult/div, unaligned memory, floats and rounding modes) passes in it; its learn files in the console's formats
 python tools/xbox/test_analyze.py       # the analyser against every decomp + ROM pair present (skips without ROMs: CI); N64RX_ROMS=<folder>
 ```
 
