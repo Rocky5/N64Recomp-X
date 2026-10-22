@@ -1825,6 +1825,52 @@ static void do_fillrect(uint32_t w0, uint32_t w1) {
     DIRTY();
 }
 
+/* A texrect drawn while the colour image is the depth buffer's memory is a
+ * copy into RDRAM, done here on the CPU. Banjo-Kazooie's pause (its decomp,
+ * code_8DC20.c func_80315084 -> func_80314BB0) copies the frame into its
+ * depth buffer (0x8000E800, inside the boot segment: 32x32 LOADTILE and
+ * texrect blocks), then every paused frame copies that memory back as its
+ * background (func_80315110). The copy went to the screen (the texrect path
+ * ignores the colour image) and RDRAM there kept the boot segment's ROM
+ * bytes (the RDP's own depth clears are GPU clears here), so the paused
+ * background was those bytes: the static on red. Only 1:1 RGBA16 copies from
+ * a LOADTILE; anything else is drawn as before. Found by a subagent from the
+ * decomp. -DXGFX_ZIMG_TEXRECT=0: drawn on the screen, as before */
+#ifndef XGFX_ZIMG_TEXRECT
+#define XGFX_ZIMG_TEXRECT 1
+#endif
+static uint32_t s_zcimg_w;   /* SETCIMG's width while the colour image is the Z image */
+
+/* the texrect into the Z image's RDRAM (XGFX_ZIMG_TEXRECT); 1 when done */
+static int zimg_texrect(uint16_t xl, uint16_t yl, uint16_t xh, uint16_t yh, uint8_t tile, int16_t s, int16_t t,
+                        int16_t dsdx, int16_t dtdy, int cycle) {
+    const Tile* tt = &R.tile[tile & 7];
+    const TmemLoad* ld = &R.loads[(tt->tmem >> 3) & 63];
+    int one = cycle == 2 ? 4 << 10 : 1 << 10;
+    int x, y, x0 = xl >> 2, y0 = yl >> 2, x1 = (xh >> 2) + (cycle >= 2), y1 = (yh >> 2) + (cycle >= 2);
+    if (!XGFX_ZIMG_TEXRECT || !R.cimg || R.cimg != R.zimg || !s_zcimg_w) return 0;
+    if (!ld->valid || !ld->tile || tt->fmt != F3D_G_IM_FMT_RGBA || tt->siz != F3D_G_IM_SIZ_16b || dsdx != one || dtdy != 1 << 10)
+        return 0;
+    if (XHW_TEST_BUILD) {   /* the first few: what is copied where */
+        static unsigned s_n;
+        if (s_n++ < 4) xhw_logf("[GFX] texrect into the Z image: %08x from %08x, %dx%d (by the CPU)", (unsigned)R.cimg,
+                               (unsigned)ld->addr, (int)(x1 - x0), (int)(y1 - y0));
+    }
+    if (fbfx_stale_count()) fb_touch(ld->addr, (ld->rows - 1u) * ld->stride + ld->row_bytes);   /* the frame into RDRAM first */
+    if (cycle < 2 && XGFX_TEXRECT_SNAP) x1 = (xh + 3) >> 2, y1 = (yh + 3) >> 2;
+    for (y = y0; y < y1; y++) {
+        int ti = (t >> 5) + (y - y0) - (tt->ult >> 2);
+        if ((float)y < s_scissor[1] || (float)y >= s_scissor[3] || ti < 0 || ti >= (int)ld->rows) continue;
+        for (x = x0; x < x1; x++) {
+            int si = (s >> 5) + (x - x0) - (tt->uls >> 2);
+            if ((float)x < s_scissor[0] || (float)x >= s_scissor[2] || si < 0 || 2 * si >= (int)ld->row_bytes) continue;
+            wr16(XU_K0(R.cimg + 2u * ((uint32_t)y * s_zcimg_w + (uint32_t)x)),
+                 rd16(ld->addr + (uint32_t)ti * ld->stride + 2u * (uint32_t)si));
+        }
+    }
+    return 1;
+}
+
 static void do_texrect(uint32_t w0, uint32_t w1) {
     uint16_t xl, yl, xh, yh;
     if (XGFX_PROBE && probe_copy(w0, w1)) return;
@@ -1836,6 +1882,7 @@ static void do_texrect(uint32_t w0, uint32_t w1) {
     f3d_texrect_decode(w0, w1, &xl, &yl, &xh, &yh, &tile);
     f3d_texrect_half1_decode(R.half1, &s, &t);
     f3d_texrect_half2_decode(R.half2, &dsdx, &dtdy);
+    if (zimg_texrect(xl, yl, xh, yh, tile, s, t, dsdx, dtdy, cycle)) return;   /* into RDRAM, not the screen */
     x0 = xl * 0.25f; y0 = yl * 0.25f; x1 = xh * 0.25f; y1 = yh * 0.25f;
     if (cycle >= 2) { x1 += 1.0f; y1 += 1.0f; }
     /* the RDP draws a pixel row (column) in 1/2-cycle mode when any of its
@@ -3081,6 +3128,7 @@ static void run_dl(const uint32_t* pc) {
                     R.cimg = c;   /* a probe copy's target: not the screen */
                     break;
                 }
+                if (c == R.zimg) s_zcimg_w = (w0 & 0xFFFu) + 1u;
                 if (c != R.zimg) {   /* the frame's colour image as the RDP has it (framebuffer readback) */
                     s_cimg_siz = (w0 >> 19) & 3u;
                     s_cimg_w = (w0 & 0xFFFu) + 1u;

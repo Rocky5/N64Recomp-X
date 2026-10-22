@@ -870,6 +870,46 @@ static void test_dl_guards(void) {
     CHECK(t == 0, "last-bytes vertex tris %u", t);
 }
 
+
+/* a COPY texrect while the colour image is the Z image (Banjo-Kazooie's
+ * pause copies its frame into the depth buffer's memory this way, then
+ * reads it back as textures): the texels land in RDRAM at the Z image, not
+ * on the screen (XGFX_ZIMG_TEXRECT) */
+#define ZB_AT 0x60000u
+#define ZSRC_AT 0x80000u
+static void test_zimg_copy(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    unsigned x, y, bad = 0, nv;
+    for (y = 0; y < 32; y++)
+        for (x = 0; x < 64; x++) {
+            put16(ZSRC_AT + 2u * (y * 320u + x), (uint16_t)(0x1001u + y * 64u + x));
+            put16(ZB_AT + 2u * (y * 320u + x), 0xDEADu);
+        }
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xFE000000u, ZB_AT);                                                       /* SETZIMG */
+    cmd(0xFD000000u | (0u << 21) | (2u << 19) | (320u - 1u), ZSRC_AT);             /* SETTIMG RGBA16, 320 wide */
+    cmd(0xF5000000u | (0u << 21) | (2u << 19) | (8u << 9), 7u << 24);              /* SETTILE 7: line 8 */
+    cmd(0xF4000000u | (32u * 4u << 12), (7u << 24) | (63u * 4u << 12) | (31u * 4u)); /* LOADTILE 32..63 x 0..31 */
+    cmd(0xF5000000u | (0u << 21) | (2u << 19) | (8u << 9), 0);                     /* SETTILE 0 */
+    cmd(0xF2000000u | (32u * 4u << 12), (63u * 4u << 12) | (31u * 4u));            /* SETTILESIZE 0 */
+    cmd(0xFF000000u | (0u << 21) | (2u << 19) | (320u - 1u), ZB_AT);               /* SETCIMG the Z image */
+    cmd(0xE3000A01u, 0x00200000u);                                                 /* cycle type COPY */
+    cmd(0xE4000000u | (63u * 4u << 12) | (31u * 4u), (32u * 4u << 12));             /* TEXRECT 32,0..63,31 */
+    cmd(0xE1000000u, (32u << 5) << 16);                                            /* s = 32, t = 0 */
+    cmd(0xF1000000u, (4u << 26) | (1u << 10));
+    cmd(0xFF000000u | (0u << 21) | (2u << 19) | (320u - 1u), CIMG_AT);             /* the frame again */
+    cmd(0xE3000A01u, 0);
+    cmd(0xDF000000u, 0);
+    nv = run(&u);
+    for (y = 0; y < 32; y++)
+        for (x = 32; x < 64; x++)
+            bad += *(uint16_t*)(s_ram + ((ZB_AT + 2u * (y * 320u + x)) ^ 2)) != (uint16_t)(0x1001u + y * 64u + x);
+    CHECK(bad == 0, "zimg copy: %u of 1024 texels not copied into the Z image", bad);
+    CHECK(*(uint16_t*)(s_ram + ((ZB_AT + 2u * 31u) ^ 2)) == 0xDEADu, "zimg copy: wrote outside the rectangle");
+    CHECK(nv == 0, "zimg copy: drew %u triangles on the screen", nv);
+}
+
 int main(void) {
     test_ci();
     setup_data();
@@ -895,6 +935,7 @@ int main(void) {
     test_s2dex_obj();
     test_line3d();
     test_dl_guards();
+    test_zimg_copy();
     test_fast3d();   /* and Fast3D once more after the guards' lists */
     if (s_fail) printf("test_f3dex: %d failed\n", s_fail);
     return s_fail ? 1 : 0;
