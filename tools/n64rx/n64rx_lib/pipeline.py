@@ -85,7 +85,8 @@ def cache_key(rom, pack, gpr=None, pin=None):
     """the recompile step is skipped when this is unchanged: the ROM, every
     file of the pack, the recompiler's pin, what n64rx writes, the width"""
     return hashlib.sha256(json.dumps([rom.sha1, pack.file_hash(), pin or engines.recompiler_pin(), GEN_VERSION,
-                                      gpr or '', os.environ.get('N64RX_TRACE', ''), pack.rdram_mb, os.environ.get('N64RX_GUARD', '1')]).encode()).hexdigest()
+                                      gpr or '', os.environ.get('N64RX_TRACE', ''), pack.rdram_mb, os.environ.get('N64RX_GUARD', '1'),
+                                      os.environ.get('N64RX_RESTRICT', '0')]).encode()).hexdigest()
 
 
 def decide_gpr(pack, rom, override, prog, data=None):
@@ -324,6 +325,48 @@ def write_guard(pack, gen, data):
 
 SP_CALL = re.compile(r'^(\s*)((?:func_|static_)\w+|\w+_recomp|LOOKUP_FUNC\([^)]*\))\(rdram, ctx\);$')
 SP_SITE = re.compile(r'^\s*// 0x([0-9A-F]{8}):')
+
+RESTRICT_DEF = re.compile(r'^((?:RECOMP_FUNC )?void \w+)\(uint8_t\* rdram, recomp_context\* ctx\) \{$')
+RESTRICT_LABEL = re.compile(r'^\s*(L_[0-9A-Fa-f]+):')
+RESTRICT_GOTO = re.compile(r'\bgoto (L_[0-9A-Fa-f]+);')
+
+
+def write_restrict(gen):
+    """`restrict` on both parameters of every generated function (docs/roadmap.md
+    B6). The generated code keeps the MIPS registers in ctx->rN and, built with
+    -fno-strict-aliasing, LLVM must assume any RDRAM store may change them, so
+    it reloads them after every store: a four-instruction fill loop became 6 to
+    15 x86 instructions with 4 to 8 memory operands, 4 register-only ones with
+    restrict. Safe because every context access is an offset from ctx
+    (recomp.h's XRC_FODD_ARRAY) and nothing reaches RDRAM through ctx. Each
+    backward goto (a loop) gets a compiler barrier first: a game's spin on a
+    word another thread sets (Kirby 64's wait for its music) reloaded the word
+    only because the register store beside it might have aliased it, and with
+    restrict LLVM could hoist the load and spin for ever. Definitions only:
+    a parameter's restrict is not part of the function's type, so funcs.h
+    stays as it is. N64RX_RESTRICT=1 to use it (0, the default until the M3
+    gate measures it on a console). Returns the number of functions."""
+    if os.environ.get('N64RX_RESTRICT', '0') == '0':
+        return 0
+    n = 0
+    for f in sorted(gen.glob('funcs_*.c')):
+        lines = f.read_text(encoding='utf-8', errors='replace').split('\n')
+        seen = set()
+        for i, line in enumerate(lines):
+            m = RESTRICT_DEF.match(line)
+            if m:
+                lines[i] = m.group(1) + '(uint8_t* restrict rdram, recomp_context* restrict ctx) {'
+                seen = set()
+                n += 1
+                continue
+            lm = RESTRICT_LABEL.match(line)
+            if lm:
+                seen.add(lm.group(1))
+            if 'goto L_' in line:
+                lines[i] = RESTRICT_GOTO.sub(
+                    lambda g: f'{{ XRC_LOOP_BARRIER(); goto {g.group(1)}; }}' if g.group(1) in seen else g.group(0), line)
+        f.write_text('\n'.join(lines), encoding='utf-8', newline='\n')
+    return n
 
 
 def write_sp_check(gen):
@@ -712,6 +755,9 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
             prog.note(f'{write_sp_check(gen)} calls check $sp on return (N64RX_SP_CHECK, trace.c)')
         if nguard:
             prog.note(f'{nguard} functions from captured code checked against RDRAM before they run (guard.c)')
+        nres = write_restrict(gen)   # last: the rewrites above match the plain signature
+        if nres:
+            prog.note(f'{nres} functions take restrict pointers (N64RX_RESTRICT)')
         if write_alias_c(pack, gen):
             prog.note("the game's own copies of libultra go to the runtime's (gen/xrc_alias.c)")
         if ninterp:

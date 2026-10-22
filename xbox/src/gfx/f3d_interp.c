@@ -55,7 +55,11 @@
  * Turok 2 maps its code over physical 0x200000 +). */
 #define XU_K0(a) (((uint32_t)(a)) | 0x80000000u)
 #define rd8(a) rd8(XU_K0(a))
-#define rd16(a) rd16(XU_K0(a))
+/* halfwords at even addresses: an odd one (a garbage list's matrix or
+ * TLUT) read a byte past the window at its last byte, and in the
+ * word-swapped image an odd halfword is not two adjacent bytes anyway
+ * (docs/review-2026-10.md 5c.4) */
+#define rd16(a) rd16(XU_K0(a) & ~1u)
 #define rd32(a) rd32(XU_K0(a))
 #define xu_host(a) xu_host(XU_K0(a))
 #define xu_from_rdram(d, a, n) xu_from_rdram((d), XU_K0(a), (n))
@@ -270,6 +274,12 @@ static inline uint32_t seg(uint32_t a) {
 }
 /* its host address, for word-wise reads (display lists) and hashing */
 static inline const uint8_t* host(uint32_t a) { return xu_host(seg(a)); }
+/* n bytes from a, cut at the window's end: a texture near the top of RDRAM
+ * was hashed past it (docs/review-2026-10.md 5c.2) */
+static inline uint32_t span(uint32_t a, uint32_t n) {
+    uint32_t off = (uint32_t)(host(a) - xrc_rdram_host);
+    return off + (uint64_t)n > xrc_rdram_size ? xrc_rdram_size - off : n;
+}
 
 /* --------------------------------------------------------------- matrices */
 
@@ -430,8 +440,10 @@ static void do_vtx(uint32_t n, uint32_t v0, uint32_t addr) {
         v->ostamp = 0;
         if (XGFX_VTX_WORDS && !(src & 3u)) {   /* the image's words are native: four reads */
             const uint32_t* q = (const uint32_t*)xu_host(src);
-            uint32_t w0 = q[0], w1 = q[1], w2 = q[2], w3 = q[3];
-            if ((src & (xrc_rdram_size - 1)) + 16u > xrc_rdram_size) w1 = rd32(src + 4), w2 = rd32(src + 8), w3 = rd32(src + 12);
+            uint32_t w0, w1, w2, w3;
+            /* the window's end tested before the four reads, not after them (docs/review-2026-10.md 5c.1) */
+            if ((src & (xrc_rdram_size - 1)) + 16u > xrc_rdram_size) w0 = q[0], w1 = rd32(src + 4), w2 = rd32(src + 8), w3 = rd32(src + 12);
+            else w0 = q[0], w1 = q[1], w2 = q[2], w3 = q[3];
             ob[0] = (int16_t)(w0 >> 16); ob[1] = (int16_t)w0; ob[2] = (int16_t)(w1 >> 16);
             tc[0] = (int16_t)(w2 >> 16); tc[1] = (int16_t)w2;
             cn[0] = (uint8_t)(w3 >> 24); cn[1] = (uint8_t)(w3 >> 16); cn[2] = (uint8_t)(w3 >> 8); cn[3] = (uint8_t)w3;
@@ -810,8 +822,8 @@ static TexEntry* texture_for_tile(int tidx) {
     /* the tile's 10.2 coordinates wrap in 12 bits, as the RDP's: a scrolling
      * tile may have lrs below uls (Ocarina of Time's file select and water),
      * and its mask gives the size. -DXGFX_TILE_WRAP=0: unwrapped, as before */
-    unsigned w = XGFX_TILE_WRAP ? ((((unsigned)t->lrs - t->uls) & 0xFFFu) >> 2) + 1 : ((t->lrs - t->uls) >> 2) + 1,
-             h = XGFX_TILE_WRAP ? ((((unsigned)t->lrt - t->ult) & 0xFFFu) >> 2) + 1 : ((t->lrt - t->ult) >> 2) + 1;
+    unsigned w = XGFX_TILE_WRAP ? ((((unsigned)t->lrs - t->uls) & 0xFFFu) >> 2) + 1 : (unsigned)(((t->lrs - t->uls) >> 2) + 1),
+             h = XGFX_TILE_WRAP ? ((((unsigned)t->lrt - t->ult) & 0xFFFu) >> 2) + 1 : (unsigned)(((t->lrt - t->ult) >> 2) + 1);
     /* RGBA32 splits each texel across TMEM's two banks: SETTILE's line covers half a row */
     unsigned line = t->line * 8u * (t->siz == 3 ? 2u : 1u), bytes, pw, ph, slot, i, pal;
     uint32_t key, sample, full = 0;
@@ -901,11 +913,12 @@ static TexEntry* texture_for_tile(int tidx) {
         unsigned r, nr = ld->rows, rs = (uint32_t)nr * ld->row_bytes > XGFX_TEX_FULLHASH_MAX && nr > 16 ? nr / 16u : 1u;
         sample = 0;
         for (r = 0; r < nr; r += rs)
-            sample = (sample ^ sample_hash(host(ld->addr + r * ld->stride), ld->row_bytes)) * 16777619u;
-        sample ^= sample_hash(host(ld->addr + (nr - 1u) * ld->stride), ld->row_bytes);
+            sample = (sample ^ sample_hash(host(ld->addr + r * ld->stride), span(ld->addr + r * ld->stride, ld->row_bytes))) * 16777619u;
+        sample ^= sample_hash(host(ld->addr + (nr - 1u) * ld->stride), span(ld->addr + (nr - 1u) * ld->stride, ld->row_bytes));
     } else
-    sample = sample_hash(host(ld->addr), ld->tile ? ld->row_bytes : bytes) ^
-             (ld->tile ? sample_hash(host(ld->addr + (ld->rows - 1u) * ld->stride), ld->row_bytes) : 0);
+    sample = sample_hash(host(ld->addr), span(ld->addr, ld->tile ? ld->row_bytes : bytes)) ^
+             (ld->tile ? sample_hash(host(ld->addr + (ld->rows - 1u) * ld->stride),
+                                     span(ld->addr + (ld->rows - 1u) * ld->stride, ld->row_bytes)) : 0);
     slot = ((ld->addr >> 3) * 2654435761u ^ key * 40503u) % TEX_CACHE;
     big = XGFX_TEX_RECHECK && !ld->tile && bytes > XGFX_TEX_FULLHASH_MAX;
     for (i = 0; i < 8; i++) {   /* 8-way probe */
@@ -913,7 +926,7 @@ static TexEntry* texture_for_tile(int tidx) {
         if (!e->handle || e->addr != ld->addr || e->key != key) continue;
         if (e->sample != sample) { hot = 1; continue; }   /* the same place, changed */
         if (big && (e->hot || ((s_frame_no + slot + i) & 7u) == 0)) {
-            full = full_hash(host(ld->addr), bytes);
+            full = full_hash(host(ld->addr), span(ld->addr, bytes));
             if (full != e->full) {   /* changed where the samples did not look */
                 hot = 1;
                 e = tex_evict_slot((slot + i) % TEX_CACHE);
@@ -996,7 +1009,7 @@ build:
     e->addr = ld->addr;
     e->key = key;
     e->sample = sample;
-    e->full = big ? (full ? full : full_hash(host(ld->addr), bytes)) : 0;
+    e->full = big ? (full ? full : full_hash(host(ld->addr), span(ld->addr, bytes))) : 0;
     e->hot = hot;
     e->w = (uint16_t)w;
     e->h = (uint16_t)h;
@@ -2680,11 +2693,38 @@ static void dkr_trin(uint32_t w0, uint32_t w1) {
     }
 }
 
+/* A list that runs off RDRAM's end (no G_ENDDL, or a G_DL near the top)
+ * read whatever followed the window; one that calls itself ran until the
+ * watchdog (docs/review-2026-10.md 5c.3). The task ends there, logged once.
+ * The budget counts every command of a task (a frame is tens of
+ * thousands). -DXGFX_DL_BUDGET=0: no budget; -DXGFX_DL_BOUNDS=0: no end check */
+#ifndef XGFX_DL_BUDGET
+#define XGFX_DL_BUDGET 1000000u
+#endif
+#ifndef XGFX_DL_BOUNDS
+#define XGFX_DL_BOUNDS 1
+#endif
+static uint32_t s_dl_cmds;
 static void run_dl(const uint32_t* pc) {
     const uint32_t* stack[DL_DEPTH];
     int sp = 0;
     for (;;) {
-        uint32_t w0 = pc[0], w1 = pc[1];
+        uint32_t w0, w1;
+        if (XGFX_DL_BOUNDS) {   /* (synthesised lists live outside the window and end themselves) */
+            uintptr_t o = (uintptr_t)((const uint8_t*)pc - xrc_rdram_host);
+            if (o <= xrc_rdram_size && o + 8u > xrc_rdram_size) {
+                static int s_said;
+                if (!s_said++) xhw_logf("[GFX] display list ran off RDRAM's end: the task ends there");
+                return;
+            }
+        }
+        if (XGFX_DL_BUDGET && ++s_dl_cmds > XGFX_DL_BUDGET) {
+            static int s_said;
+            if (s_dl_cmds == XGFX_DL_BUDGET + 1u && s_said++ < 4)
+                xhw_logf("[GFX] display list: %u commands in one task (a loop?): the task ends there", (unsigned)XGFX_DL_BUDGET);
+            return;
+        }
+        w0 = pc[0], w1 = pc[1];
         if (XHW_TEST_BUILD) {   /* test builds: the last commands, for tex_miss's report */
             s_ring[s_ring_n & 15][0] = w0, s_ring[s_ring_n & 15][1] = w1;
             s_ring_n++;
@@ -3552,13 +3592,16 @@ void f3d_run(uint32_t dl, int present) {
     s_rdp_n = 0;
     s_trace = XGFX_TRACE_FRAME && s_frames == XGFX_TRACE_FRAME;
     if ((XGFX_TRACE_PRIM || XGFX_TRACE_MISS) && s_trace_next == 1) s_trace_next = 2, s_trace = 1;
-    if (XGFX_TRACE_MS) {
+#if XGFX_TRACE_MS
+    {
         static int s_traced;
         static uint64_t s_first;   /* ms from the first frame */
         if (!s_first) s_first = t0;
         if (!s_traced && t0 - s_first >= (uint64_t)XGFX_TRACE_MS * 1000u) s_traced = s_trace = 1;
     }
+#endif
     DIRTY();
+    s_dl_cmds = 0;
     run_dl((const uint32_t*)host(dl));
     flush();
     if (!s_benching) {

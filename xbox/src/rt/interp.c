@@ -807,7 +807,9 @@ int xrc_interp_refill(uint32_t vaddr, int store) {
     if (!start) return 0;
     while (__sync_lock_test_and_set(&s_busy, 1)) xhw_sleep_ms(0);
     memset(&ctx, 0, sizeof ctx);
+#if !XRC_FODD_ARRAY
     ctx.f_odd = &ctx.f0.u32h;
+#endif
     sp = xu_self_sp();
     ctx.r29 = (gpr)(int32_t)((sp ? sp : 0x80000400u) - 0x400u);
     s_cop0[8] = vaddr;                                                    /* BadVAddr */

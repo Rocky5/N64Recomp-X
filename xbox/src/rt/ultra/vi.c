@@ -30,6 +30,9 @@ __attribute__((weak)) void xrc_gfx_vi(unsigned retrace) { (void)retrace; }
 #ifndef XRC_VI_RESERVE
 #define XRC_VI_RESERVE 2
 #endif
+#ifndef XRC_VI_RESERVE_SMALL
+#define XRC_VI_RESERVE_SMALL 1
+#endif
 
 static volatile uint32_t s_mq, s_msg, s_every = 1;
 static volatile uint32_t s_cur, s_next, s_mode, s_black, s_features;
@@ -106,7 +109,11 @@ static void vi_thread(void* arg) {
 #endif
         if (mq && s_retrace % s_every == 0 && !xrc_menu_open()) {
             int32_t count = (int32_t)rd32(mq + MQ_MSGCOUNT), valid = (int32_t)rd32(mq + MQ_VALIDCOUNT);
-            if (!XRC_VI_RESERVE || valid + 1 + XRC_VI_RESERVE <= count) xu_send(mq, s_msg, 0, 0);
+            /* a queue no bigger than the reserve keeps none: a 1- or 2-slot retrace queue
+             * got no message at all, and a game blocking on it each frame hung
+             * (docs/review-2026-10.md 5b.1). -DXRC_VI_RESERVE_SMALL=0: as before */
+            int32_t r = XRC_VI_RESERVE_SMALL && count <= XRC_VI_RESERVE ? 0 : XRC_VI_RESERVE;
+            if (!r || valid + 1 + r <= count) xu_send(mq, s_msg, 0, 0);
         }
         xu_post_event(OS_EVENT_VI);
         xu_ai_tick();    /* the DAC's buffers end on their own: OS_EVENT_AI (ai.c) */

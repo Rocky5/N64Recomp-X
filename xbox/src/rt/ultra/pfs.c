@@ -399,7 +399,7 @@ ULTRA(osPfsReadWriteFile) {
     img = xu_pak_image(port);
     d = dir(img, file);
     n = dir_used(d) ? chain(img, be16(d + 6), pages) : -1;
-    if (n < 0 || off + size > n * 256) {
+    if (n < 0 || (int64_t)off + size > (int64_t)n * 256) {   /* in 64 bits: off + size overflowed int (5b.12) */
         r = PFS_ERR_INVALID;
     } else {
         while (size > 0) {

@@ -822,6 +822,31 @@ static void test_s2dex_obj(void) {
     CHECK(s_tex_creates > before, "obj rect: no texture made from the loaded block");
 }
 
+/* lists that would read past the window or never end (docs/review-2026-10.md
+ * 5c.1, 5c.3): a G_DL branch to itself ends at the command budget, a list
+ * with no G_ENDDL at RDRAM's top ends there, a vertex in its last 12 bytes
+ * loads; each returns */
+static void test_dl_guards(void) {
+    unsigned t;
+    s_pc = DL_AT;
+    head_f3d();
+    cmd(0x06010000u, DL_AT);   /* G_DL, no push: to itself, for ever */
+    t = run(NULL);
+    CHECK(t == 0, "self loop tris %u", t);
+    s_pc = RAM_SIZE - 16u;
+    cmd(0, 0);                 /* G_SPNOOP x2, then the window's end */
+    cmd(0, 0);
+    s_nv = 0;
+    f3d_run(RAM_SIZE - 16u, 1);
+    CHECK(s_nv == 0, "off the end: %u vertices", s_nv);
+    s_pc = DL_AT;
+    head_f3d();
+    cmd(0x04000000u | ((1u - 1u) << 20) | (0u << 16) | 16u, RAM_SIZE - 12u);   /* G_VTX 1 at RDRAM's last 12 bytes */
+    cmd(0xB8000000u, 0);
+    t = run(NULL);
+    CHECK(t == 0, "last-bytes vertex tris %u", t);
+}
+
 int main(void) {
     test_ci();
     setup_data();
@@ -845,6 +870,8 @@ int main(void) {
     test_tlut_offset();
     test_s2dex_bg();
     test_s2dex_obj();
+    test_dl_guards();
+    test_fast3d();   /* and Fast3D once more after the guards' lists */
     if (s_fail) printf("test_f3dex: %d failed\n", s_fail);
     return s_fail ? 1 : 0;
 }

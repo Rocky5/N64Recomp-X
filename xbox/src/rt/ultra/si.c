@@ -259,7 +259,7 @@ static int eep_io(uint32_t block, uint32_t buf, uint32_t n, int write) {
     uint32_t off = block * 8u;
     xu_save_lock();
     eep_load();
-    if (off + n > s_eep_size) {
+    if (n > s_eep_size || off > s_eep_size - n) {   /* off + n wrapped for a huge nbytes: 4 GB copied (5b.8) */
         xu_save_unlock();
         return -1;
     }

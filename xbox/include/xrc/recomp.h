@@ -66,6 +66,10 @@
 #define RECOMP_FUNC extern inline __attribute__((weak, noinline))
 #endif
 #define SET_FENV_ACCESS()
+/* before a loop's backward goto when n64rx writes `restrict` (N64RX_RESTRICT,
+ * pipeline.py write_restrict): RDRAM is read again each time round, so a spin
+ * on a word another thread sets ends */
+#define XRC_LOOP_BARRIER() __asm__ volatile("" ::: "memory")
 
 #ifndef __cplusplus
 #ifndef nullptr
@@ -426,17 +430,44 @@ typedef union {
     uint64_t u64;
 } fpr;
 
+/* f_odd: in the MIPS II float mode an odd FPR's word is the even one's high
+ * word, which the generator spells ctx->f_odd[(i - 1) * 2]. Upstream keeps
+ * a pointer, set to &f0.u32h; here it is an array over the same words, in
+ * the struct, so every context access in the generated code is an offset
+ * from ctx and none goes through a pointer loaded from it: what `restrict`
+ * on ctx needs (docs/roadmap.md B6). A copied context (strand.c) also stops
+ * pointing at the old one's registers. -DXRC_FODD_ARRAY=0: the pointer */
+#ifndef XRC_FODD_ARRAY
+#define XRC_FODD_ARRAY 1
+#endif
 typedef struct {
     gpr r0,  r1,  r2,  r3,  r4,  r5,  r6,  r7,
         r8,  r9,  r10, r11, r12, r13, r14, r15,
         r16, r17, r18, r19, r20, r21, r22, r23,
         r24, r25, r26, r27, r28, r29, r30, r31;
+#if XRC_FODD_ARRAY
+    union {
+        struct {
+            fpr f0,  f1,  f2,  f3,  f4,  f5,  f6,  f7,
+                f8,  f9,  f10, f11, f12, f13, f14, f15,
+                f16, f17, f18, f19, f20, f21, f22, f23,
+                f24, f25, f26, f27, f28, f29, f30, f31;
+        };
+        struct {
+            uint32_t f_odd_base_;   /* f0.u32l */
+            uint32_t f_odd[63];     /* f_odd[2k] = f(2k).u32h */
+        };
+    };
+#else
     fpr f0,  f1,  f2,  f3,  f4,  f5,  f6,  f7,
         f8,  f9,  f10, f11, f12, f13, f14, f15,
         f16, f17, f18, f19, f20, f21, f22, f23,
         f24, f25, f26, f27, f28, f29, f30, f31;
+#endif
     uint64_t hi, lo;
+#if !XRC_FODD_ARRAY
     uint32_t* f_odd;
+#endif
     uint32_t status_reg;
     uint8_t mips3_float_mode;
 } recomp_context;

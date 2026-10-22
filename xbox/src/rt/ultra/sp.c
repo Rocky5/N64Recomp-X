@@ -110,8 +110,38 @@ static void take(int i) {
 /* under the lock: thread.c before `mine` sleeps (its own tasks' events),
  * vi.c every retrace with NULL (those whose thread is blocked, or two
  * retraces old). How many went out. */
+/* Two tasks' events out in one flush: each take() jams its pair at the
+ * front, so the second task's came out first and the scheduler paired the
+ * audio done with the graphics task (docs/review-2026-10.md 5b.3). Those
+ * that go are chosen oldest first (as far as there is room) and posted
+ * newest first, so the oldest is read first. -DXRC_RCP_ORDER=0: as before */
+#ifndef XRC_RCP_ORDER
+#define XRC_RCP_ORDER 1
+#endif
 int xu_rcp_flush(void* mine) {
     int i = 0, n = 0;
+    if (XRC_RCP_ORDER) {
+        int sel[MAX_PEND], k = 0, j, sp = xu_event_room(OS_EVENT_SP), dp = xu_event_room(OS_EVENT_DP),
+            same = xu_event_same(OS_EVENT_SP, OS_EVENT_DP);
+        for (i = 0; i < s_npend; i++) {
+            int go = !XRC_RCP_OWNER ||
+                     (mine ? s_pend[i].thr == mine
+                           : xu_thr_blocked(s_pend[i].thr) || xu_retrace() - s_pend[i].at >= 2);
+            if (!go) continue;
+            if (XRC_RCP_ROOM) {
+                int nsp = 1 + (s_pend[i].dp && same), ndp = s_pend[i].dp && !same;
+                if (sp < nsp || dp < ndp) break;   /* no room: this one and those after it wait */
+                sp -= nsp, dp -= ndp;
+            }
+            sel[k++] = i;
+        }
+        for (j = k - 1; j >= 0; j--) post_done(s_pend[sel[j]].dp);
+        for (i = j = 0, n = 0; i < s_npend; i++)   /* the rest, in order */
+            if (n < k && sel[n] == i) n++;
+            else s_pend[j++] = s_pend[i];
+        s_npend = j;
+        return k;
+    }
     while (i < s_npend) {
         int go = !XRC_RCP_OWNER ||
                  (mine ? s_pend[i].thr == mine

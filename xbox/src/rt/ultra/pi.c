@@ -18,6 +18,9 @@
 #include "ultra.h"
 
 static unsigned s_bad;
+#ifndef XRC_PI_BOUNDS
+#define XRC_PI_BOUNDS 1
+#endif
 
 /* ---- the ROM image's readers: every one goes through xhw_rom_read ---- */
 
@@ -85,10 +88,37 @@ uint32_t xu_pi_dma(uint32_t dev, uint32_t dram, uint32_t n) {
             xhw_logf("[PI] DMA ROM %06x -> %08x (phys %08x..%08x), %x bytes", (unsigned)rom_offset(dev), (unsigned)dram,
                      (unsigned)xu_phys(dram), (unsigned)xu_phys(dram + n - 1), (unsigned)n);
     }
+    if (XRC_PI_BOUNDS) {
+        /* the PI's length register is 24 bits; a destination past RDRAM's end
+         * wrapped onto physical 0 (the vectors, osTvType); a DMA across the
+         * ROM's end zero-filled its in-ROM part too (docs/review-2026-10.md
+         * 5b.2). -DXRC_PI_BOUNDS=0: as before */
+        uint32_t off = rom_offset(dev), size = xhw_rom_size();
+        if (n > 0x1000000u) n = 0x1000000u;
+        if ((int32_t)dram < 0 && (dram & 0x1FFFFFFFu) + (uint64_t)n > xrc_rdram_size) {
+            uint32_t p = dram & 0x1FFFFFFFu;
+            if (s_bad++ < 16)
+                xhw_logf("[PI] DMA past RDRAM's end: %u bytes to %08x (cut)", (unsigned)n, (unsigned)dram);
+            n = p < xrc_rdram_size ? xrc_rdram_size - p : 0;
+            if (!n) return 1;
+        }
+        if (size && off < size && n > size - off) {
+            uint32_t in = size - off;
+            if (s_bad++ < 16)
+                xhw_logf("[PI] DMA across the ROM's end: dev %08x, %u bytes to %08x (%u past it: zeros)",
+                         (unsigned)dev, (unsigned)n, (unsigned)dram, (unsigned)(n - in));
+            for (i = in; i < n; i++) wr8(dram + i, 0);
+            n = in;
+        }
+    }
     if (xu_rom_to_rdram(rom_offset(dev), dram, n) == 0) {
         xrc_learn_dma(rom_offset(dev), dram, n);   /* learn.c: where code came from */
         xrc_ovl_dma(rom_offset(dev), dram, n);     /* ovl.c: which overlay is loaded there now */
-        xrc_guard_inval(dram | 0x80000000u, n);       /* guard.c: recompiled code there checked again */
+        /* guard.c: recompiled code there checked again. By its physical page:
+         * `dram | 0x80000000` sent a DMA into TLB-mapped code (Turok 2's
+         * 0x00200000, Paper Mario's 0xE0200000) to the wrong range and the
+         * stale copy ran on (5b.23). -DXRC_PI_BOUNDS=0: as before */
+        xrc_guard_inval(XRC_PI_BOUNDS ? 0x80000000u | xu_phys(dram) : dram | 0x80000000u, n);
         return 0;
     }
     for (i = 0; i < n; i++) wr8(dram + i, 0);

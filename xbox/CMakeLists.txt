@@ -39,6 +39,12 @@ add_library(xrc_pbkit STATIC
     ${PBKIT_SRC}/pbkit_print.c ${PBKIT_SRC}/pbkit_pushbuffer.c)
 target_include_directories(xrc_pbkit PRIVATE ${PBKIT_SRC})
 target_compile_options(xrc_pbkit PRIVATE -w)
+# pbkit's push helpers run on every draw; they were built with no -O at all
+# (docs/review-2026-10.md section 2). XBOX_CMAKE_ARGS=-DXBOX_PBKIT_O2=OFF: as before
+option(XBOX_PBKIT_O2 "pbkit at -O2, as the platform layer" ON)
+if(XBOX_PBKIT_O2)
+    target_compile_options(xrc_pbkit PRIVATE -O2 -march=pentium3)
+endif()
 
 # ---- game side (tools/xbox/compile_game.py, incremental via depfiles) ----
 # XBOX_LTO (default ON; XBOX_LTO=0 turns it off): bitcode, ThinLTO at the
@@ -104,4 +110,5 @@ set_property(TARGET n64recomp_x APPEND PROPERTY LINK_DEPENDS ${GAME_OUT}/objects
 add_custom_command(TARGET n64recomp_x POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/xbe
     COMMAND ${NXDK_DIR}/tools/cxbe/cxbe "-OUT:${CMAKE_BINARY_DIR}/xbe/default.xbe" "-TITLE:${XRC_XBE_TITLE}" $<TARGET_FILE:n64recomp_x>
-    COMMENT "cxbe -> xbe/default.xbe")
+    COMMENT "cxbe -> xbe/default.xbe"
+    VERBATIM)

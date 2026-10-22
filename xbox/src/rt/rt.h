@@ -63,7 +63,9 @@ static inline void xrc_ctx_init(recomp_context* ctx, uint32_t sp) {
      * game that checks its own Status (Banjo-Kazooie halts unless IM4, the
      * reset line, is unmasked) reads that. -DXRC_STATUS_INIT=1: IE only. */
     ctx->status_reg = XRC_STATUS_INIT;
+#if !XRC_FODD_ARRAY
     ctx->f_odd = &ctx->f0.u32h;
+#endif
     ctx->mips3_float_mode = 0;
 }
 

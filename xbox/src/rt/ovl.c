@@ -45,7 +45,13 @@ static uint16_t** page_ptr(uint32_t vram, int make) {
     return &(*g)[(vram >> PAGE_SHIFT) & (GROUP_PAGES - 1)];
 }
 #define SLOT(vram) (((vram) >> 2) & (PAGE_WORDS - 1))
-#define LEARN_SLOTS 512   /* learn.c's stubs, entered at run time */
+/* learn.c's stubs, entered at run time: room for every address the net
+ * keeps (XRC_MAX_LEARN); 512 sent the 513th and later down the slow path,
+ * a scan and a log line per call (docs/review-2026-10.md 5a.3) */
+#ifndef XRC_MAX_LEARN
+#define XRC_MAX_LEARN 4096
+#endif
+#define LEARN_SLOTS XRC_MAX_LEARN
 #ifndef XRC_OVERLAYS
 #define XRC_OVERLAYS 1
 #endif
@@ -90,8 +96,8 @@ static int enter(uint32_t vram, recomp_func_t* f) {
 }
 
 /* learn.c: a stub for an address the net took (under its lock) */
-int xrc_ovl_enter(uint32_t vram, recomp_func_t* f);
-int xrc_ovl_enter(uint32_t vram, recomp_func_t* f) { return enter(vram, f); }
+int xrc_ovl_enter(uint32_t vram, recomp_func_t* f);   /* its table index, 0 when there is no room */
+int xrc_ovl_enter(uint32_t vram, recomp_func_t* f) { return enter(vram, f) ? (int)s_nfuncs : 0; }
 
 /* the recompiled function whose x86 holds `host` (the nearest start at or
  * below it; under ThinLTO an estimate), 0 when none: the caller the learn
@@ -119,8 +125,15 @@ int xrc_ovl_init(void) {
     }
     s_cap = (uint32_t)total + LEARN_SLOTS;
     s_funcs = (recomp_func_t**)calloc(s_cap + 1, sizeof *s_funcs);
-    if (xrc_game.num_sections > 1)
-        section_addresses = (int32_t*)calloc(xrc_game.num_sections, sizeof(int32_t));
+    {   /* indexed by the recompiler's section index, which has gaps (a section
+         * with neither functions nor relocations gets no table entry but keeps
+         * its number): sized by the largest index, not the entry count, which
+         * wrote past the block (docs/review-2026-10.md 5a.1) */
+        size_t n = 1;
+        for (i = 0; i < xrc_game.num_sections; i++)
+            if ((size_t)xrc_game.sections[i].index + 1 > n) n = (size_t)xrc_game.sections[i].index + 1;
+        section_addresses = (int32_t*)calloc(n, sizeof(int32_t));
+    }
     if (!s_funcs || !section_addresses) return 0;
     s_sec_base = (uint32_t*)calloc(xrc_game.num_sections + 1, sizeof *s_sec_base);
     s_ovl = (uint8_t*)calloc(xrc_game.num_sections + 1, 3);
@@ -288,6 +301,11 @@ static int put_index(uint32_t vram, uint16_t idx) {   /* set_index, making the p
     if (!*pg && !(*pg = (uint16_t*)calloc(PAGE_WORDS, sizeof(uint16_t)))) return 0;
     (*pg)[SLOT(vram)] = idx;
     return 1;
+}
+/* learn.c: a stub an overlay switch took off the table, back at its index */
+void xrc_ovl_reenter(uint32_t vram, int idx);
+void xrc_ovl_reenter(uint32_t vram, int idx) {
+    if (idx > 0 && (uint32_t)idx <= s_nfuncs) put_index(vram, (uint16_t)idx);
 }
 /* section k's functions off the table at the place it was mapped (those
  * entries that are still its own) */

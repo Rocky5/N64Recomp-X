@@ -91,7 +91,11 @@ typedef struct {
     uint32_t gp;                /* its creator's gp (XRC_THREAD_GP) */
     void* starter;              /* the Thr that started it (XRC_START_DEFER) */
     unsigned starter_sleeps;    /* its sleeps then */
+    int rs;                     /* XRC_RUN_TOKEN: RS_NONE, RS_READY (runnable), RS_BLOCKED (on an N64 object) */
+    unsigned seq;               /* its place among the ready threads of its priority (FIFO) */
+    xhw_event* tev;             /* the run token handed to it */
 } Thr;
+enum { RS_NONE, RS_READY, RS_BLOCKED };
 static Thr s_thr[MAX_THREADS];
 static volatile int s_started;   /* game threads the runtime runs (osStartThread, a dispatch: xu_start_dispatched) */
 static volatile int s_nthr;
@@ -155,6 +159,7 @@ static Thr* add(uint32_t t) {
     memset(d, 0, sizeof *d);
     d->t = t;
     d->ev = xhw_event_create();
+    d->tev = xhw_event_create();
     s_nthr++;
     if (s_nthr > 32 && !(s_nthr & 7)) xhw_logf("[OS] %d N64 thread records", s_nthr);
     return d;
@@ -203,20 +208,157 @@ static void running_next(const Thr* me) {
 #define running_next(me) ((void)0)
 #endif
 
-/* under the lock: wake every thread sleeping on `key` (they recheck) */
+static void make_ready(Thr* d);
+static void make_blocked(Thr* d);
+static void resched(void);
+static void token_wait(Thr* me);
+static void token_yield(Thr* me);
+
+/* under the lock: wake every thread sleeping on `key` (they recheck); with
+ * the run token each is ready, and the highest may take it */
 static void wake_all(uint32_t key) {
-    int i;
+    int i, n = 0;
     for (i = 0; i < s_nthr; i++)
-        if (s_thr[i].wait == key) xhw_event_signal(s_thr[i].ev);
+        if (s_thr[i].wait == key) make_ready(&s_thr[i]), xhw_event_signal(s_thr[i].ev), n++;
+    if (n) resched();
 }
 
 /* under the lock: sleep until woken; every level of the lock is let go
  * meanwhile (a thread blocked with interrupts "off" lets others run, as a
  * thread switch did on the N64) and taken back after */
-static void stop_wait(Thr* me);
+static void stop_wait(Thr* me, int held);
 
 static int pri_of(const Thr* d) { return d->t ? (int)(int32_t)rd32(d->t + TH_PRIORITY) : -1; }
 static void rank_update(int extra);
+
+/* ---- the run token (docs/roadmap.md B1) ----
+ * libultra runs one thread at a time: the highest-priority runnable one,
+ * alone until it blocks, FIFO among equals; an interrupt that readies a
+ * higher one switches to it at once, unless interrupts are off. The kernel
+ * time-slices threads that share a level and lets any lower level run while
+ * a thread waits on a host lock (a log line, a file, the runtime's lock),
+ * which the N64 never did: every XRC_START_DEFER / XRC_SEND_YIELD /
+ * XRC_RANK_LEVELS switch is a patch over one case of that. With the token,
+ * a game thread runs game code only while it holds the token. It gives it
+ * up when it blocks on an N64 object (a queue, a stop, a fault, the idle
+ * loop), never on a host wait. A thread made ready that outranks the holder
+ * takes it: the holder waits at its next safe point (a runtime call), or at
+ * once where the kernel's levels preempt it; with interrupts off the switch
+ * waits for them to come on. The runtime's own threads (VI, timers, tasks,
+ * audio, saves) are the interrupts and never hold it.
+ * DIVERGES: none meant; a holder preempted by an interrupt runs on until its
+ * next runtime call when the kernel gives it the CPU (a level shared with the
+ * thread that took the token).
+ * -DXRC_RUN_TOKEN=1 to use it; 0 (the default until a console set): the
+ * kernel's levels alone, as before. */
+#ifndef XRC_RUN_TOKEN
+#define XRC_RUN_TOKEN 0
+#endif
+static Thr* volatile s_run;     /* the holder, or NULL when no game thread is runnable */
+static unsigned s_seq;
+static volatile int s_pend;     /* a higher thread was made ready while the holder had interrupts off */
+static unsigned s_handoffs, s_late;
+
+static Thr* tls_thr(void) { return s_tls == 0xFFFFFFFFu ? NULL : (Thr*)xhw_tls_get(s_tls); }
+/* a game thread the token rules: from its osStartThread on (its host thread
+ * may run before osStartThread has its handle) */
+static int in_token(const Thr* d) { return XRC_RUN_TOKEN && d && d->t && d->rs != RS_NONE; }
+
+/* under the lock: the highest-priority ready thread, the earliest made ready among equals */
+static Thr* pick(void) {
+    Thr* best = NULL;
+    int bp = -1, i;
+    for (i = 0; i < s_nthr; i++) {
+        Thr* d = &s_thr[i];
+        int p;
+        if (d->rs != RS_READY) continue;
+        p = pri_of(d);
+        if (!best || p > bp || (p == bp && (int)(d->seq - best->seq) < 0)) best = d, bp = p;
+    }
+    return best;
+}
+
+/* under the lock: the token to the thread that should run now. A holder
+ * that can still run keeps it unless a strictly higher priority is ready,
+ * and keeps it while its interrupts are off (s_pend: ints_on looks again) */
+static void resched(void) {
+    Thr *best, *cur = s_run;
+    if (!XRC_RUN_TOKEN) return;
+    s_pend = 0;
+    best = pick();
+    if (best == cur) return;
+    if (cur && cur->rs == RS_READY) {
+        if (!best || pri_of(best) <= pri_of(cur)) return;
+        if (cur->ints_off) {
+            s_pend = 1;
+            return;
+        }
+        cur->seq = ++s_seq;   /* preempted: behind the others of its priority, as __osEnqueueThread puts it */
+    }
+    s_run = best;
+    if (best) s_handoffs++, xhw_event_signal(best->tev);
+}
+
+/* under the lock */
+static void make_ready(Thr* d) {
+    if (!in_token(d) || d->rs == RS_READY) return;   /* (RS_NONE: not a started game thread) */
+    d->rs = RS_READY;
+    d->seq = ++s_seq;
+}
+/* under the lock: a thread started (osStartThread, a dispatch) joins the token's threads, ready */
+static void token_join(Thr* d) {
+    if (!XRC_RUN_TOKEN || !d->t) return;
+    d->rs = RS_BLOCKED;
+    make_ready(d);
+    resched();
+}
+static void make_blocked(Thr* d) {
+    if (!in_token(d)) return;
+    d->rs = RS_BLOCKED;
+    if (s_run == d) s_run = NULL;
+    resched();
+}
+
+/* before a game thread runs game code again: it waits for the token with
+ * every level of the lock let go (taken back after). A thread created again
+ * meanwhile (osCreateThread over it) starts over at its entry */
+static void token_wait(Thr* me) {
+    int n, i;
+    if (!in_token(me)) return;
+    xu_lock();
+    if (!me->halted) make_ready(me);
+    resched();
+    n = s_depth;
+    while (s_run != me) {
+        for (i = 0; i < n; i++) xu_unlock();
+        xhw_event_wait(me->tev, XHW_INFINITE);
+        if (XRC_THREAD_RESUME && me->fresh && s_run == me) __builtin_longjmp(me->jb, 1);   /* no level held */
+        for (i = 0; i < n; i++) xu_lock();
+    }
+    xu_unlock();
+}
+
+/* a safe point in a game thread (a runtime call that may have readied a
+ * higher thread, interrupts back on): on with the token, or wait for it */
+static void token_yield(Thr* me) {
+    if (!in_token(me) || me->rs != RS_READY) return;
+    if (s_run == me && !s_pend) return;
+    if (s_run != me) s_late++;   /* taken while it ran: by an interrupt, or a level the kernel shares */
+    token_wait(me);
+}
+
+/* hooks.c's pause_self: the game's idle loop blocks this thread for good */
+void xu_token_idle(void) {
+    Thr* me = tls_thr();
+    if (!in_token(me)) return;
+    xu_lock();
+    make_blocked(me);
+    xu_unlock();
+}
+
+/* the token and the thread layer's state, for the stall report and the host test */
+unsigned xu_token_handoffs(void) { return s_handoffs; }
+int xu_token_holder(void) { return s_run && s_run->t ? (int)(int32_t)rd32(s_run->t + TH_ID) : -1; }
 
 /* another thread already blocked on `key` at this thread's priority or above:
  * libultra hands a message to the first such waiter, not to a thread that
@@ -239,16 +381,18 @@ static void sleep_on(Thr* me, uint32_t key) {
     me->wait = key;
     me->sleeps++;
     running_next(me);
+    make_blocked(me);   /* the run token to the next */
     for (i = 0; i < n; i++) xu_unlock();
     if (!me->halted) xhw_event_wait(me->ev, XHW_INFINITE);
     if (XRC_THREAD_HALT && me->halted) {   /* stopped or destroyed meanwhile: no lock held here */
         me->wait = 0;
         me->halted = 0;
-        stop_wait(me);                     /* started again: on from here, or (created again) its entry */
+        stop_wait(me, 0);                  /* started again: on from here, or (created again) its entry */
     } else if (XRC_THREAD_HALT && me->fresh && XRC_THREAD_RESUME) {
         me->wait = 0;                      /* created and started again before it got here */
         __builtin_longjmp(me->jb, 1);
     }
+    token_wait(me);   /* no level held here */
     for (i = 0; i < n; i++) xu_lock();
     me->wait = 0;
     running_is(me->t);
@@ -261,12 +405,30 @@ static void park(void) {
 
 /* a stopped N64 thread waits here for osStartThread; created again in the
  * meantime, it starts over at its (new) entry */
-static void stop_wait(Thr* me) {
-    if (!XRC_THREAD_RESUME || !me->t) park();
+/* `held`: the levels of the lock it holds (interrupts off), let go while it
+ * waits: a thread that stopped itself with interrupts off kept the lock, and
+ * the VI thread, the timers and every queue waited for good
+ * (docs/review-2026-10.md 5b.5). -DXRC_STOP_UNLOCK=0: kept, as before */
+#ifndef XRC_STOP_UNLOCK
+#define XRC_STOP_UNLOCK 1
+#endif
+static void stop_wait(Thr* me, int held) {
+    int i;
+    if (!XRC_STOP_UNLOCK) held = 0;
+    if (!XRC_THREAD_RESUME || !me->t) {
+        for (i = 0; i < held; i++) xu_unlock();
+        park();
+    }
+    xu_lock();
     me->stopped = 1;
     running_next(me);
+    make_blocked(me);
+    xu_unlock();
+    for (i = 0; i < held; i++) xu_unlock();
     while (me->stopped) xhw_event_wait(me->ev, XHW_INFINITE);
-    if (me->fresh) __builtin_longjmp(me->jb, 1);
+    if (me->fresh) __builtin_longjmp(me->jb, 1);   /* no level held: thread_body starts it over */
+    token_wait(me);
+    for (i = 0; i < held; i++) xu_lock();
     wr16(me->t + TH_STATE, OS_STATE_RUNNING);
 }
 
@@ -321,8 +483,16 @@ static void thread_body(void* p) {
     if (XRC_THREAD_RESUME && __builtin_setjmp(d->jb)) {   /* created again (stop_wait) */
         d = (Thr*)xhw_tls_get(s_tls);
         xhw_logf("[OS] thread %d started again: entry %08x", (int)(int32_t)rd32(d->t + TH_ID), (unsigned)d->entry);
+        /* no level of the lock is held on the way here: a thread destroyed
+         * with interrupts off starts over with them on, at its own level
+         * (its next ints_on unlocked as a non-owner: 5b.5) */
+        if (XRC_STOP_UNLOCK && (d->ints_off || d->mask_off)) {
+            d->ints_off = d->mask_off = 0;
+            xhw_thread_set_level(d->kt, xu_level_of(pri_of(d)));
+        }
     }
     d->fresh = 0;
+    token_wait(d);   /* the run token before its first instruction */
     running_is(d->t);
     xrc_ctx_init(&ctx, d->sp);
     if (XRC_THREAD_GP) ctx.r28 = (gpr)(int32_t)d->gp;
@@ -334,7 +504,7 @@ static void thread_body(void* p) {
     xhw_logf("[OS] thread %d returned", (int)(int32_t)rd32(d->t + TH_ID));
     wr16(d->t + TH_STATE, OS_STATE_STOPPED);
     d->dead = 1;
-    stop_wait(d);
+    stop_wait(d, d->ints_off ? s_depth : 0);
 }
 
 /* osCreateThread(t, id, entry, arg, sp, pri) */
@@ -395,6 +565,9 @@ ULTRA(osStartThread) {
         rank_update(pri);
         d->starter = me;
         d->starter_sleeps = me->sleeps;
+        xu_lock();
+        token_join(d);
+        xu_unlock();
         d->kt = xhw_thread_spawn(thread_body, d, xu_level_of(pri), HOST_STACK);
         if (!d->kt) xrc_fatal_vram("osStartThread: no kernel thread", t, 0);
         s_started++;
@@ -402,7 +575,11 @@ ULTRA(osStartThread) {
                  (int)(int32_t)rd32(t + TH_ID), (unsigned)d->entry, (unsigned)d->sp, pri, xu_level_of(pri));
     } else if (XRC_THREAD_RESUME && d->stopped) {
         wr16(t + TH_STATE, OS_STATE_RUNNABLE);
+        xu_lock();
         d->stopped = 0;
+        make_ready(d);
+        resched();
+        xu_unlock();
         xhw_event_signal(d->ev);
     } else if (XRC_THREAD_RESUME && d->faulting) {
         /* stopped faulted (xu_fault_wait): a fault thread that lets it go with
@@ -411,15 +588,27 @@ ULTRA(osStartThread) {
         wr16(t + TH_STATE, OS_STATE_RUNNABLE);
     } else if (d->halted) {   /* stopped by another thread, started again before it reached its block */
         wr16(t + TH_STATE, OS_STATE_RUNNABLE);
+        xu_lock();
         d->halted = 0;
+        make_ready(d);
+        resched();
+        xu_unlock();
         xhw_event_signal(d->ev);
+    }
+    if (in_token(me)) {   /* a higher one took the token: it runs first, as libultra dispatches it */
+        token_yield(me);
+        return;
     }
     /* a higher N64 priority runs first, as libultra dispatches it: where the
      * kernel levels are equal (50 and 51 share one) the caller waits until
      * it stops or blocks on a queue; a higher level preempts by itself */
+    /* at most 200 ms: a started thread that waits by polling (a pause, an
+     * osYieldThread loop) sets neither, and the starter never returned (5b.6) */
     if (XRC_THREAD_RESUME && me->t && (int32_t)rd32(t + TH_PRIORITY) > (int32_t)rd32(me->t + TH_PRIORITY) &&
-        xu_level_of((int32_t)rd32(t + TH_PRIORITY)) == xu_level_of((int32_t)rd32(me->t + TH_PRIORITY)))
-        while (!d->stopped && !d->wait) xhw_yield();
+        xu_level_of((int32_t)rd32(t + TH_PRIORITY)) == xu_level_of((int32_t)rd32(me->t + TH_PRIORITY))) {
+        uint64_t t0 = xhw_time_us();
+        while (!d->stopped && !d->wait && xhw_time_us() - t0 < 200000u) xhw_yield();
+    }
     /* the boot code is not a thread: on the N64 the first osStartThread
      * dispatches and the boot code never runs again */
     if (me->t == 0 && !me->entry) {
@@ -463,6 +652,7 @@ int xu_start_dispatched(uint32_t t) {
     pri = (int)(int32_t)rd32(t + TH_PRIORITY);
     wr16(t + TH_STATE, OS_STATE_RUNNABLE);
     rank_update(pri);
+    token_join(d);
     d->kt = xhw_thread_spawn(thread_body, d, xu_level_of(pri), HOST_STACK);
     xu_unlock();
     if (!d->kt) return 0;
@@ -481,7 +671,12 @@ static void halt_other(uint32_t t, const char* what) {
     }
     if (!d || !d->kt || d->stopped) return;   /* never started, or stopped already */
     wr16(t + TH_STATE, OS_STATE_STOPPED);
+    xu_lock();
     d->halted = 1;
+    /* ready, waiting for the run token: off the run queue, as libultra takes
+     * a stopped thread off it (osStartThread puts it back) */
+    if (in_token(d) && d->rs == RS_READY && s_run != d) d->rs = RS_BLOCKED;
+    xu_unlock();
     xhw_event_signal(d->ev);                  /* blocked: it wakes and stops */
 }
 
@@ -492,7 +687,7 @@ ULTRA(osStopThread) {
     if (!t || t == self()->t) {
         Thr* me = self();
         if (me->t) wr16(me->t + TH_STATE, OS_STATE_STOPPED);
-        stop_wait(me);
+        stop_wait(me, me->ints_off ? s_depth : 0);
         return;
     }
     halt_other(t, "osStopThread");
@@ -506,7 +701,7 @@ ULTRA(osDestroyThread) {
     if (!t || t == self()->t) {
         if (t) wr16(t + TH_STATE, OS_STATE_STOPPED);
         self()->dead = 1;
-        stop_wait(self());
+        stop_wait(self(), self()->ints_off ? s_depth : 0);
         return;
     }
     /* another thread: stopped (HAL's object manager stops them first) or
@@ -567,15 +762,30 @@ static void rank_update(int extra) {
     }
 }
 
+#ifndef XRC_PRI_LOCKED
+#define XRC_PRI_LOCKED 1
+#endif
+#ifndef XRC_INTS_BOOST
+#define XRC_INTS_BOOST 1
+#endif
 ULTRA(osSetThreadPri) {
     uint32_t t = ARG(0);
     int pri = (int)(int32_t)ARG(1);
     Thr* d = t ? find(t) : self();
     (void)rdram;
     if (!d) return;
+    /* under the lock (rank_update reads every record), and a thread holding
+     * interrupts off stays at 14 until ints_on puts it at its new level: it
+     * dropped from 14 to 8 inside its critical section, Kirby 64's deadlock
+     * again for any game that re-prioritises there (5b.7). -DXRC_PRI_LOCKED=0:
+     * as before */
+    if (XRC_PRI_LOCKED) xu_lock();
     if (d->t) wr32(d->t + TH_PRIORITY, (uint32_t)pri);
     rank_update(0);
-    if (d->kt) xhw_thread_set_level(d->kt, xu_level_of(pri));
+    if (d->kt && !(XRC_PRI_LOCKED && XRC_INTS_BOOST && d->ints_off)) xhw_thread_set_level(d->kt, xu_level_of(pri));
+    resched();   /* a lowered holder or a raised ready thread: the token moves */
+    if (XRC_PRI_LOCKED) xu_unlock();
+    token_yield(tls_thr());
 }
 
 ULTRA(osGetThreadPri) {
@@ -593,8 +803,18 @@ ULTRA(osGetThreadId) {
 }
 
 ULTRA(osYieldThread) {
+    Thr* me = tls_thr();
     (void)rdram;
     (void)ctx;
+    if (in_token(me) && me->rs == RS_READY) {   /* behind the others of its priority, as libultra's yield */
+        xu_lock();
+        me->seq = ++s_seq;
+        if (s_run == me) s_run = NULL;
+        resched();
+        xu_unlock();
+        token_wait(me);
+        return;
+    }
     xhw_yield();
 }
 
@@ -605,9 +825,16 @@ void xu_pause_unlocked(uint32_t ms);
 void xu_pause_unlocked(uint32_t ms) {
     Thr* me = self();
     int n = me->ints_off ? s_depth : 0, i;
+    if (in_token(me)) {   /* a wait on an N64 object, polled: the token to the others meanwhile */
+        xu_lock();
+        make_blocked(me);
+        xu_unlock();
+        if (!ms) ms = 1;   /* a yield would take it straight back */
+    }
     for (i = 0; i < n; i++) xu_unlock();
     if (ms) xhw_sleep_ms(ms);
     else xhw_yield();
+    token_wait(me);
     for (i = 0; i < n; i++) xu_lock();
 }
 
@@ -708,7 +935,8 @@ int xu_send(uint32_t mq, uint32_t msg, int block, int jam) {
     wr32(mq + MQ_VALIDCOUNT, (uint32_t)(valid + 1));
     wake_all(mq);
     xu_unlock();
-    send_yield(mq);
+    if (XRC_RUN_TOKEN) token_yield(tls_thr());   /* a game thread that woke a higher one: it runs first */
+    else send_yield(mq);
     return 0;
 }
 
@@ -769,6 +997,7 @@ ULTRA(osRecvMesg) {
 #endif
     wake_all(mq | 1);
     xu_unlock();
+    token_yield(tls_thr());
     RET(0);
 }
 
@@ -940,6 +1169,7 @@ int xu_fault_wait(uint32_t vaddr, int store) {
     me->wait = 1;
     me->faulting = 1;
     running_next(me);
+    make_blocked(me);
     post(OS_EVENT_FAULT, 0);
     if (s_faults < 16)
         xhw_logf("[OS] fault: thread %d at %08x, OS_EVENT_FAULT to %08x (%u of %u)", (int)(int32_t)rd32(t + TH_ID),
@@ -959,6 +1189,7 @@ int xu_fault_wait(uint32_t vaddr, int store) {
     wr16(t + TH_STATE, OS_STATE_RUNNING);
     wr16(t + TH_FLAGS, 0);
     running_is(t);
+    token_wait(me);
     xu_unlock();
     if (s_faults < 16) s_faults++, xhw_logf("[OS] fault: thread %d %s after %d ms", (int)(int32_t)rd32(t + TH_ID),
                                             ms < 10000 ? "runnable again" : "never let go", ms);
@@ -988,9 +1219,6 @@ void xu_post_event_first(int e) { post(e, 1); }
  * holder never ran again, the VI thread waited on the lock, no retrace
  * reached the scheduler and the game stopped (xemu, about one boot in two).
  * -DXRC_INTS_BOOST=0: the thread keeps its level, as before */
-#ifndef XRC_INTS_BOOST
-#define XRC_INTS_BOOST 1
-#endif
 static int ints_off(Thr* me) {
     if (me->ints_off) return 0;
     xu_lock();
@@ -1003,6 +1231,7 @@ static void ints_on(Thr* me) {
     me->ints_off = 0;
     if (XRC_INTS_BOOST && me->kt && me->t) xhw_thread_set_level(me->kt, xu_level_of((int)rd32(me->t + TH_PRIORITY)));
     xu_unlock();
+    if (s_pend) token_yield(me);   /* a switch that waited for interrupts on */
 }
 
 ULTRA(__osDisableInt) {
@@ -1069,6 +1298,9 @@ void xrc_trace_thread(void* thread, unsigned n);   /* trace.c */
 void xu_stall_report(const char* why) {
     int i;
     xhw_logf("[OS] stall: %s (retrace %u)", why, xu_retrace());
+    if (XRC_RUN_TOKEN)
+        xhw_logf("[OS] stall:   run token with thread %d, %u hand-offs, %u taken while the holder ran%s",
+                 xu_token_holder(), s_handoffs, s_late, s_pend ? ", a switch waits for interrupts on" : "");
     xrc_trace_dump();   /* what ran last (interpreted calls in every build; a trace build's functions) */
     for (i = 0; i < s_nthr; i++) {
         uint32_t w = s_thr[i].wait, q = w & ~1u;

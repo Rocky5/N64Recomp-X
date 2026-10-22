@@ -19,6 +19,9 @@
 #include "xhw.h"
 #include "xhw_internal.h"
 
+#ifndef XHW_FIXUP_STORM
+#define XHW_FIXUP_STORM 256u
+#endif
 #ifndef XHW_CRASH_GUARD
 #define XHW_CRASH_GUARD 1
 #endif
@@ -153,6 +156,29 @@ static int try_fixup(const EXCEPTION_RECORD* er) {
     if (slot < 0) return 0;
     ok = s_fixup((uint32_t)er->ExceptionInformation[1], er->ExceptionInformation[0] != 0);
     s_fixup_owner[slot] = NULL;
+    /* a fault "fixed" without the page changing comes straight back: a store
+     * to the read-only cartridge map retried for ever, 100 % CPU, no card and
+     * no log line (docs/review-2026-10.md 5a.2). The same thread, instruction
+     * and address XHW_FIXUP_STORM times in a row: a crash, with its card.
+     * -DXHW_FIXUP_STORM=0: retried for ever, as before */
+#if XHW_FIXUP_STORM
+    if (ok) {
+        static volatile PKTHREAD s_st_thr[8];
+        static uint32_t s_st_eip[8], s_st_addr[8], s_st_n[8];
+        static uint64_t s_st_t0[8];
+        uint32_t eip = (uint32_t)er->ExceptionAddress, a = (uint32_t)er->ExceptionInformation[1];
+        uint64_t now = xhw_time_us();
+        /* within half a second: a page healed every few seconds is not a storm */
+        if (s_st_thr[slot] != me || s_st_eip[slot] != eip || s_st_addr[slot] != a || now - s_st_t0[slot] > 500000u)
+            s_st_thr[slot] = me, s_st_eip[slot] = eip, s_st_addr[slot] = a, s_st_n[slot] = 0, s_st_t0[slot] = now;
+        else if (++s_st_n[slot] >= XHW_FIXUP_STORM) {
+            xhw_logf("[CRASH] the same fault %u times at %08x (address %08x): not fixed, a crash", (unsigned)s_st_n[slot],
+                     (unsigned)eip, (unsigned)a);
+            s_st_n[slot] = 0;
+            return 0;
+        }
+    }
+#endif
     return ok;
 }
 

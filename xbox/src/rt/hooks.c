@@ -30,9 +30,11 @@ void recomp_syscall_handler(uint8_t* rdram, recomp_context* ctx, int32_t instruc
 
 /* A branch to itself (the idle thread's loop): this kernel thread blocks for
  * good, which is the Xbox's idle. */
+void xu_token_idle(void);   /* ultra/thread.c: the run token to the others */
 void pause_self(uint8_t* rdram) {
     xhw_event* e = xhw_event_create();
     (void)rdram;
+    xu_token_idle();
     for (;;) xhw_event_wait(e, XHW_INFINITE);
 }
 

@@ -121,6 +121,8 @@ int xu_event_same(int a, int b);   /* thread.c: both events go to one queue */
 /* the N64 thread priority onto the kernel's levels 2..14 */
 int xu_level_of(int pri);
 void xu_stall_report(const char* why);   /* test builds: what each N64 thread waits on */
+unsigned xu_token_handoffs(void);        /* XRC_RUN_TOKEN: times the token moved */
+int xu_token_holder(void);               /* its holder's thread id, -1 for none */
 /* threads the runtime starts for itself (VI, timers, the save writer) */
 xhw_thread* xu_spawn(void (*fn)(void*), void* arg, int level, uint32_t stack);
 

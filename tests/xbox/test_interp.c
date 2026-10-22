@@ -105,7 +105,9 @@ static int s_fail;
 
 static void fresh(void) {
     memset(&C, 0, sizeof C);
+#if !XRC_FODD_ARRAY
     C.f_odd = &C.f0.u32h;
+#endif
     C.r29 = (gpr)(int32_t)0x8000F000u;
     C.r31 = (gpr)(int32_t)0x80000ABCu;
     s_fatal = NULL, s_breaks = s_syscalls = 0, s_nlearnt = 0;

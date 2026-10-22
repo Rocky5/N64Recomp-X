@@ -46,16 +46,28 @@ xhw_thread* xu_spawn(void (*fn)(void*), void* arg, int level, uint32_t stack);  
 #define XRC_MAX_LEARN 4096
 #endif
 #define MAX_LEARN XRC_MAX_LEARN
+#ifndef XRC_STUB_REENTER
+#define XRC_STUB_REENTER 1
+#endif
 #define MAX_DMA 1024         /* the newest PI DMAs, to say where code came from */
-#define TEXT_MAX (48 * 1024) /* learn.txt */
+/* learn.txt: 48 KB stopped it growing, with no message; Ocarina of Time
+ * logs about 70 KB of lines in one boot, so its learning could not converge
+ * (docs/review-2026-10.md 5a.5). Twice this in BSS (the text and the
+ * writer's copy). -DXRC_LEARN_TEXT_KB=48: as before */
+#ifndef XRC_LEARN_TEXT_KB
+#define XRC_LEARN_TEXT_KB 160
+#endif
+#define TEXT_MAX (XRC_LEARN_TEXT_KB * 1024) /* learn.txt */
 
 void xrc_interp_learn(uint8_t* rdram, recomp_context* ctx, uint32_t entry, uint32_t caller);   /* interp.c */
 int xrc_ovl_enter(uint32_t vram, recomp_func_t* f);                                             /* ovl.c */
+void xrc_ovl_reenter(uint32_t vram, int idx);                                                   /* ovl.c */
 uint32_t xrc_ovl_vram_of(uintptr_t host);                                                       /* ovl.c */
 
 typedef struct {
     uint32_t vram, caller, len, logged_len;
-    uint8_t logged, stub;
+    uint8_t logged, stub, said;
+    uint16_t slot;   /* its stub's function-table index (ovl.c), to put back */
 } Learnt;
 
 typedef struct { uint32_t rom, ram, size; } Dma;
@@ -67,7 +79,7 @@ static Dma s_dma[MAX_DMA];
 static unsigned s_ndma;
 static char s_text[TEXT_MAX];
 static unsigned s_tlen;
-static int s_text_loaded;
+static int s_text_loaded, s_text_full;
 
 #if defined(__i386__)
 #define STUB_BYTES 24
@@ -107,8 +119,10 @@ static void text_load(void) {
     if ((f = xhw_file_open(path)) != NULL) {
         uint32_t n = xhw_file_size(f);
         if (n < TEXT_MAX - 1 && xhw_file_read(f, 0, s_text, n)) s_tlen = n;
+        else if (n >= TEXT_MAX - 1) s_text_full = 1;   /* larger than the buffer: kept as it is, never overwritten */
         xhw_file_close(f);
     }
+    if (s_text_full) xhw_logf("[LEARN] learn.txt is larger than %u KB: kept, nothing added this boot", (unsigned)XRC_LEARN_TEXT_KB);
     if (!s_tlen) {
         static const char head[] = "# n64rx learn file: code this build did not recompile (PLAN.md 3.14).\n"
                                    "# n64rx build <rom> --learn learn.txt recompiles it next time.\n";
@@ -191,7 +205,9 @@ static void emit(const char* line) {
             p += n;
         }
     }
-    if (s_tlen + n + 2 >= TEXT_MAX) {
+    if (s_text_full || s_tlen + n + 2 >= TEXT_MAX) {
+        if (!s_text_full) xhw_logf("[LEARN] learn.txt full (%u KB): later lines are not kept", (unsigned)XRC_LEARN_TEXT_KB);
+        s_text_full = 1;
         xhw_mutex_unlock(s_text_lock);
         return;
     }
@@ -241,11 +257,19 @@ static unsigned s_nvpages;
 static void save_rec(uint32_t base, uint32_t size, uint32_t flags, uint32_t (*word)(uint32_t));
 static void save(uint32_t base, uint32_t size, uint32_t (*word)(uint32_t)) { save_rec(base, size, 0, word); }
 static void save_rec(uint32_t base, uint32_t size, uint32_t flags, uint32_t (*word)(uint32_t)) {
+    /* one record at a time: the three capture paths each had a busy flag but
+     * shared this buffer, and a mixed record went into learn_code.bin, which
+     * has no framing (docs/review-2026-10.md 5a.6) */
     static uint8_t sbuf[8 + CODE_BLOCK];
+    static volatile long s_rec_busy;
     uint8_t* buf = sbuf;
     char path[96], line[64];
     uint32_t i, sz = size | flags;
-    if (size > CODE_BLOCK && (buf = (uint8_t*)malloc(8 + size)) == NULL) return;
+    while (__sync_lock_test_and_set(&s_rec_busy, 1)) xhw_sleep_ms(0);
+    if (size > CODE_BLOCK && (buf = (uint8_t*)malloc(8 + size)) == NULL) {
+        __sync_lock_release(&s_rec_busy);
+        return;
+    }
     for (i = 0; i < 4; i++) {
         buf[i] = (uint8_t)(base >> (24 - 8 * i));
         buf[4 + i] = (uint8_t)(sz >> (24 - 8 * i));
@@ -259,6 +283,7 @@ static void save_rec(uint32_t base, uint32_t size, uint32_t flags, uint32_t (*wo
     if (!xhw_append_file(path, buf, 8 + size)) xhw_logf("[LEARN] could not write %s", path);
     if (XHW_TEST_BUILD) xhw_dump_blob("LEARNCODE", buf, 8 + size);
     if (buf != sbuf) free(buf);
+    __sync_lock_release(&s_rec_busy);
     snprintf(line, sizeof line, "code %08x %x%s", (unsigned)base, (unsigned)size, flags & GROUP ? " group" : "");
     emit(line);
 }
@@ -565,9 +590,21 @@ recomp_func_t* xrc_learn_lookup(uint32_t vram, uintptr_t host_caller) {
             p[18] = 0x83, p[19] = 0xC4, p[20] = 0x0C;                                        /* add esp, 12 */
             p[21] = 0xC3;                                                                    /* ret */
             __asm__ volatile("" ::: "memory");
-            if (xrc_ovl_enter(vram, (recomp_func_t*)(void*)p)) e->stub = 1;
-            xhw_logf("[LEARN] safety net: %08x has no function; interpreted (called from %08x)", (unsigned)vram,
-                     (unsigned)e->caller);
+            {
+                int idx = xrc_ovl_enter(vram, (recomp_func_t*)(void*)p);
+                if (idx) e->stub = 1, e->slot = (uint16_t)idx;
+            }
+            /* once per address: with no table room every call came here and
+             * logged again (docs/review-2026-10.md 5a.3) */
+            if (!e->said)
+                xhw_logf("[LEARN] safety net: %08x has no function; interpreted (called from %08x)", (unsigned)vram,
+                         (unsigned)e->caller);
+            e->said = 1;
+        } else if (XRC_STUB_REENTER && e->slot) {
+            /* an overlay switch cleared its table slot: back in, so the next
+             * call is a table hit again rather than this lookup (5a.4).
+             * -DXRC_STUB_REENTER=0: as before */
+            xrc_ovl_reenter(vram, e->slot);
         }
         f = (recomp_func_t*)(void*)p;
 #else

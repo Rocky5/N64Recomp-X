@@ -696,7 +696,10 @@ int xhw_append_file(const char* path, const void* data, uint32_t len) {
 /* <path>.tmp written and flushed, read back and compared, then renamed over
  * <path> (xhw_replace_file): a full E: or a power cut leaves the old file. */
 int xhw_write_file_atomic(const char* path, const void* data, uint32_t len) {
-    static unsigned char check[4096];
+    /* on the caller's stack: one static buffer, unlocked, let two writers
+     * (saves, learn.txt, settings) compare each other's bytes, and the save
+     * was dropped (docs/review-2026-10.md 5d.2) */
+    unsigned char check[1024];
     char tmp[MAX_PATH];
     HANDLE h;
     DWORD w = 0, got;

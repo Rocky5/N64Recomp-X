@@ -63,6 +63,8 @@ uint32_t xu_pi_dma(uint32_t dev, uint32_t dram, uint32_t n) { s_dma[0] = dev, s_
 int xu_pi_save_dma(uint32_t addr, uint32_t dram, uint32_t n, int write) { (void)addr, (void)dram, (void)n, (void)write; return 0; }
 int xu_pi_save_io(uint32_t addr, uint32_t* word, int write) { (void)addr, (void)word, (void)write; return 0; }
 void xrc_gfx_task(uint32_t task) { s_gfx = task; }
+void xu_count_task(int gfx) { (void)gfx; }                                 /* ultra/sp.c */
+void xu_sp_run(uint32_t task) { (void)task; }                              /* ultra/sp.c */
 void xrc_audio_task(uint32_t task) { s_aud = task; }
 #undef ARG
 #define ARG(i) ((uint32_t)ctx->r##i)
@@ -95,7 +97,9 @@ static uint32_t* ram(uint32_t a) { return (uint32_t*)(s_ram + (a & 0xFFFF)); }
 
 static int run_prog(const uint32_t* w, int n) {
     memset(&C, 0, sizeof C);
+#if !XRC_FODD_ARRAY
     C.f_odd = &C.f0.u32h;
+#endif
     C.r31 = (gpr)(int32_t)0x80000ABCu;
     memcpy(ram(ENTRY), w, 4 * (size_t)n);
     s_fatal = NULL;
