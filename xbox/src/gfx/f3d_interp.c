@@ -162,6 +162,7 @@
  * swaps to when that is another (screen_size: GoldenEye's 440x330 front
  * end, 640x480 games) */
 static float s_n64w = 320.0f, s_n64h = 240.0f;
+static float s_vi_dx;   /* N64 pixels the VI's origin column moves the picture right (XGFX_VI_ORIGIN) */
 #define N64_W s_n64w
 #define N64_H s_n64h
 #define MTX_DEPTH 11           /* 10 pushes + current (Birdman64 gfx.md) */
@@ -183,6 +184,8 @@ static float s_rej_kx = 1.0f;
 static uint32_t s_epoch = 1;   /* draw state epoch: DIRTY() makes the next draw rebuild its state */
 #define DIRTY() (s_epoch++)
 static void frame_cimg(uint32_t c);   /* a frame across tasks (f3d_swap) */
+static int swap_buffer(uint32_t c);
+static int small_cimg(void);   /* a small colour image the game makes for itself (XGFX_SMALL_CIMG) */
 static void screen_size(uint32_t c, uint32_t w);
 
 /* ------------------------------------------------------------------ state */
@@ -552,7 +555,7 @@ static void map_setup(void) {
     } else {
         s_sx = s_cw / N64_W;
         s_sy = s_ch / N64_H;
-        s_ox = s_cx;
+        s_ox = s_cx + s_vi_dx * s_sx;
         s_oy = s_cy;
     }
     s_ostamp++;
@@ -629,6 +632,10 @@ static int s_in_dl;
 static uint64_t s_present_in_dl;
 static void flush(void) {
     if (!s_nb) return;
+    if (small_cimg()) {   /* triangles into a picture the game makes for itself: not the screen's (XGFX_SMALL_CIMG) */
+        s_nb = 0;
+        return;
+    }
     if (s_null_back) {
         s_nb = 0;
         return;
@@ -1876,6 +1883,21 @@ static void do_fillrect(uint32_t w0, uint32_t w1) {
 #define XGFX_ZIMG_TEXRECT 1
 #endif
 static uint32_t s_zcimg_w;   /* SETCIMG's width while the colour image is the Z image */
+/* The same for a small colour image the game never swaps to (narrower than
+ * this): a picture it makes for itself, not the screen. Mario Tennis copies
+ * a little picture of the frame into one (the host renderer drew the copy as
+ * a box over the frame's top left: its intro, 2026-10-22, from the dry
+ * boot: its ball's glow is layered there with triangles); copies of 1:1 RGBA16
+ * go into RDRAM, other texrects and triangles into it are not drawn on the
+ * screen (DIVERGES: the picture itself is not made; render-to-texture would
+ * make it). -DXGFX_SMALL_CIMG=0: drawn on the screen, as before */
+#ifndef XGFX_SMALL_CIMG
+#define XGFX_SMALL_CIMG 128u
+#endif
+static int small_cimg(void) {
+    return XGFX_SMALL_CIMG && R.cimg && R.cimg != R.zimg && s_cimg_w && s_cimg_w < XGFX_SMALL_CIMG && s_cimg_siz == 2u &&
+           !swap_buffer(R.cimg);
+}
 
 /* the texrect into the Z image's RDRAM (XGFX_ZIMG_TEXRECT); 1 when done */
 static int zimg_texrect(uint16_t xl, uint16_t yl, uint16_t xh, uint16_t yh, uint8_t tile, int16_t s, int16_t t,
@@ -1884,12 +1906,15 @@ static int zimg_texrect(uint16_t xl, uint16_t yl, uint16_t xh, uint16_t yh, uint
     const TmemLoad* ld = &R.loads[(tt->tmem >> 3) & 63];
     int one = cycle == 2 ? 4 << 10 : 1 << 10;
     int x, y, x0 = xl >> 2, y0 = yl >> 2, x1 = (xh >> 2) + (cycle >= 2), y1 = (yh >> 2) + (cycle >= 2);
-    if (!XGFX_ZIMG_TEXRECT || !R.cimg || R.cimg != R.zimg || !s_zcimg_w) return 0;
+    int zim = XGFX_ZIMG_TEXRECT && R.cimg && R.cimg == R.zimg && s_zcimg_w;
+    int small = small_cimg();
+    uint32_t cw = zim ? s_zcimg_w : s_cimg_w;
+    if (!zim && !small) return 0;
     if (!ld->valid || !ld->tile || tt->fmt != F3D_G_IM_FMT_RGBA || tt->siz != F3D_G_IM_SIZ_16b || dsdx != one || dtdy != 1 << 10)
-        return 0;
+        return small;   /* not a plain copy: into a small image it is still not the screen's */
     if (XHW_TEST_BUILD) {   /* the first few: what is copied where */
         static unsigned s_n;
-        if (s_n++ < 4) xhw_logf("[GFX] texrect into the Z image: %08x from %08x, %dx%d (by the CPU)", (unsigned)R.cimg,
+        if (s_n++ < 4) xhw_logf("[GFX] texrect into RDRAM at %08x (%s) from %08x, %dx%d (by the CPU)", (unsigned)R.cimg, zim ? "the Z image" : "a small image",
                                (unsigned)ld->addr, (int)(x1 - x0), (int)(y1 - y0));
     }
     if (fbfx_stale_count()) fb_touch(ld->addr, (ld->rows - 1u) * ld->stride + ld->row_bytes);   /* the frame into RDRAM first */
@@ -1899,8 +1924,10 @@ static int zimg_texrect(uint16_t xl, uint16_t yl, uint16_t xh, uint16_t yh, uint
         if ((float)y < s_scissor[1] || (float)y >= s_scissor[3] || ti < 0 || ti >= (int)ld->rows) continue;
         for (x = x0; x < x1; x++) {
             int si = (s >> 5) + (x - x0) - (tt->uls >> 2);
-            if ((float)x < s_scissor[0] || (float)x >= s_scissor[2] || si < 0 || 2 * si >= (int)ld->row_bytes) continue;
-            wr16(XU_K0(R.cimg + 2u * ((uint32_t)y * s_zcimg_w + (uint32_t)x)),
+            if ((float)x < s_scissor[0] || (float)x >= s_scissor[2] || si < 0 || 2 * si >= (int)ld->row_bytes ||
+                (uint32_t)x >= cw)
+                continue;
+            wr16(XU_K0(R.cimg + 2u * ((uint32_t)y * cw + (uint32_t)x)),
                  rd16(ld->addr + (uint32_t)ti * ld->stride + 2u * (uint32_t)si));
         }
     }
@@ -3164,6 +3191,17 @@ static void run_dl(const uint32_t* pc) {
                     R.cimg = c;   /* a probe copy's target: not the screen */
                     break;
                 }
+                if (XHW_TEST_BUILD) {   /* test builds: the colour images a frame draws into, the first of each */
+                    static uint32_t s_seen[16];
+                    static unsigned s_n;
+                    unsigned k;
+                    for (k = 0; k < s_n && s_seen[k] != c; k++) {}
+                    if (k == s_n && s_n < 16)
+                        s_seen[s_n++] = c, xhw_logf("[GFX] colour image %08x: %u wide, siz %u%s%s", (unsigned)c, (w0 & 0xFFFu) + 1u,
+                                                    (unsigned)((w0 >> 19) & 3u), c == R.zimg ? ", the Z image" : "",
+                                                    swap_buffer(c) ? ", swapped to" : "");
+                }
+                if (XGFX_SMALL_CIMG && c != R.cimg) flush();   /* the batch is the old image's (small_cimg) */
                 if (c == R.zimg) s_zcimg_w = (w0 & 0xFFFu) + 1u;
                 if (c != R.zimg) {   /* the frame's colour image as the RDP has it (framebuffer readback) */
                     s_cimg_siz = (w0 >> 19) & 3u;
@@ -3652,6 +3690,17 @@ static int swap_buffer(uint32_t c) {
 /* vi.c: the rows the VI mode shows of the framebuffer (its yScale over the
  * field's lines); 0 when no mode is known (weak: the host tests) */
 __attribute__((weak)) unsigned xu_vi_rows(void) { return 0; }
+__attribute__((weak)) unsigned xu_vi_origin_px(void) { return 0; }
+/* The VI shows a line from its origin, which need not be a line's start:
+ * Mario Tennis's 384-wide buffer is shown from column 320, so its picture
+ * (columns 0..319) sits 64 pixels right on the TV and columns 320..383 are
+ * the left border. Drawn from column 0 those 64 columns were the right edge
+ * (red: "the right side of the screen is cut off"). The picture moves
+ * right by the width less the origin's column; what falls past the right
+ * edge is the N64's left border. -DXGFX_VI_ORIGIN=0: from column 0 */
+#ifndef XGFX_VI_ORIGIN
+#define XGFX_VI_ORIGIN 1
+#endif
 
 /* a buffer the game swaps to, drawn at width w: the screen's size in N64
  * pixels (the height from the VI mode when it is not 3/4 of the width:
@@ -3667,6 +3716,20 @@ static void screen_size(uint32_t c, uint32_t w) {
     rows = xu_vi_rows();
     if (rows >= 120u && rows <= 1024u && (rows > (unsigned)fh * 17u / 16u || rows < (unsigned)fh * 15u / 16u))
         fh = (float)rows;
+    {
+        unsigned col = XGFX_VI_ORIGIN ? xu_vi_origin_px() : 0u;
+        float dx = col && col < w ? (float)(w - col) : 0.0f;
+        if (dx != s_vi_dx) {
+            s_vi_dx = dx;
+            if (fw == s_n64w && fh == s_n64h) {
+                flush();
+                map_setup();
+                xhw_logf("[GFX] the VI shows from column %u of %u: the picture %d pixels right", col, (unsigned)w, (int)dx);
+                return;
+            }
+            xhw_logf("[GFX] the VI shows from column %u of %u: the picture %d pixels right", col, (unsigned)w, (int)dx);
+        }
+    }
     if (fw == s_n64w && fh == s_n64h) return;
     flush();
     xhw_logf("[GFX] screen %ux%u (a buffer %u wide)", (unsigned)fw, (unsigned)fh, (unsigned)w);

@@ -62,6 +62,21 @@ unsigned xu_vi_rows(void) {
     return (ys * lines + 512u) >> 10;
 }
 
+/* the column the mode's first shown pixel is at (field 0's origin over the
+ * pixel size, modulo the width): 0 for the usual origin of whole rows. Mario
+ * Tennis's 384-wide buffer has origin 0x280 (320 pixels): each line starts
+ * 320 pixels in, so its picture shows 64 pixels right of where a renderer
+ * drawing from column 0 puts it (f3d_interp.c XGFX_VI_ORIGIN) */
+unsigned xu_vi_origin_px(void);
+unsigned xu_vi_origin_px(void) {
+    uint32_t m = s_mode, w, o, bpp;
+    if (!m) return 0;
+    w = rd32(m + 8) & 0xFFFu;
+    o = rd32(m + 0x28) & 0xFFFFFFu;
+    bpp = (rd32(m + 4) & 3u) == 3u ? 4u : 2u;
+    return w ? (unsigned)((o / bpp) % w) : 0u;
+}
+
 /* DIVERGES: a PAL game (osTvType 0, ../boot.c) gets 50 retraces a second
  * from the console's 60: every sixth vblank is skipped, so its game speed
  * and its music are right, its frame pacing a little uneven.

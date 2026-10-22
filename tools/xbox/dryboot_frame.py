@@ -29,6 +29,9 @@ def blob(tag, data, z):
 
 
 def main(argv):
+    keep = None
+    if len(argv) == 5 and argv[3] == '--keep-log':   # the [DLTASK]/[DLRAM] log kept (bench_dl.py --trace / --draws)
+        keep, argv = pathlib.Path(argv[4]), argv[:3]
     if len(argv) != 3:
         print(__doc__)
         return 1
@@ -40,6 +43,8 @@ def main(argv):
         log = pathlib.Path(tmp) / 'snap.log'
         log.write_text('\n'.join(blob('DLTASK', struct.pack('<17I', *words), False) + blob('DLRAM', host, True)) + '\n',
                        encoding='latin-1')
+        if keep:
+            keep.write_bytes(log.read_bytes())
         return subprocess.run([sys.executable, str(HERE / 'bench_dl.py'), str(log), '--runs', '1', '--tasks', '1',
                                '--png', argv[2]]).returncode
 

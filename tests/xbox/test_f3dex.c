@@ -937,6 +937,34 @@ static void test_fog_blender(void) {
     CHECK(shade == 1, "fog: G_RM_FOG_SHADE_A lost its fog (%d)", shade);
 }
 
+#ifndef XGFX_VI_ORIGIN
+#define XGFX_VI_ORIGIN_T 1
+#else
+#define XGFX_VI_ORIGIN_T XGFX_VI_ORIGIN
+#endif
+/* the VI's origin column (XGFX_VI_ORIGIN): Mario Tennis's 384-wide buffer is
+ * shown from column 320, so its picture sits 64 N64 pixels right of where a
+ * renderer drawing from column 0 puts it */
+static unsigned s_vi_col;
+unsigned xu_vi_origin_px(void) { return s_vi_col; }
+static float vi_tri_x(unsigned width, unsigned col) {
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX       fifo 1.23 Yoshitaka Yasumoto 1997 Nintendo.");
+    s_vi_col = col;
+    f3d_swap(CIMG_AT);
+    s_pc = DL_AT;
+    cmd(0xFF000000u | (0u << 21) | (2u << 19) | (width - 1u), CIMG_AT);   /* SETCIMG, swapped to */
+    head_f3d();
+    cmd(0x04000000u | (0u << 16) | (10u << 10) | 159u, VTX_AT);
+    cmd(0xBF000000u, (0u << 16) | (2u << 8) | 18u);                       /* TRI1 0 1 9 */
+    cmd(0xB8000000u, 0);
+    return run(&u) ? s_v[0].x : -1e9f;
+}
+static void test_vi_origin(void) {
+    float x0 = vi_tri_x(384u, 0u), x1 = vi_tri_x(384u, 320u), want = XGFX_VI_ORIGIN_T ? 64.0f * 640.0f / 384.0f : 0.0f;
+    CHECK(fabsf((x1 - x0) - want) < 0.6f, "vi origin: the picture moved %.2f pixels (want %.2f)", x1 - x0, want);
+    vi_tri_x(320u, 0u);   /* 320 wide and column 0 again for the tests after */
+}
+
 int main(void) {
     test_ci();
     setup_data();
@@ -964,6 +992,7 @@ int main(void) {
     test_dl_guards();
     test_zimg_copy();
     test_fog_blender();
+    test_vi_origin();
     test_fast3d();   /* and Fast3D once more after the guards' lists */
     if (s_fail) printf("test_f3dex: %d failed\n", s_fail);
     return s_fail ? 1 : 0;
