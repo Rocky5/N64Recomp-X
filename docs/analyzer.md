@@ -238,15 +238,19 @@ First builds from the ROM alone (functions in the analysis; libultra names):
 | Blast Corps | - | 1,508 in 10, 96 names | 15 rounds |
 
 Across the library (the sweep's 246 ROMs, 600 frames each, 8 MB, the
-16 Kbit EEPROM where `romonly.EEP16K` has the game): 237 reach their RSP
-tasks, 225 of them 50 or more in the 600 frames; 12 stop under 50 (a wait
-on something the model does not answer yet: Mario Golf, Ken Griffey's two,
-Top Gear Rally 2, Rainbow Six, Road Rash, CyberTiger). The 9 with none:
-F-Zero X (CIC 6106; Yoshi's Story, the other 6106, runs), Banjo-Tooie (its
-CIC 6105 check), BattleTanx and Global Assault (a NULL list node at boot),
-A Bug's Life and Toy Story 2 (Traveller's Tales' probe of `0xC0001000`),
-Xena (a NULL pointer), F1 World Grand Prix II (1,000 4-byte PI DMAs, then
-every thread waits), NBA Courtside (every thread waits, no pad read).
+16 Kbit EEPROM where `romonly.EEP16K` has the game, the TV type of the
+header's region as the pipeline passes it): 239 reach their RSP tasks, 227
+of them 50 or more in the 600 frames; 12 stop under 50 (a wait on something
+the model does not answer yet: Mario Golf, Ken Griffey's two, Top Gear
+Rally 2, Rainbow Six, Road Rash, Blues Brothers 2000, Nuclear Strike,
+Hercules, Derby Stallion 64, Robotron 64, CyberTiger). The 7 with none:
+F-Zero X (CIC 6106; Yoshi's Story, the other 6106, runs), BattleTanx and
+Global Assault (a NULL list node at boot), A Bug's Life and Toy Story 2
+(Traveller's Tales' probe of `0xC0001000`), Xena (a NULL pointer), NBA
+Courtside (every thread waits, no pad read: its scheduler gets its retraces
+and the main thread waits on the scheduler). Banjo-Tooie (E) and F1 World
+Grand Prix II (E) were NTSC in the first scans and stopped; with PAL they
+run 286 and 445 tasks.
 
 The FPU with Status.CU1 clear traps (coprocessor unusable), as the VR4300
 does: libultra marks a thread as an FPU user in that trap's handler and
