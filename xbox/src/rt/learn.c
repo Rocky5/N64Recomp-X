@@ -292,7 +292,11 @@ static void save_rec(uint32_t base, uint32_t size, uint32_t flags, uint32_t (*wo
 }
 
 static uint32_t word_kseg0(uint32_t v) { return xrc_word(0x80000000u | (v & 0x1FFFFFFFu)); }
-static uint32_t word_mapped(uint32_t v) { return xrc_word(0x80000000u | xrc_tlb_to_phys(v)); }
+static uint32_t word_mapped(uint32_t v) {   /* a page unmapped (or remapped past RDRAM) mid-capture reads 0, not past
+                                              * the window (~0u became rdram + 0x9FFFFFFF: review 5a.14) */
+    uint32_t p = xrc_tlb_to_phys(v);
+    return p == ~0u || p >= xrc_rdram_size ? 0u : xrc_word(0x80000000u | p);
+}
 
 static void capture_locked(uint32_t vram);
 static void capture(uint32_t vram) {   /* one at a time: two threads' dumps would interleave on COM1 */
