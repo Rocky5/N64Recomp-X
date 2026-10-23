@@ -1025,6 +1025,7 @@ ULTRA(osRecvMesg) {
     }
 #endif
     xu_lock();
+    if (block && rd32(mq + MQ_VALIDCOUNT)) xu_rcp_flush_recv(me);   /* sp.c XRC_RCP_RECV (off: nothing) */
     while ((valid = (int32_t)rd32(mq + MQ_VALIDCOUNT)) == 0) {
         if (!block) {
             xu_unlock();

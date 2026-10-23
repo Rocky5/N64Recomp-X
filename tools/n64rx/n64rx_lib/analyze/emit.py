@@ -31,6 +31,8 @@ KUSEG_WANT = os.environ.get('N64RX_KUSEG_WANT', '1') != '0'
 def recomp_lists(root):
     """the recompiler's reimplemented and ignored names, read from its source at the pin"""
     src = pathlib.Path(root) / 'tools/recomp/src/symbol_lists.cpp'
+    if not src.exists() and os.environ.get('N64RX_RECOMP'):   # the app's toolchain bundle: a copy beside its recompiler
+        src = pathlib.Path(os.environ['N64RX_RECOMP']) / 'symbol_lists.cpp'
     out = {}
     if not src.exists():   # without them the config names functions N64Recomp then refuses (a worktree with no submodule)
         from .. import N64rxError
@@ -162,6 +164,46 @@ def _falls_through(a, seg, start, end):
     return True
 
 
+# A branch onto the delay slot of the jump that ends a function: the CPU runs the slot and goes on past
+# the end (Donkey Kong 64's hand-written 0x806195D0: a beqz to the slot of its loop's j at 0x8061A754,
+# then on into 0x8061A774's body and the routine's shared exit). The function ended at the slot and the
+# recompiled path returned from there, without the exit that restores $sp, Status.FR and $f20-$f31: its
+# caller read its saved $a0 from the wrong frame (N64RX_HANDWRITTEN_SPAN=1 crashed at frame 69). The
+# function takes the code after the slot, up to the next function's start (then the fall-through rule)
+# or the next jump's delay slot. N64RX_SLOT_ENTRY=0: as before.
+SLOT_ENTRY = os.environ.get('N64RX_SLOT_ENTRY', '1') != '0'
+
+
+def _slot_entered(a, seg, start, end):
+    """a branch in [start, end) lands on the last instruction, the delay slot of the jump that ends the path"""
+    from .mips import Ins, words
+    if end - 8 < start:
+        return False
+    last = Ins(int.from_bytes(a.img.rom[seg.rom + (end - 8 - seg.vram):][:4], 'big'), end - 8)
+    if not ((last.is_jr and not last.is_jalr) or last.is_j or last.is_unconditional_branch):
+        return False
+    for i, w in enumerate(words(a.img.rom, seg.rom + (start - seg.vram), (end - 8 - start) // 4)):
+        ins = Ins(w, start + 4 * i)
+        if ins.is_branch and not ins.is_link_branch and ins.branch_target == end - 4:
+            return True
+    return False
+
+
+def _run_on(a, seg, fs, v, limit):
+    """where the code from v (past a function's end) stops: the next function's start, or past the delay
+    slot of a jump, a return or an unconditional branch"""
+    from .mips import Ins
+    while v < limit and seg.has(v + 4):
+        g = fs.get(v)
+        if g is not None and g.start == v:
+            return v
+        ins = Ins(int.from_bytes(a.img.rom[seg.rom + (v - seg.vram):][:4], 'big'), v)
+        if (ins.is_jr and not ins.is_jalr) or ins.is_j or ins.is_unconditional_branch or ins.is_eret:
+            return v + 8
+        v += 4
+    return v
+
+
 def _size(a, seg, f, fs=None):
     """the bytes the recompiler translates for f. A function whose path runs
     off its end into the next one (GoldenEye's hand-written cosf: three
@@ -170,15 +212,32 @@ def _size(a, seg, f, fs=None):
     at sinf's start and returned with $f0 unset (the Dam's sky and far
     geometry, the pause watch's model). N64RX_FALLTHROUGH=0: as before."""
     end = _end(a, seg, f)
-    if fs and os.environ.get('N64RX_FALLTHROUGH', '1') != '0':
-        for _ in range(8):   # a chain of fall-throughs, bounded
-            nxt = fs.get(end)
-            if nxt is None or nxt.start != end or not _falls_through(a, seg, f.start, end):
-                break
-            end = _end(a, seg, nxt)
-    if fs and HANDWRITTEN_SPAN:
-        end = _branch_span(a, seg, f, fs, end)
+    for _ in range(8):   # each rule can open the way for the other
+        was = end
+        if fs and os.environ.get('N64RX_FALLTHROUGH', '1') != '0':
+            end = _follow(a, seg, f, fs, end)
+        if fs and HANDWRITTEN_SPAN:
+            end = _branch_span(a, seg, f, fs, end)
+        if end == was:
+            break
     return end - f.start
+
+
+def _follow(a, seg, f, fs, end):
+    """f's end moved on over the paths that run past it"""
+    for _ in range(8):   # a chain of fall-throughs, bounded
+        nxt = fs.get(end)
+        if nxt is not None and nxt.start == end and (_falls_through(a, seg, f.start, end) or
+                                                    SLOT_ENTRY and _slot_entered(a, seg, f.start, end)):
+            end = _end(a, seg, nxt)
+            continue
+        if SLOT_ENTRY and _slot_entered(a, seg, f.start, end):
+            on = _run_on(a, seg, fs, end, f.start + SPAN_MAX)
+            if on > end:
+                end = on
+                continue
+        break
+    return end
 
 
 # A branch (not a j, not a call) to the start of a later function is hand-written code with several
@@ -187,8 +246,9 @@ def _size(a, seg, f, fs=None):
 # interpreted whole (cross_funcs: 14 million instructions every 5 s in xemu). Its range takes those
 # functions' bodies too, up to SPAN_MAX past its start; they stay functions of their own for their
 # callers. A compiler's branch never lands on another function's start (its tail calls are j).
-# Opt-in (N64RX_HANDWRITTEN_SPAN=1): recompiled so, DK64's routine compiles and the game crashes at
-# frame 69 (a NULL+0x140 read in func_80672AFC, the routine on the stack); interpreted, it runs
+# Opt-in (N64RX_HANDWRITTEN_SPAN=1): DK64's routine crashed the game at frame 69 until SLOT_ENTRY let its
+# range run on past the branch onto a delay slot to its shared exit; now it runs (xemu). Other games'
+# cross-branching routines it takes (Mario Party, Jet Force Gemini, the Turok engine's) are not checked yet
 HANDWRITTEN_SPAN = os.environ.get('N64RX_HANDWRITTEN_SPAN', '0') != '0'
 SPAN_MAX = 0x4000
 

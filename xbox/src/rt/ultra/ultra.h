@@ -148,6 +148,7 @@ void xu_sp_run(uint32_t task);   /* sp.c: a task run as osSpTaskStartGo runs it 
 int xu_task_has_list(uint32_t task);   /* sp.c: a graphics task with a display list (XRC_GFX_NO_LIST) */
 uint32_t xu_thr_t(void* thr);   /* the OSThread of a runtime thread (thread.c) */
 int xu_rcp_flush(void* mine);   /* sp.c: held done events out (under the lock): `mine`'s, or (NULL) a retrace's; how many */
+int xu_rcp_flush_recv(void* mine);   /* sp.c: XRC_RCP_RECV: `mine`'s, at a blocking receive that finds a message */
 
 /* pi.c: the ROM the PI reads (z64 order), through xhw_rom_read (resident or
  * the page cache, PLAN.md 3.5); 0 = done, 1 = outside the ROM (nothing read) */

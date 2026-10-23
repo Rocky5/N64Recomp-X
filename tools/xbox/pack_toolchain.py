@@ -47,7 +47,7 @@ import urllib.request
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-FORMAT = 2                      # bump when the bundle's layout changes (2: dryboot/)
+FORMAT = 3                      # bump when the bundle's layout changes (2: dryboot/, 3: recomp/symbol_lists.cpp)
 LLVM_VERSION = '21.1.8'
 LLVM_MAJOR = 21
 PY_VERSION = '3.12.15'
@@ -398,6 +398,12 @@ def gather_recomp(stage, recomp_dir, os_, recomp_pin, lic):
     dest.mkdir(parents=True)
     for n in ('N64Recomp', 'RSPRecomp'):
         copy_file(recomp_dir / (n + exe), dest / (n + exe))
+    # its reimplemented and ignored names (analyze/emit.py recomp_lists): the app's source copy has no tools/recomp,
+    # and a ROM-only build stopped there ("The recompiler's source (tools/recomp) is missing")
+    lists = ROOT / 'tools/recomp/src/symbol_lists.cpp'
+    if not lists.exists():
+        die(f'{lists} is missing: git submodule update --init tools/recomp')
+    copy_file(lists, dest / 'symbol_lists.cpp')
     (dest / '.n64rx-key').write_text(recomp_pin)
     lf = ROOT / 'tools/recomp/LICENSE'
     if lf.exists():

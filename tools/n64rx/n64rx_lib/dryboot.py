@@ -70,6 +70,8 @@ def src_hash():
 
 def _exe(log):
     """the dry boot built for this PC (once per source: build-host/dryboot/<hash>/), or the bundle's"""
+    if not SRC.exists():
+        return None
     h = src_hash()
     pre = os.environ.get('N64RX_DRYBOOT_DIR')
     if pre and (pathlib.Path(pre) / h / f'dryboot{EXE}').is_file():

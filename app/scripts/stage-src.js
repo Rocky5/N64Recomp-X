@@ -18,6 +18,7 @@ const INCLUDE = [
   /^games\//,
   /^patches\//,
   /^tools\/n64rx\//,
+  /^tools\/dryboot\//,               // the dry boot's source: its hash picks the bundle's prebuilt dryboot (n64rx_lib/dryboot.py)
   /^tools\/xbox\/[^/]+\.(py|sh)$/,    // compile_game.py, thinlto_link.py, patch_pbkit.py, xbe_sections.py, recomp_src.py, ...
   /^tools\/xbox\/(docker|msys)\//,
   /^VERSION$/,

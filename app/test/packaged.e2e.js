@@ -102,3 +102,27 @@ test('the full build builds the test ROM with only what is inside it', { skip, t
     await app.close();
   }
 });
+
+// a game no pack knows goes the ROM-only way (the analyser, N64Recomp's symbol lists, the dry boot), which the
+// test ROM's pack skips above: the shipped source once had no tools/recomp lists and no tools/dryboot
+test('the full build builds a ROM-only game with only what is inside it', { skip, timeout: 15 * 60 * 1000 }, () => {
+  const home = path.dirname(EXE);
+  const resources = process.platform === 'darwin' ? path.resolve(home, '..', 'Resources') : path.join(home, 'resources');
+  const tc = path.join(resources, 'toolchain');
+  const mf = JSON.parse(fs.readFileSync(path.join(tc, 'manifest.json'), 'utf8'));
+  const py = path.join(tc, mf.python);
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'n64rx packaged '));
+  const rom = path.join(work, 'test.z64');
+  const env = bareEnv();
+  for (const [k, v] of Object.entries(mf.env)) env[k] = path.join(tc, v);
+  env.N64RX_RECOMPILER_KEY = mf.recompiler;
+  env.N64RX_BUILD_ROOT = path.join(work, 'builds');
+  if (mf.path.length) env.PATH = [...mf.path.map((p) => path.join(tc, p)), env.PATH].join(path.delimiter);
+  assert.equal(spawnSync(py, ['-I', path.join(resources, 'src', 'tools', 'xbox', 'make_test_rom.py'), rom], { encoding: 'utf8', env }).status, 0);
+  const r = spawnSync(py, ['-I', path.join(resources, 'src', 'tools', 'n64rx', 'n64rx.py'), 'build', rom, '--analyze', '--fast',
+    '--engine', 'native', '--out', path.join(work, 'out')], { encoding: 'utf8', env, cwd: work });
+  assert.equal(r.status, 0, r.stdout.slice(-2000) + r.stderr.slice(-2000));
+  assert.match(r.stdout, /analysed from the ROM/);
+  assert.ok(fs.readFileSync(path.join(work, 'builds', 'test-rom', 'dryboot.log'), 'utf8').includes(path.join(tc, 'dryboot')),
+    'the dry boot did not run from the bundle');
+});

@@ -169,6 +169,38 @@ int xu_rcp_flush(void* mine) {
     return n;
 }
 
+/* A scheduler that is behind (its queue never empty, so it never blocks)
+ * got its own task's done only from the retrace two retraces later: Donkey
+ * Kong 64's audio tasks took three retraces each, its audio thread built
+ * the next before the last was started, the scheduler's start timer (one
+ * message per task on the N64) fired again for each retrace it waited, and
+ * a stale message later found nothing to start: the audio thread waited for
+ * a done that never came (silent from the first second, xemu). On the N64
+ * the RCP's done arrives milliseconds after the start, behind what the
+ * queue holds. -DXRC_RCP_RECV=1: the starting thread's own held events go
+ * out (behind the queue's messages, as the interrupt sends them) when it
+ * next receives with OS_MESG_BLOCK, blocking or not. Default 0: as before. */
+#ifndef XRC_RCP_RECV
+#define XRC_RCP_RECV 0
+#endif
+int xu_rcp_flush_recv(void* mine) {
+    int i = 0, n = 0;
+    if (!XRC_RCP_RECV) return 0;
+    while (i < s_npend) {
+        if (s_pend[i].thr != mine) {
+            i++;
+            continue;
+        }
+        if (XRC_RCP_ROOM && !room(s_pend[i].dp)) break;
+        xu_post_event(OS_EVENT_SP);   /* in the order the RCP raises them: SP done, then DP done */
+        if (s_pend[i].dp) xu_post_event(OS_EVENT_DP);
+        memmove(&s_pend[i], &s_pend[i + 1], (size_t)(s_npend - i - 1) * sizeof s_pend[0]);
+        s_npend--;
+        n++;
+    }
+    return n;
+}
+
 int xrc_jpeg_task(uint32_t task);   /* ../jpeg.c */
 
 #ifndef XRC_SP_BY_TYPE
