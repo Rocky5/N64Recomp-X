@@ -82,6 +82,8 @@ def run(rom, a, pack, bdir, prog, log):
            '--eep', '16' if pack and getattr(pack, 'save_type', '') == 'eep16k' else '4']
     if os.environ.get('N64RX_DRYBOOT_VERSIONS') in ('all', 'last'):   # which versions of a page (default: boot)
         cmd += ['--versions', os.environ['N64RX_DRYBOOT_VERSIONS']]
+    if os.environ.get('N64RX_DRYBOOT_EXL', '0') != '0':   # calls made in exception context learnt too (as before)
+        cmd += ['--exl-calls', '1']
     script = os.environ.get('N64RX_DRYBOOT_SCRIPT')   # an autopad script for its input, instead of the schedule
     if script:
         cmd += ['--script', script]

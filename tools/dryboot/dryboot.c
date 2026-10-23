@@ -101,6 +101,8 @@ static struct {
 } C;
 static uint64_t s_cycles, s_next_event, s_exec;
 static int s_unknown;       /* an instruction the CPU does not know: stop */
+static int s_exl_calls;     /* --exl-calls 1: calls made in exception context are learnt too (as before) */
+static int s_in_exc;        /* between an exception and its eret: the game's exception code runs */
 static uint32_t s_bad_w, s_bad_pc;
 enum { INDEX, RANDOM, ENTRYLO0, ENTRYLO1, CONTEXT, PAGEMASK, WIRED, BADVADDR = 8, COUNT, ENTRYHI, COMPARE, STATUS,
        CAUSE, EPC, PRID, CONFIG, LLADDR, XCONTEXT = 20, ERROREPC = 30 };
@@ -594,6 +596,7 @@ static void exception(int code, int bd_vec_refill) {
     C.cp0[STATUS] |= SR_EXL;
     C.pc = vec;
     C.delay = 0;
+    s_in_exc = 1;
 }
 
 static void tlb_fault(uint32_t va, int code, int refill) {
@@ -799,6 +802,12 @@ static void entered(uint32_t va, uint32_t caller) {
     uint32_t p;
     unsigned i;
     if (va & 3 || seen(va) || known(va)) return;
+    /* a call made between an exception and its eret is the game's exception code
+     * calling its own parts (libultra's send_mesg, from __osException's interrupt
+     * cases, which run after it clears EXL): the runtime replaces that code and the
+     * console's net never sees it. Kirby 64 and Star Fox 64 learnt send_mesg as a
+     * function and then never made a graphics task. --exl-calls 1: written down as before */
+    if (s_in_exc && !s_exl_calls) return;
     pa = translate_q(va, 0, 1);
     if (pa < 0 || (uint32_t)pa >= s_ramsize) return;
     p = (uint32_t)pa;
@@ -997,6 +1006,7 @@ static void cop0(uint32_t w) {
             if (C.cp0[STATUS] & SR_ERL) to = (uint32_t)C.cp0[ERROREPC], C.cp0[STATUS] &= ~(uint64_t)SR_ERL;
             else to = (uint32_t)C.cp0[EPC], C.cp0[STATUS] &= ~(uint64_t)SR_EXL;
             C.llbit = 0;
+            s_in_exc = 0;   /* (before the entry below: a thread's first dispatch is learnt) */
             {   /* a thread's first dispatch enters its entry; a resume point ran before (it is no function's start) */
                 int64_t pa = translate_q(to, 0, 1);
                 /* nor a call's return point (a thread that yielded in osRecvMesg: __osEnqueueAndYield
@@ -1422,6 +1432,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(a, "--press-mode")) s_press_mode = (int)strtoul(v, NULL, 10);
         else if (!strcmp(a, "--script")) script_load(v);
         else if (!strcmp(a, "--eep")) s_eep16 = strtoul(v, NULL, 10) == 16;
+        else if (!strcmp(a, "--exl-calls")) s_exl_calls = (int)strtoul(v, NULL, 10);
         else if (!strcmp(a, "--window")) keep8 = !strcmp(v, "keep");
         else if (!strcmp(a, "--versions")) s_versions = !strcmp(v, "all") ? 1 : !strcmp(v, "last") ? 0 : 2;
         else if (!strcmp(a, "--watch") && i + 2 < (uint32_t)argc) {   /* --watch <addr> <bytes>: who stores there */
