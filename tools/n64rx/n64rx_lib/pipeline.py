@@ -295,10 +295,17 @@ def write_guard(pack, gen, data):
     # 0x80187520) sends no DMA the runtime's overlay switch sees, and the intro's recompiled code ran
     # there. N64RX_GUARD_LEARN=0: code_* only, as before
     prefixes = ('.code_', '.learn_') if os.environ.get('N64RX_GUARD_LEARN', '1') != '0' else ('.code_',)
+    # the analyser's DMA-loaded overlays (seg_*) too: Wave Race 64 DMAs other code (ROM 0x1B3EC0) over
+    # the one the analyser found at 0x802C61D0 (ROM 0x1CAE40), and that one's recompiled
+    # func_802C6944 ran over it and returned a display-list pointer of 0x11 (a crash a few calls on).
+    # Never a relocatable overlay (its RDRAM bytes are relocated: never the ROM's). Opt-in until the
+    # regression set shows no misses: N64RX_GUARD_SEGS=1
+    if os.environ.get('N64RX_GUARD_SEGS', '0') != '0':
+        prefixes += ('.seg_',)
     if os.environ.get('N64RX_GUARD', '1') != '0':
         syms = tomllib.loads(_syms_path(pack).read_text(encoding='utf-8'))
         for sec in syms.get('section', []):
-            if not sec['name'].startswith(prefixes):
+            if not sec['name'].startswith(prefixes) or (sec['name'].startswith('.seg_') and sec.get('relocs')):
                 continue
             v0, r0 = sec['vram'], sec['rom']
             for f in sec.get('functions', []):

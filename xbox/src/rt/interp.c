@@ -785,7 +785,9 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
     {
         static unsigned s_n;
         uint32_t v0 = (uint32_t)st.r[2];
-#ifdef XRC_INTERP_RETLOG_V   /* only that value */
+#if defined(XRC_INTERP_RETLOG_SP)   /* every run entered with that sp (one caller's frame), whatever it returns */
+        if ((uint32_t)keep0[8] == (uint32_t)(XRC_INTERP_RETLOG_SP) && s_n++ < (unsigned)(XRC_INTERP_RETLOG))
+#elif defined(XRC_INTERP_RETLOG_V)   /* only that value */
         if (v0 == (uint32_t)(XRC_INTERP_RETLOG_V) && s_n++ < (unsigned)(XRC_INTERP_RETLOG))
 #else
         if (v0 && v0 < 0x1000u && s_n++ < (unsigned)(XRC_INTERP_RETLOG))
