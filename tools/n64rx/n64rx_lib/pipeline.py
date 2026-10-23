@@ -16,7 +16,7 @@ import time
 from . import ROOT, VERSION, N64rxError, compat, dryboot, engines, packs, romonly, rom as romlib, saves
 from . import learn as learnmod
 
-GEN_VERSION = 14   # bump when what n64rx writes into gen/ changes (the cache key; 14: fix_stray_goto)
+GEN_VERSION = 15   # bump when what n64rx writes into gen/ changes (the cache key; 14: fix_stray_goto; 15: write_mmio)
 VIDEO = {'auto': 0, '480': 2, '720': 3}
 EEPROM = {'eep4k': 512, 'eep16k': 2048}
 FATX_BAD = '<>:"/\\|?*'
@@ -123,7 +123,8 @@ def cache_key(rom, pack, gpr=None, pin=None, data=None):
     extra = [hashlib.sha1(data).hexdigest()] if data is not None and data != rom.data else []
     return hashlib.sha256(json.dumps([rom.sha1, pack.file_hash(), pin or engines.recompiler_pin(), GEN_VERSION,
                                       gpr or '', os.environ.get('N64RX_TRACE', ''), pack.rdram_mb, os.environ.get('N64RX_GUARD', '1'),
-                                      os.environ.get('N64RX_RESTRICT', '0'), os.environ.get('N64RX_FR', '1')] + extra).encode()).hexdigest()
+                                      os.environ.get('N64RX_RESTRICT', '0'), os.environ.get('N64RX_FR', '1'),
+                                      os.environ.get('N64RX_GUARD_SEGS', '0')] + extra).encode()).hexdigest()
 
 
 def decide_gpr(pack, rom, override, prog, data=None):
@@ -584,6 +585,47 @@ LABEL_DEF = re.compile(r'^\s*(L_[0-9A-F]{8}):', re.M)
 GOTO_L = re.compile(r'goto (L_([0-9A-F]{8}));')
 
 
+MMIO_STORE = re.compile(r'^(\s*)MEM_([WHB])\((-?0X[0-9A-F]+|-?\d+), (ctx->r\d+)\) = (.+);[ \t]*$', re.M)
+MMIO_LOADS = {'MEM_W': 'xrc_mld_w(rdram, (uint32_t)((reg) + (offset)))',
+              'MEM_WU': '((uint32_t)xrc_mld_w(rdram, (uint32_t)((reg) + (offset))))',
+              'MEM_H': '((int16_t)xrc_mld_hu(rdram, (uint32_t)((reg) + (offset))))',
+              'MEM_HU': '((uint16_t)xrc_mld_hu(rdram, (uint32_t)((reg) + (offset))))',
+              'MEM_B': '((int8_t)xrc_mld_bu(rdram, (uint32_t)((reg) + (offset))))',
+              'MEM_BU': '((uint8_t)xrc_mld_bu(rdram, (uint32_t)((reg) + (offset))))'}
+
+
+def write_mmio(pack, gen):
+    """the functions that reach the RCP's registers by a constant KSEG1 address,
+    recompiled (N64RX_MMIO_RECOMP, romonly.py's pack/mmio_funcs.txt) instead of
+    interpreted: each store becomes xrc_mst_* and MEM_* is redefined around the
+    function to xrc_mld_* (recomp.h), so KSEG1 past RDRAM reaches the register
+    model as the interpreter's accesses do. Returns the number rewritten."""
+    p = pack.dir / 'mmio_funcs.txt'
+    names = set(p.read_text(encoding='utf-8').split()) if p.exists() else set()
+    if not names:
+        return 0
+    push = ''.join(f'#pragma push_macro("{m}")\n#undef {m}\n#define {m}(offset, reg) {d}\n' for m, d in MMIO_LOADS.items())
+    pop = ''.join(f'#pragma pop_macro("{m}")\n' for m in MMIO_LOADS)
+    n = 0
+    for c in sorted(gen.glob('funcs_*.c')):
+        text = c.read_text(encoding='utf-8', errors='replace')
+        starts = [m.start() for m in FUNC_START.finditer(text)] + [len(text)]
+        out, pos = [], 0
+        for i in range(len(starts) - 1):
+            body = text[starts[i]:starts[i + 1]]
+            m = re.match(r'(?:RECOMP_FUNC )?void (\w+)\(', body)
+            if not m or m.group(1) not in names:
+                continue
+            body = MMIO_STORE.sub(lambda s: f'{s.group(1)}xrc_mst_{s.group(2).lower()}(rdram, (uint32_t)(({s.group(4)}) + '
+                                            f'({s.group(3)})), (uint32_t)({s.group(5)}));', body)
+            out.append(text[pos:starts[i]] + push + body + pop)
+            pos = starts[i + 1]
+            n += 1
+        if out:
+            c.write_text(''.join(out) + text[pos:], encoding='utf-8')
+    return n
+
+
 def fix_stray_goto(gen):
     """a branch to an address outside its function comes out of the recompiler
     as a goto to a label the function does not have, which C rejects (a
@@ -865,6 +907,9 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
         nstray = fix_stray_goto(gen)
         if nstray:
             prog.note(f'{nstray} branches out of their function made tail calls through the lookup')
+        nmmio = write_mmio(pack, gen)
+        if nmmio:
+            prog.note(f'{nmmio} functions that reach the RCP\'s registers recompiled with checked loads and stores (N64RX_MMIO_RECOMP)')
         extern = write_extern_h(gen)
         ninterp = write_interp_c(pack, gen)
         nsj = write_setjmp_sites(gen)

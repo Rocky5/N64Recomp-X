@@ -247,7 +247,7 @@ def apply(a, learnt, rom_len):
     runs = _code_runs(_without_relocated(learnt, notes))
     runs = _rom_backed(a, runs, rom_len, notes)
     spans_rd = _decompressed_code(a, learnt, runs, rom_len, notes)   # {segment: [(lo, hi)]} now RDRAM's bytes
-    _table_sources(a, runs, notes)   # before the walks: they read jump tables there
+    _table_sources(a, runs, notes, learnt.funcs)   # before the walks: they read jump tables there
     runs, spans = _version_spans(runs, learnt.alts)
     pairs = []   # (vram, the DMA whose overlay holds it, the log had none): the one it ran in, as logged
     for x in sorted(learnt.funcs):
@@ -537,7 +537,7 @@ def _decompressed_code(a, learnt, runs, rom_len, notes):
     return spans
 
 
-def _table_sources(a, runs, notes):
+def _table_sources(a, runs, notes, starts=()):
     """captured KSEG0 RDRAM over a ROM segment whose bytes differ there (a
     boot that decompresses its code and data over its own segment: GoldenEye,
     whose 0x70000000 code reads switch tables at 0x8002xxxx). Appended to the
@@ -551,7 +551,13 @@ def _table_sources(a, runs, notes):
         if not 0x80000000 <= blk < 0x80800000:
             continue
         over = [s for s in a.img.segments if not s.name.startswith('code_') and s.vram < blk + len(data) and blk < s.vram + s.size]
-        differ = False
+        # RDRAM no segment covers at all (Donkey Kong 64's decompressed rodata at 0x8075xxxx, its switch
+        # tables: the dry boot captures a table's page when a jr reads it): a table source as well.
+        # N64RX_TABLE_UNCOVERED=0: only over a ROM segment that differs, as before
+        # Only data: a block where no learnt function starts (captured code in several versions keeps
+        # its own tables; another version's would send its switches wild, as Mario Party's did)
+        differ = (not over and os.environ.get('N64RX_TABLE_UNCOVERED', '1') != '0'
+                  and not any(blk <= x < blk + len(data) for x in starts))
         for s in over:
             lo, hi = max(blk, s.vram), min(blk + len(data), s.vram + s.size)
             r = s.rom + (lo - s.vram)

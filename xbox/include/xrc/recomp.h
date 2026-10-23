@@ -152,6 +152,47 @@ uint32_t xrc_high_addr(uint32_t a);
  * library sweep found it in Bomberman 64: The Second Attack!) */
 #define MEM_WU(offset, reg) (*(uint32_t*)(rdram + XRC_ADDR((reg) + (offset))))
 
+/* A function that reaches the RCP's registers by a constant KSEG1 address
+ * (n64rx N64RX_MMIO_RECOMP, pipeline.py write_mmio) stays recompiled with its
+ * loads and stores through these: KSEG1 past RDRAM goes to the register model
+ * (rt/mmio.c), as the interpreter's do; anything else is the plain access.
+ * Its stores are rewritten to xrc_mst_*, and MEM_* is redefined around it to
+ * xrc_mld_*. The bytes of a register word are big-endian lanes, as interp.c. */
+extern uint32_t xrc_rdram_size;
+uint32_t xrc_mmio_read(uint32_t vaddr);
+void xrc_mmio_write(uint32_t vaddr, uint32_t v);
+#define XRC_IS_MMIO(a) __builtin_expect((uint32_t)((uint32_t)(a) - 0xA0000000u) < 0x20000000u && \
+                                        ((uint32_t)(a) & 0x1FFFFFFFu) >= xrc_rdram_size, 0)
+static inline int32_t xrc_mld_w(uint8_t* rdram, uint32_t a) {
+    return XRC_IS_MMIO(a) ? (int32_t)xrc_mmio_read(a) : *(int32_t*)(rdram + XRC_ADDR(a));
+}
+static inline uint32_t xrc_mld_hu(uint8_t* rdram, uint32_t a) {
+    return XRC_IS_MMIO(a) ? (xrc_mmio_read(a & ~3u) >> ((2u - (a & 2u)) * 8u)) & 0xFFFFu : *(uint16_t*)(rdram + (XRC_ADDR(a) ^ 2));
+}
+static inline uint32_t xrc_mld_bu(uint8_t* rdram, uint32_t a) {
+    return XRC_IS_MMIO(a) ? (xrc_mmio_read(a & ~3u) >> ((3u - (a & 3u)) * 8u)) & 0xFFu : *(uint8_t*)(rdram + (XRC_ADDR(a) ^ 3));
+}
+static inline void xrc_mst_w(uint8_t* rdram, uint32_t a, uint32_t v) {
+    if (XRC_IS_MMIO(a)) xrc_mmio_write(a, v);
+    else *(uint32_t*)(rdram + XRC_ADDR(a)) = v;
+}
+static inline void xrc_mst_h(uint8_t* rdram, uint32_t a, uint32_t v) {
+    if (XRC_IS_MMIO(a)) {
+        uint32_t sh = (2u - (a & 2u)) * 8u;
+        xrc_mmio_write(a & ~3u, (xrc_mmio_read(a & ~3u) & ~(0xFFFFu << sh)) | ((v & 0xFFFFu) << sh));
+    } else {
+        *(uint16_t*)(rdram + (XRC_ADDR(a) ^ 2)) = (uint16_t)v;
+    }
+}
+static inline void xrc_mst_b(uint8_t* rdram, uint32_t a, uint32_t v) {
+    if (XRC_IS_MMIO(a)) {
+        uint32_t sh = (3u - (a & 3u)) * 8u;
+        xrc_mmio_write(a & ~3u, (xrc_mmio_read(a & ~3u) & ~(0xFFu << sh)) | ((v & 0xFFu) << sh));
+    } else {
+        *(uint8_t*)(rdram + (XRC_ADDR(a) ^ 3)) = (uint8_t)v;
+    }
+}
+
 /* the high word at the lower address, as upstream */
 #define SD(val, offset, reg) { \
     *(uint32_t*)(rdram + XRC_ADDR((reg) + (offset) + 4)) = (uint32_t)((uint64_t)(val) >> 0); \

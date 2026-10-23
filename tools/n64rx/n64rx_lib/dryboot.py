@@ -84,6 +84,8 @@ def run(rom, a, pack, bdir, prog, log):
         cmd += ['--versions', os.environ['N64RX_DRYBOOT_VERSIONS']]
     if os.environ.get('N64RX_DRYBOOT_EXL', '0') != '0':   # calls made in exception context learnt too (as before)
         cmd += ['--exl-calls', '1']
+    if os.environ.get('N64RX_DRYBOOT_TABLES', '1') == '0':   # a jr's jump table page not captured (as before)
+        cmd += ['--jump-tables', '0']
     script = os.environ.get('N64RX_DRYBOOT_SCRIPT')   # an autopad script for its input, instead of the schedule
     if script:
         cmd += ['--script', script]

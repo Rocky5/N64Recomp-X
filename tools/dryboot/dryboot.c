@@ -103,6 +103,8 @@ static uint64_t s_cycles, s_next_event, s_exec;
 static int s_unknown;       /* an instruction the CPU does not know: stop */
 static int s_exl_calls;     /* --exl-calls 1: calls made in exception context are learnt too (as before) */
 static int s_in_exc;        /* between an exception and its eret: the game's exception code runs */
+static int s_tables = 1;    /* --jump-tables 0: a jr's table page is not captured (as before) */
+static uint32_t s_lw_ea[32], s_lw_val[32];   /* each register's last lw: where from, what */
 static uint32_t s_bad_w, s_bad_pc;
 enum { INDEX, RANDOM, ENTRYLO0, ENTRYLO1, CONTEXT, PAGEMASK, WIRED, BADVADDR = 8, COUNT, ENTRYHI, COMPARE, STATUS,
        CAUSE, EPC, PRID, CONFIG, LLADDR, XCONTEXT = 20, ERROREPC = 30 };
@@ -742,6 +744,19 @@ static void capture(uint32_t va) {
     s_recs[s_nrecs].hash = h, s_recs[s_nrecs].data = rec, s_recs[s_nrecs].gfx = s_gfx_tasks, s_nrecs++;
 }
 
+/* A jr through a register that a lw just loaded from a page the CPU made
+ * (outside the boot image) reads a jump table there: the page goes out as
+ * captured bytes too, for n64rx to read the table from (learn.py
+ * _table_sources). Donkey Kong 64 decompresses its code and its rodata;
+ * its switch tables at 0x8075xxxx were in no segment, so 120 functions,
+ * its audio thread's task builder among them, were interpreted. */
+static void table_page(uint32_t ea) {
+    int64_t pa = translate_q(ea, 0, 1);
+    if (pa < 0 || (uint32_t)pa >= s_ramsize || ((uint32_t)pa >= s_boot_lo && (uint32_t)pa < s_boot_hi)) return;
+    if (!page_cpu((uint32_t)pa & ~0xFFFu)) return;
+    capture(ea);
+}
+
 /* the records out: a page's versions all when an older one came back (an overlay the game loads at
  * that address again and again: Mario Tennis's scenes), else its last one alone when the older ran
  * at boot, before the first graphics task (a loader the code it unpacked replaced for good: one early
@@ -1049,7 +1064,10 @@ static void step(uint32_t w) {
         case 4: R(RD) = SX32((uint32_t)R(RT) << (R(RS) & 31)); break;
         case 6: R(RD) = SX32((uint32_t)R(RT) >> (R(RS) & 31)); break;
         case 7: R(RD) = SX32((int32_t)(uint32_t)R(RT) >> (R(RS) & 31)); break;
-        case 8: JUMP((uint32_t)R(RS)); break;                                            /* jr */
+        case 8:                                                                          /* jr */
+            if (s_tables && RS != 31 && s_lw_ea[RS] && (uint32_t)R(RS) == s_lw_val[RS]) table_page(s_lw_ea[RS]);
+            JUMP((uint32_t)R(RS));
+            break;
         case 9: { uint32_t t = (uint32_t)R(RS); R(RD) = SX32(C.pc + 8); JUMP(t); entered(t, C.pc); break; }   /* jalr */
         case 12: C.exc = EXC_SYS + 1; break;
         case 13: C.exc = EXC_BP + 1; break;
@@ -1186,7 +1204,12 @@ static void step(uint32_t w) {
         R(RT) = SX32(nv);
         break;
     }
-    case 35: if (rd(EA, 4, &v)) R(RT) = SX32(v); break;
+    case 35:
+        if (rd(EA, 4, &v)) {
+            R(RT) = SX32(v);
+            if (RT) s_lw_ea[RT] = EA, s_lw_val[RT] = v;
+        }
+        break;
     case 36: if (rd(EA, 1, &v)) R(RT) = v & 0xFF; break;
     case 37: if (rd(EA, 2, &v)) R(RT) = v & 0xFFFF; break;
     case 39: if (rd(EA, 4, &v)) R(RT) = v & 0xFFFFFFFFu; break;
@@ -1433,6 +1456,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(a, "--script")) script_load(v);
         else if (!strcmp(a, "--eep")) s_eep16 = strtoul(v, NULL, 10) == 16;
         else if (!strcmp(a, "--exl-calls")) s_exl_calls = (int)strtoul(v, NULL, 10);
+        else if (!strcmp(a, "--jump-tables")) s_tables = (int)strtoul(v, NULL, 10);
         else if (!strcmp(a, "--window")) keep8 = !strcmp(v, "keep");
         else if (!strcmp(a, "--versions")) s_versions = !strcmp(v, "all") ? 1 : !strcmp(v, "last") ? 0 : 2;
         else if (!strcmp(a, "--watch") && i + 2 < (uint32_t)argc) {   /* --watch <addr> <bytes>: who stores there */

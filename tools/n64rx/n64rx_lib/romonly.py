@@ -171,8 +171,17 @@ def make(rom, bdir, base=None, learnt=None):
                        and nm[x] not in replaced and nm[x] not in ignored})   # (a replaced one has the runtime's body)
     # code that reaches the RCP's registers through KSEG1: interpreted, onto
     # the runtime's register model (N64RX_MMIO_INTERP=0: recompiled, as before)
+    # N64RX_MMIO_RECOMP=1: recompiled instead, their loads and stores checked for the registers
+    # (pipeline.py write_mmio, recomp.h xrc_mld_*/xrc_mst_*): Donkey Kong 64's audio task builder and
+    # its busiest routine (14 million interpreted instructions every 5 s) read a register now and then
+    mmio_recomp = {}
     if os.environ.get('N64RX_MMIO_INTERP', '1') != '0':
-        interp.update({x: n for x, n in emit.hw_funcs(a, live, nm, replaced).items() if n not in ignored})
+        hw = {x: n for x, n in emit.hw_funcs(a, live, nm, replaced).items() if n not in ignored}
+        if os.environ.get('N64RX_MMIO_RECOMP', '0') != '0':
+            mmio_recomp = hw
+        else:
+            interp.update(hw)
+    (pdir / 'mmio_funcs.txt').write_text(''.join(n + '\n' for n in sorted(mmio_recomp.values())), encoding='utf-8')
     # a branch into another function's body cannot be compiled: interpreted
     # (N64RX_XBRANCH_INTERP=0: recompiled, the compile then fails as before)
     if os.environ.get('N64RX_XBRANCH_INTERP', '1') != '0':

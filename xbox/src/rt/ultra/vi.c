@@ -101,6 +101,12 @@ static void vi_thread(void* arg) {
         uint32_t mq;
         xhw_wait_vblank();
         if (XRC_PAL_50HZ && xrc_tv_type == 0 && ++vbl % 6u == 0) continue;
+#ifdef XRC_VI_DIV   /* diagnosis: one retrace every n vblanks, n times the CPU per retrace (is a game's fault a matter of speed? Donkey Kong 64's audio in xemu) */
+        {
+            static unsigned s_div;
+            if (++s_div % (unsigned)(XRC_VI_DIV)) continue;
+        }
+#endif
         if (s_cur != s_next) s_cur = s_next;
         s_retrace++;
         if (XRC_MENU_VI_FIRST) xrc_menu_vi(s_retrace);
