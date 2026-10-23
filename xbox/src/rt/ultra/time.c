@@ -111,6 +111,14 @@ ULTRA(osSetTimer) {
         s_kick = xhw_event_create();
         xu_spawn(timer_thread, NULL, 14, 32 * 1024);
     }
+#ifdef XRC_LOG_TIMERS   /* diagnosis: the first n osSetTimer calls (Donkey Kong 64's audio start timer) */
+    {
+        static unsigned s_n;
+        if (s_n++ < (unsigned)(XRC_LOG_TIMERS))
+            xhw_logf("[OS] osSetTimer %08x: countdown %u, interval %u, queue %08x message %08x (retrace %u)", (unsigned)t,
+                     (unsigned)countdown, (unsigned)interval, (unsigned)mq, (unsigned)msg, xu_retrace());
+    }
+#endif
     wr64(t + TM_INTERVAL, interval);
     wr64(t + TM_VALUE, countdown);
     wr32(t + TM_MQ, mq);

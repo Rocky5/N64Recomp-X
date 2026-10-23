@@ -309,6 +309,7 @@ then `pak_boot` shows the game's own pak screen agreeing).
 | `-DXRC_WATCH_QUEUE=<N64 address>` | unset | diagnosis: every message into that queue (the first 64, then every 600th) and every one taken out (the first 64), with the N64 thread |
 | `-DXRC_WATCH_QUEUE_ALL=1` | 0 | with `XRC_WATCH_QUEUE`: every message into and out of that queue (the first 20000 each way) |
 | `-DXRC_WATCH_RECV=<N64 address>` | unset | diagnosis: the first 300 times a thread blocks on that queue: its N64 thread, sp and 64 stack words (the saved return addresses); the trace (`N64RX_TRACE=1`) the first two times |
+| `-DXRC_LOG_TIMERS=<n>` | unset | diagnosis: the first n `osSetTimer` calls (timer, countdown, interval, queue, message, retrace): Donkey Kong 64's audio start timer |
 | `-DXRC_DP_ON_FULLSYNC=0` | 1 | every graphics task raises DP done, as before; otherwise only one whose display list issued a FullSync, as the RDP does (Blast Corps' scheduler asserts on a DP done with no RDP task) |
 | `-DXRC_ERET_RETURN=0` | 1 | an `eret` the interpreter meets outside the game's exception code stops the game, as before; otherwise it returns from the interpreted function (a game's own unnamed libultra dispatching a thread; the sweep's commonest stop) |
 | `-DXRC_TLBWR_RANDOM=0` | 1 | `tlbwr` writes the entry at Wired, as before; otherwise Random counts down from 31 to Wired, one step a write (`interp.c`) |
