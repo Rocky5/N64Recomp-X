@@ -31,6 +31,28 @@ def enabled():
     return os.environ.get('N64RX_DRYBOOT', '0') != '0'
 
 
+# N64RX_DRYBOOT=auto: the dry boot runs, and what it learnt is used only when it found at least
+# AUTO_MIN functions the analysis did not have: a game whose code the ROM does not hold as it runs
+# (GoldenEye 1,515, Banjo-Kazooie 2,704, Mario Tennis 920, Donkey Kong 64 1,525, Castlevania LoD 133,
+# Star Fox 64 98, Wave Race 64 48; without it the first three never start). Super Mario 64, Smash,
+# Diddy Kong Racing, Mario Kart 64 and Ocarina learn 0, Kirby 64 1: their builds stay as they are.
+AUTO_MIN = 16
+
+
+def auto():
+    return os.environ.get('N64RX_DRYBOOT', '0') == 'auto'
+
+
+def worth(learn_file):
+    """auto mode: whether the dry boot's learn file is worth using (AUTO_MIN functions)"""
+    try:
+        n = sum(1 for l in pathlib.Path(learn_file).read_text(encoding='utf-8', errors='replace').splitlines()
+                if l.startswith('func '))
+    except OSError:
+        return False, 0
+    return n >= AUTO_MIN, n
+
+
 def tv_of_region(code):
     """osTvType from the header's region letter, as xbox/src/rt/boot.c reads it"""
     r = (code or 'E')[3:4]

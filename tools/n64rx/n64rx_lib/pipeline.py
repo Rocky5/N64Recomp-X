@@ -858,6 +858,10 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
         pack, ainfo = romonly.make(rom, bdir, base, learnt)
         if dryboot.enabled():   # the boot run on this PC first (dryboot.py): its learn file before the user's
             db = dryboot.run(rom, ainfo['analysis'], pack, bdir, prog, bdir / 'dryboot.log')
+            if db and dryboot.auto():   # N64RX_DRYBOOT=auto: only for a game that needs it
+                ok, n = dryboot.worth(db)
+                prog.note(f'dry boot (auto): {n} functions learnt: ' + ('used' if ok else 'not needed, left out'))
+                db = db if ok else None
             if db:
                 learn = [db] + list(learn)
                 learnt = learnmod.read(learn)
