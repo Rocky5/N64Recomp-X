@@ -338,7 +338,11 @@ def slot_env(slot):
         return {}
     base = '/c/xemu' if WIN else str(pathlib.Path.home() / 'xemu')
     cfg = 'C:/xemu' if WIN else base
-    return {'MX_RUN': f'{base}/nrx-run{slot}', 'MX_XEMU_ARGS': f'-config_path {cfg}/slots/{slot}/xemu.toml'}
+    env = {'MX_RUN': f'{base}/nrx-run{slot}', 'MX_XEMU_ARGS': f'-config_path {cfg}/slots/{slot}/xemu.toml'}
+    if WIN:   # the rest of nrx-envN.sh, when the caller sourced none (s16 then fell back to docker)
+        env.setdefault('MX_XEMU', os.environ.get('MX_XEMU', '/c/xemu/xemu/xemu.exe'))
+        env.setdefault('MX_XISO', os.environ.get('MX_XISO', '/c/xdev/nxdk/tools/extract-xiso/build/extract-xiso.exe'))
+    return env
 
 
 def run_one(r, secs, sdir, keep_as=None, slot=None):
