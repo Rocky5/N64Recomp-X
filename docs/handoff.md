@@ -2992,3 +2992,47 @@ on `dev`, not pushed; nothing deployed.
   boot, `[CLOCK] cpu 734 MHz`).
 - Not verified: anything on a console; DK64's audio; Mario Tennis's line
   on red; Snap's tutorial on red.
+
+### Later the same night (2026-10-23, host + xemu)
+
+- **The app** (7d5fd8e, the one subagent the maintainer allowed): the
+  Windows zip carries its build tools unpacked (`npm run dist`; 329 MB
+  zipped, 961 MB unpacked); unzip, run, build, no download or install. The
+  packaged app built the test ROM through its window from a path with
+  spaces with PATH cut to Windows' folders (45 s). Found on the way: the
+  nxdk check asked git for any nxdk folder's commit and failed inside a
+  git work tree (engines.py). macOS and Linux bundles not built.
+- **s16** (`docs/analyzer.md`): all 246 build, 192 present (s15: 183 of
+  242). A stale "entry interpreted" mark had failed five links (fixed).
+- **Kirby 64's HUD in xemu** (`C:\xemu\nrx-scen\k64play2`: START, d-pad
+  left twice, A, every 0.75 s, picks "No thanks!" and starts Pop Star):
+  the lives count, the health pips and the ability card all draw. So the
+  missing HUD on red is the console's alone, like its texture issues; the
+  HUD bar picture in RDRAM is the same as the dry boot's (blank bar and
+  card frames, the icons drawn on top by the display list).
+- **Wave Race 64 without its facts**: `N64RX_GUARD_SEGS=1` (opt-in) guards
+  the analyser's DMA-loaded overlays; the recompiled `func_802C6944` ran
+  over other code DMA'd there. 300 s, no crash. The regression set (11 of
+  14 booted; GoldenEye, Banjo, Mario Tennis stalled at the loading screen
+  under load) showed 0 guard misses, no crash.
+- **Donkey Kong 64**, why it is silent and slow in xemu:
+  - without the dry boot only its boot segment (181 functions) is
+    recompiled: its code is compressed, the facts give addresses only.
+    `vdk2` (staged earlier) was that; `vdk3` is built with the dry boot.
+  - with it, 120 functions were still interpreted: their switch tables sit
+    in decompressed rodata no segment covered. The dry boot now captures a
+    table's page when a jr reads it (dd84bbb): 28 interpreted, 3,964
+    functions recompiled (was 3,488). `N64RX_MMIO_RECOMP=1` recompiles the
+    9 that read a register (its audio task builder among them).
+  - the rest of its interpreter time is one hand-written routine,
+    0x806195D0 (Status.FR set inside, a shared exit past four entries):
+    `N64RX_HANDWRITTEN_SPAN=1` recompiles it with XRC_FR 3 (54fb8a9) and
+    the game crashes at frame 69; interpreted it runs. Open.
+  - the audio still stops in xemu (the scheduler is late, its timer fires
+    twice for one task, the audio thread waits on a task never started).
+    At a third of the retrace rate it lasted 464 tasks (35 at full rate),
+    so speed matters; whether red keeps up is not known.
+- A background regression check (six xemus, six builds) was stopped by
+  Claude Code for low memory (32 GB); runs stay at eight xemus or fewer.
+- Staged for red, not deployed: `build-host/hwbuild29.sh` (vmp20, vwr3,
+  vdk3, vdk3t), `deploy-set29.sh`.
