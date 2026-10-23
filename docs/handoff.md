@@ -3036,3 +3036,16 @@ on `dev`, not pushed; nothing deployed.
   Claude Code for low memory (32 GB); runs stay at eight xemus or fewer.
 - Staged for red, not deployed: `build-host/hwbuild29.sh` (vmp20, vwr3,
   vdk3, vdk3t), `deploy-set29.sh`.
+- **ROM-only builds need the dry boot for five of the console games**: built
+  with no learn logs and no dry boot (the default), GoldenEye stops at boot
+  ("the game's threads never started"), Banjo-Kazooie and Mario Tennis
+  never present, Donkey Kong 64 is almost all interpreted (xemu). Their
+  console builds used learn logs; the shipped facts hold addresses, not the
+  code they decompress. With the dry boot all ten Gold and Silver games
+  present with sound and no crash in 90 s (xemu). **Set 30**
+  (`build-host/hwbuild30.sh`, `deploy-set30.sh`; own title IDs and app
+  folders `N64Recomp-X-DB-*`) is that, staged for the console run that
+  would let the dry boot become the default (roadmap B2). Not deployed.
+- Mario Tennis: a black 256x128 block in its intro (strips of its own
+  colour image, xemu and the host replay); `XGFX_FB_SELF` (opt-in) and
+  readback mode 3 do not clear it. The TMEM wrap leaves no "too big" miss.
