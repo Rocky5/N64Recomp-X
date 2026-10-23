@@ -14,6 +14,13 @@ ROM itself (`docs/analyzer.md`, PLAN.md §3.14); packs only add fixes on top.
 The decomps are the answer keys that make the ROM-only path stable
 (PLAN.md §6 "V"): read, compared against, never shipped.
 
+**Release blocker (maintainer, 2026-10-23): the first build is the best
+build.** Opening the app and building must give the best performance the
+project can reach, with no learning rounds: what the console's learn logs
+taught becomes committed recipes (unpacking facts, dry-boot routes, page
+checksums), never their code bytes. Tiers describe that ROM-only build.
+`docs/roadmap.md` section 0.
+
 **Status (`docs/compat.md` for each game's tier, `docs/handoff.md` for the
 record): M1 done; M2 mostly done. Three tiers: Gold fully playable on a
 real Xbox with no major issues, Silver playable there with issues,

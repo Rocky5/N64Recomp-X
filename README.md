@@ -31,6 +31,9 @@ real Xbox moves a game up:
   Diddy Kong Racing.
 - **Silver**, playable, with issues that do not stop you: Mario Kart 64,
   GoldenEye 007, Banjo-Kazooie, Ocarina of Time, Castlevania: Legacy of Darkness.
+  (GoldenEye's and Banjo-Kazooie's rating comes from builds that used the
+  console's learning rounds; built from the ROM alone they run slower for
+  now, and closing that gap comes before any release.)
 - **Experimental**, everything else: it may boot, run partly, or not at
   all. Across a whole library, all 246 games build today and 192
   present frames in xemu (sweep s16, with the dry boot), far fewer run well yet; what blocks the rest is tracked in

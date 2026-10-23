@@ -7,6 +7,53 @@ code by file (`docs/review-2026-10.md`). `docs/PLAN.md` stays binding on the
 approach and the architecture; this file says what to do next and in what
 order, and why. Where it departs from PLAN.md's milestone order it says so.
 
+## 0. Release blocker (maintainer, 2026-10-23): the first build is the best build
+
+**A user opens the app, gives it a ROM, and gets the best build the project
+can make: no learning rounds, no console sessions, no flags. Nothing ships
+until that holds.** Set 31 on red showed the gap: GoldenEye built from the
+ROM alone (the dry boot and the shipped learnt facts) interprets 123
+hand-written routines and plays at 12-34 fps; the maintainer's Silver build
+(`vge13`, 31 rounds of console learn logs) interprets 34. The logs' code
+bytes (`learn_code.bin`: the game's own code as it sat in RDRAM) can never
+be committed (CLAUDE.md's first hard rule); the facts already are
+(`games/learned/`), and they are not enough.
+
+What closes it, in order:
+
+1. **The 123 vs 34.** Diff `build-hw19-v31-ge/ngee/pack/interp.txt` (and
+   `hazards.txt`, `analysis.txt`) against the learn-log build's. Each
+   routine is interpreted either because its bytes are missing (code no
+   ROM DMA holds as it runs) or because a rule refuses it (cross branches,
+   tables outside a segment, hand-written code). The second kind is an
+   analyser fix that helps every game; measure how much of the gap it is.
+2. **Recipes, not bytes.** Most captured code is the ROM's own bytes
+   unpacked by the game. Commit how to make them from the user's ROM:
+   - *unpacking facts*: "ROM offset X, Rare's inflate (or the game's
+     gzip/LZ), lands at vram Y" (games/learned gains such lines; the
+     analyser inflates at build time, as it already does for Yaz0);
+   - *dry-boot routes*: an input script per game (games/learned or a
+     sibling file: button presses and frame counts) that drives the dry
+     boot past the boot into its levels (mission 1, the first world, a
+     match), so the game itself unpacks that code on the user's PC
+     (`N64RX_DRYBOOT_SCRIPT` exists; it took Mario Tennis into a match);
+   - *checksums*: the SHA-1 of each page the console captured, so a build
+     knows it recreated exactly what the maintainer's had (and says so when
+     it did not).
+   Turn every console learn log the project has (GoldenEye 31 rounds,
+   Banjo 22, Mario Tennis 32, DK64, All-Star Baseball 26, ...) into these,
+   game by game, until a ROM-only build interprets no more than the
+   learn-log build.
+3. **The measure.** For each Gold/Silver/priority game: interpreted
+   routines and `[PERF2]` interpreter ms in the ROM-only build vs the
+   learn-log build, in xemu; a game is done when they match. Then one
+   console pass (`docs/compat.md`'s rule: the tier is the ROM-only build's).
+4. **Later, not instead:** the app's own learning loop ("Improve this
+   game": pull `learn.txt`/`learn_code.bin` from the user's Xbox over the
+   FTP it already uses, rebuild with `--learn`, keep the last good build),
+   for games no route reaches. The runtime already writes the files in
+   every build.
+
 ## 1. Where things stand, in one table
 
 | | |

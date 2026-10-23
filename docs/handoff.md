@@ -43,7 +43,16 @@ speed (60 fps where the game assumes 30); Mario Tennis as before (black
 model copies at the top left, aspect, ball, replay); GoldenEye 12-34 fps from
 the ROM alone (123 routines interpreted).
 
+**Release blocker, the next run's top priority** (maintainer,
+2026-10-23; `docs/roadmap.md` section 0): a user's first build from the app
+must be as good as the project's best (learn-log) build. GoldenEye from the
+ROM alone interprets 123 routines (12-34 fps on red) against the learn-log
+build's 34. Start: diff the two builds' `interp.txt`/`hazards.txt`, then turn
+the console learn logs into committed recipes (unpacking facts, dry-boot
+routes, page checksums), game by game.
+
 **Open, in order** (each with the entry that has its details):
+0. The release blocker above.
 1. DK64's pacing: no faster than the N64's RDP would let it (60 -> 30 fps),
    the DK Rap's sync, the glitch at DK Island.
 2. GoldenEye from the ROM alone: its 123 interpreted routines.

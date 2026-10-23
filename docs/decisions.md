@@ -1710,3 +1710,20 @@ version that drops a start message finding no task waiting (`DIVERGES`),
 which is safe because only the loop itself starts the game's audio tasks.
 The patch is MIT code written here from the decomp's description; it holds
 addresses and C, no bytes of the game. Kill switch: `N64RX_PATCHES=0`.
+
+## The first build is the best build: recipes for the learnt code, not its bytes (2026-10-23, maintainer)
+
+Set 31 on red: GoldenEye built from the ROM alone ran at 12-34 fps (123
+routines interpreted) where the learn-log build that earned Silver
+interprets 34. The maintainer: this cannot ship; a user gets the best
+performance by opening the app and building, and it is the next run's top
+priority. The learn logs' code bytes cannot be committed (they are the
+game's code; the repository is public and CLAUDE.md's first rule forbids
+it), and a learning loop the user runs is a later addition, not the answer.
+So what the console learnt is turned into recipes that make the same bytes
+from the user's own ROM at build time: unpacking facts (ROM offset,
+algorithm, destination), dry-boot input routes into each game's levels, and
+checksums of the pages the console captured to prove the build recreated
+them; plus analyser fixes for the routines a rule, not missing bytes, keeps
+interpreted. Tiers describe the ROM-only build (`docs/compat.md`).
+`docs/roadmap.md` section 0 has the order of work.

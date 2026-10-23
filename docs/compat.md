@@ -70,6 +70,13 @@ minor is Gold under the new meaning once the maintainer says so
 
 ## How a row changes
 
+A tier describes the build a user gets: the app (or `n64rx build`) from
+the ROM alone, with the shipped defaults and facts. A build made with the
+console's learn logs shows what the game can reach, not what ships; its
+result is noted in the row, and the row's tier waits for a ROM-only build
+that matches it (maintainer, 2026-10-23: GoldenEye's Silver is the learn-log
+build's; set 31's ROM-only build ran at 12-34 fps).
+
 After a console run: the maintainer's report and the pulled logs go in
 `docs/handoff.md` (as now); the row here moves only by the rules above,
 in the same change, with the run named. `CLAUDE.md`'s status line and
