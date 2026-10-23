@@ -414,6 +414,12 @@ def write_restrict(gen):
     return n
 
 
+def fr_mode(data):
+    """recomp.h XRC_FR: what the game's osCreateThread gives (saves.thread_fr), else 3 when its own
+    code sets Status.FR with mtc0 (saves.sets_fr), else 0"""
+    return saves.thread_fr(data) or (3 if saves.sets_fr(data) else 0)
+
+
 def write_fodd(gen, fr):
     """In a game whose threads run with Status.FR (saves.thread_fr), the
     generator's ctx->f_odd[(i - 1) * 2] (an odd FPR's word as FR = 0 has it:
@@ -920,7 +926,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
             prog.note(f'{write_sp_check(gen)} calls check $sp on return (N64RX_SP_CHECK, trace.c)')
         if nguard:
             prog.note(f'{nguard} functions from captured code checked against RDRAM before they run (guard.c)')
-        nfodd = write_fodd(gen, saves.thread_fr(recomp_rom.read_bytes()))
+        nfodd = write_fodd(gen, fr_mode(recomp_rom.read_bytes()))
         if nfodd:
             prog.note(f'{nfodd} odd-FPR accesses follow Status.FR: the game\'s threads run with it (XRC_FR)')
         nres = write_restrict(gen)   # last: the rewrites above match the plain signature
@@ -950,7 +956,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
                                       saves.faulted_thread(recomp_bytes, exc[0] if exc else None))   # its fault path (tlb.c)
     flags += saves.os_exception(recomp_bytes, segs)      # its exception code, for a TLB miss (interp.c)
     flags += saves.os_runqueue(recomp_bytes, exc[0] if exc else None)   # its run queue, a sentinel while that code runs
-    fr = saves.thread_fr(recomp_bytes)                   # the float mode its osCreateThread gives (recomp.h XRC_FR)
+    fr = fr_mode(recomp_bytes)                           # the float mode its threads run with (recomp.h XRC_FR)
     flags += [f'-DXRC_FR={fr}'] if fr else []
     flags += learnmod.rdram_user(learnt)                 # RDRAM's home when KUSEG lands on the kernel's (mem.c)
     flags += learnmod.high_tlb(learnt)                   # KSEG2/3 through the game's TLB (recomp.h, tlb.c)

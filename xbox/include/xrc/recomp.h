@@ -541,7 +541,8 @@ typedef struct {
  * Gemini's view matrices came out NaN (docs/renderer.md). Still an offset
  * from ctx, so restrict holds. XRC_FR: 0 (FR = 0 everywhere, as before), 1
  * (osCreateThread gives every thread FR), 2 (Rare's: FR unless the id is
- * negative); n64rx sets it from the ROM (saves.py thread_fr; N64RX_FR=0
+ * negative), 3 (threads start FR = 0, the game's own code sets FR with mtc0
+ * Status: Donkey Kong 64's hand-written 0x806195D0); n64rx sets it from the ROM (saves.py thread_fr; N64RX_FR=0
  * leaves it 0) */
 #ifndef XRC_FR
 #define XRC_FR 0

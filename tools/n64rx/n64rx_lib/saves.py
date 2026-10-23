@@ -263,3 +263,25 @@ def thread_fr(rom_data: bytes):
                 mode = 2
         found = mode
     return found
+
+
+def sets_fr(rom_data: bytes):
+    """the game's own code sets Status.FR (lui rX, 0x0400; an or into a
+    Status word read with mfc0; mtc0 of it to Status, within 8 instructions
+    of each other): Donkey Kong 64's hand-written 0x806195D0 does, around its
+    use of odd FPRs, with threads that start FR = 0. XRC_FR 3 then
+    (recomp.h). N64RX_FR=0: no"""
+    if os.environ.get('N64RX_FR', '1') == '0':
+        return False
+    word = lambda o: int.from_bytes(rom_data[o:o + 4], 'big') if 0 <= o and o + 4 <= len(rom_data) else 0
+    i = 0
+    while True:
+        i = rom_data.find(b'\x04\x00', i)   # lui's immediate, 0x0400
+        if i < 0:
+            return False
+        o = i - 2
+        i += 2
+        if o % 4 or word(o) >> 21 != 0x1E0:   # lui rX, 0x0400 (rs = 0)
+            continue
+        if any(word(k) >> 21 == 0x204 and (word(k) >> 11) & 31 == 12 for k in range(o + 4, o + 4 * 9, 4)):   # mtc0 rY, $12
+            return True

@@ -552,7 +552,7 @@ ULTRA(osCreateThread) {
     {   /* the game's osCreateThread puts FR in the new context's Status (XRC_FR 1), or Rare's does
          * unless the id is negative, which it keeps negated (XRC_FR 2: Jet Force Gemini's FR = 0 thread) */
         int32_t id = (int32_t)ARG(1);
-        d->fr = XRC_FR != 0;
+        d->fr = XRC_FR == 1 || XRC_FR == 2;   /* 3: libultra's FR = 0; the game's own mtc0 Status sets it */
         if (XRC_FR == 2 && id < 0) d->fr = 0, id = -id;
         wr32(t + TH_ID, (uint32_t)id);
     }

@@ -176,7 +176,40 @@ def _size(a, seg, f, fs=None):
             if nxt is None or nxt.start != end or not _falls_through(a, seg, f.start, end):
                 break
             end = _end(a, seg, nxt)
+    if fs and HANDWRITTEN_SPAN:
+        end = _branch_span(a, seg, f, fs, end)
     return end - f.start
+
+
+# A branch (not a j, not a call) to the start of a later function is hand-written code with several
+# entries: Donkey Kong 64's 0x806195D0 (Rare's, Status.FR set inside) branches to a shared exit at
+# 0x8061A2A8, past four entries the dry boot learnt from their jals; cut at the first, it was
+# interpreted whole (cross_funcs: 14 million instructions every 5 s in xemu). Its range takes those
+# functions' bodies too, up to SPAN_MAX past its start; they stay functions of their own for their
+# callers. A compiler's branch never lands on another function's start (its tail calls are j).
+# Opt-in (N64RX_HANDWRITTEN_SPAN=1): recompiled so, DK64's routine compiles and the game crashes at
+# frame 69 (a NULL+0x140 read in func_80672AFC, the routine on the stack); interpreted, it runs
+HANDWRITTEN_SPAN = os.environ.get('N64RX_HANDWRITTEN_SPAN', '0') != '0'
+SPAN_MAX = 0x4000
+
+
+def _branch_span(a, seg, f, fs, end):
+    from .mips import Ins, words
+    for _ in range(16):
+        ws = words(a.img.rom, seg.rom + (f.start - seg.vram), (end - f.start) // 4)
+        far = end
+        for i, w in enumerate(ws):
+            ins = Ins(w, f.start + 4 * i)
+            if not ins.is_branch or ins.is_link_branch:
+                continue
+            t = ins.branch_target
+            g = fs.get(t)
+            if t >= end and g is not None and g.start == t and t - f.start <= SPAN_MAX:
+                far = max(far, _end(a, seg, g))
+        if far == end or far - f.start > SPAN_MAX or not seg.has(far - 4):
+            break
+        end = far
+    return end
 
 
 def write_syms(a: Analysis, nm, path):
