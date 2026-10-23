@@ -3089,3 +3089,20 @@ on `dev`, not pushed; nothing deployed.
   would: graphics tasks off the scheduler's thread (the RSP's parallelism),
   or a pack patch of the audio loop (no patch mechanism yet). Whether red
   keeps the two-retrace cadence is not known.
+- **DK64's audio fixed in xemu by a per-ROM patch** (8b4d901): `games/
+  patches/<code>.<sha1>.c` holds functions of one ROM written in C (MIT,
+  `XRC_PATCH(vram)`), built in place of the recompiled ones. DK64's audio
+  loop drops a start message that finds no task waiting (DIVERGES; only the
+  loop starts audio tasks, so none is lost): 180 s at ~29 tasks a second,
+  6,846 frames, no crash (was silent after the first seconds).
+- **Hand-written spans on by default** (6c7ad85): sweep `sspan` (22 games,
+  s16's settings): no new crash; DK64 2,267 -> 5,827 frames in 120 s, Turok
+  1's crash gone, Turok 2 and 3 a third more frames, Mario Party's board the
+  same shot for shot.
+- **Mario Tennis's black box** (6c7ad85): its CI8 mask drawn into the Z
+  image's memory as scratch was drawn on the screen (`XGFX_ZIMG_HIDE`), and
+  its 32x32 picture of its own frame (trophies, glows) read stale RDRAM
+  (`XGFX_SMALL_SELF`: the rows from the GPU first). The intro and fly-ins
+  in xemu: no black box; the trophy shot not caught yet.
+- Not verified: anything on the console; DK64's audio on red; the s17 sweep
+  (all defaults, running).
