@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """docs/compat.md's tiers against n64rx's table (tools/n64rx/n64rx_lib/
 compat.py): every row of the doc with a ROM is in the table with the same
-tier and name, the table holds nothing else, a Gold row lists no known
-problem and every other row at least one (the row's "keeps it from the next
-tier" in a player's words), and an unlisted ROM is Experimental."""
+tier and name, the table holds nothing else, a Gold row's known problems
+(its minor issues, maybe none) match the doc's, every other row lists at
+least one (the row's "keeps it from the next tier" in a player's words),
+and an unlisted ROM is Experimental."""
 import pathlib
 import re
 import sys
@@ -40,8 +41,8 @@ def main():
             fails.append(f'{code}: unknown tier {tier!r}')
         elif got is None or got[:2] != (tier, name):
             fails.append(f'{code} 1.{ver}: docs/compat.md says {tier} "{name}", n64rx says {got and got[:2]}')
-        elif tier == compat.GOLD and (got[2] or keeps != '-'):
-            fails.append(f'{code} 1.{ver}: Gold with a known problem')
+        elif tier == compat.GOLD and bool(got[2]) != (keeps != '-'):
+            fails.append(f'{code} 1.{ver}: Gold with minor issues in one of docs/compat.md and n64rx, not the other')
         elif tier != compat.GOLD and not got[2]:
             fails.append(f'{code} 1.{ver}: {tier} with no known problem in n64rx (docs/compat.md: {keeps})')
     for key in compat.TIERS:

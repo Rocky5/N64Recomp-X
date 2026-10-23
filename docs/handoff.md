@@ -6,8 +6,8 @@ console).
 
 ## Where things stand (2026-10-22, late)
 
-Each game's tier is in `docs/compat.md` (Gold fully working, Silver
-playable, Experimental the rest; only a console run promotes); a console
+Each game's tier is in `docs/compat.md` (Gold fully playable with no
+major issues, Silver playable with issues, Experimental the rest; only a console run promotes); a console
 result here moves its row there in the same change. "xemu" is the emulator
 (test builds in its slots); "red" is the maintainer's console (480i).
 Anything not marked red is xemu or host only.

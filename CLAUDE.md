@@ -15,9 +15,10 @@ The decomps are the answer keys that make the ROM-only path stable
 (PLAN.md §6 "V"): read, compared against, never shipped.
 
 **Status (`docs/compat.md` for each game's tier, `docs/handoff.md` for the
-record): M1 done; M2 mostly done. Three tiers: Gold fully working on a
-real Xbox, Silver playable there with bugs that are not game-breaking,
-Experimental everything else (only the console promotes). From the ROM
+record): M1 done; M2 mostly done. Three tiers: Gold fully playable on a
+real Xbox with no major issues, Silver playable there with issues,
+Experimental everything else (only the console promotes; the meaning as of
+2026-10-22). From the ROM
 alone on the console (red, 480i): Gold (the maintainer's): Super Mario 64,
 Pilotwings 64, Super Smash Bros., Diddy Kong Racing. Silver: Mario Kart 64, GoldenEye,
 Banjo-Kazooie, Ocarina of Time, Castlevania: Legacy of Darkness. Experimental: Mario Party (its board: fix staged), Pokémon Snap (its
@@ -114,7 +115,7 @@ the approach (§1), the architecture (§3), the build, game packs and tests
 | `docs/app.md` | the desktop app (`app/`): how it drives `n64rx` (`info --json`, `--events json`), where it keeps the source, builds and toolchain |
 | `docs/testing.md` | host tests, the xemu runner, scripted input, the decomp check and the library sweep, the switch table |
 | `docs/decisions.md` | decisions made while building and why (incl. the plan's departures) |
-| `docs/compat.md` | each game's tier (Gold fully working, Silver playable, Experimental the rest), the rules that move a game, the console run behind each |
+| `docs/compat.md` | each game's tier (Gold fully playable, no major issues; Silver playable, with issues; Experimental the rest), the rules that move a game, the console run behind each |
 | `docs/roadmap.md` | the plan to the top 100 and 25 Gold: the seven cross-game buckets ranked, the phases, the 25 candidates and the gap for each, the top-100 appendix with the record and the DB facts, questions for the maintainer |
 | `docs/review-2026-10.md` | the code review of `dev` at `ba03cd1`: host-test state, the generated code's aliasing cost, the PC tool's security and robustness, the analyser, runtime, libultra layer, renderer, platform, licences, docs debt, test coverage; each item CONFIRMED or PLAUSIBLE with file:line |
 | `docs/handoff.md` | where things stand (games x xemu x console), then per milestone and per piece of work: verified how, not verified, gaps |

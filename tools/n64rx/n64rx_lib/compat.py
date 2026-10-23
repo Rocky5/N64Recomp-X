@@ -1,5 +1,5 @@
-"""Each game's tier, as docs/compat.md has it: Gold (fully working on a
-real Xbox), Silver (playable there: bugs, none game-breaking),
+"""Each game's tier, as docs/compat.md has it: Gold (fully playable on a
+real Xbox, no major issues), Silver (playable there, with issues),
 Experimental (everything else). Keyed by the header's game code and
 revision byte (facts, no byte of any ROM). Every row of docs/compat.md
 with a ROM is listed, with the row's "keeps it from the next tier" in a
@@ -61,8 +61,8 @@ TIERS = {
 }
 
 MEANING = {
-    GOLD: 'fully working on a real Xbox',
-    SILVER: 'playable on a real Xbox; it has bugs, none that stop the game',
+    GOLD: 'fully playable on a real Xbox, no major issues',
+    SILVER: 'playable on a real Xbox, with issues; none that stop the game',
     EXPERIMENTAL: 'not proven on a real Xbox yet: it may run, run in part, or not at all',
 }
 

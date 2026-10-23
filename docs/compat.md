@@ -8,8 +8,8 @@ here, and `n64rx` will say the tier when it builds a game.
 
 | tier | means | needs |
 |---|---|---|
-| **Gold** | fully working | played on a real Xbox (stock 64 MB, 480i or better) from boot through normal play: picture, sound, saves, controls and the game's own frame rate right; no known bug that a player would notice |
-| **Silver** | playable | played on a real Xbox through normal play; known bugs, none game-breaking (nothing that stops progress, crashes, loses a save or makes the game unplayable) |
+| **Gold** | fully playable, no major issues | played on a real Xbox (stock 64 MB, 480i or better) from boot through normal play: picture, sound, saves, controls and frame rate good enough that nothing major is wrong; minor issues may remain and are listed in its row |
+| **Silver** | playable, with issues | played on a real Xbox through normal play; issues a player notices, at least one of them major, none game-breaking (nothing that stops progress, crashes, loses a save or makes the game unplayable) |
 | **Experimental** | everything else | any game not yet played on a console, any game seen only in xemu, and any game with a game-breaking bug |
 
 Rules:
@@ -27,11 +27,18 @@ Rules:
   row and starts Experimental. `n64rx` reads its table
   (`tools/n64rx/n64rx_lib/compat.py`) by the same two: every row here,
   with "keeps it from the next tier" put in a player's words as the
-  known problems the app shows when that ROM is loaded (a Gold row has
-  none). `tools/xbox/test_compat.py` checks it against this file, so a
+  known problems the app shows when that ROM is loaded (a Gold row's
+  are its minor issues, `-` when it has none). `tools/xbox/test_compat.py` checks it against this file, so a
   row that changes here changes there in the same commit.
 - Built from the ROM alone (`n64rx build`, no pack) unless the row says
   otherwise.
+
+The tiers' meaning changed on 2026-10-22 (the maintainer: "Gold means the
+game is fully playable with no major issues. Silver means playable but
+with issues"); before, Gold meant no bug a player would notice. The rows
+below are as the console runs left them; a Silver row whose issues are all
+minor is Gold under the new meaning once the maintainer says so
+(`docs/decisions.md`).
 
 ## The games (2026-10-22)
 

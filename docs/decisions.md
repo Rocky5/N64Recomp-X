@@ -1647,3 +1647,19 @@ by the store's shape (the Status word at 0x118 of the context, made by
 `ori 0xFF03` after `lui 0x0400`), libultra's struct, no game's address.
 Not chosen: patching the generator (patches/recomp/: the same effect, and
 a pin move). `N64RX_FR=0`: FR = 0 everywhere, as before.
+
+## Gold means fully playable with no major issues (2026-10-22, the maintainer; `docs/compat.md`, `compat.py`)
+
+The maintainer redefined the tiers: "Gold means the game is fully playable
+with no major issues. Silver means playable but with issues." Before,
+Gold was "no known bug a player would notice". So a Gold row may now list
+minor issues (the app shows them, `test_compat` checks both sides agree),
+and Silver is a game with issues of which at least one is major, none
+game-breaking. Only a console run still promotes; the rows stay as the
+runs left them until the maintainer reclassifies, since what counts as
+major is theirs to say. Candidates whose listed issues read as minor:
+GoldenEye 007 (road-marker flicker, dips to ~40 fps in intense scenes),
+Castlevania: Legacy of Darkness (texture issues), Mario Kart 64 (the map
+TV, drift boosts in question), Banjo-Kazooie (the intro's texture errors,
+shadows now and then orange); Ocarina of Time's scene-load hitches and
+audio skips are the likeliest to count as major.
