@@ -58,6 +58,11 @@ TIERS = {
         'Not run on a real Xbox yet; in the xemu emulator it reaches its player select and menus.',
         'Its logo draws wrong: the background and letters of the title.')),
     ('NDYE', 1): (GOLD, 'Diddy Kong Racing (US, v1.1)', ()),
+    ('NWRE', 1): (EXPERIMENTAL, 'Wave Race 64 (US, v1.1)', (
+        'Not run on a real Xbox yet; in the xemu emulator it plays its menus and a race.',)),
+    ('NDOE', 0): (EXPERIMENTAL, 'Donkey Kong 64 (US)', (
+        'Not run on a real Xbox yet; in the xemu emulator it reaches its file screen and plays on.',
+        'Its sound stops once the game starts drawing (in the emulator).')),
 }
 
 MEANING = {

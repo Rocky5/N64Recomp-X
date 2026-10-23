@@ -64,6 +64,8 @@ minor is Gold under the new meaning once the maintainer says so
 | Experimental | All-Star Baseball 2001 (US) | `NASE` 1.0 | not run on a console | first run; in xemu (the ROM alone + 14 learning rounds): menus and a game (batting, ~22 fps) |
 | Experimental | All-Star Baseball '99 (US) | `NBSE` 1.0 | not run on a console | first run; in xemu (the ROM alone + 6 learning rounds): legal screen, Team Select, Controllers, a game (batting) |
 | Experimental | South Park: Chef's Luv Shack (US) | `NCYE` 1.0 | not run on a console | first run; in xemu (the ROM alone + 9 learning rounds): the title, Who's Playing, the menus; its logo draws wrong (the title's green background and red block, the letters) |
+| Experimental | Wave Race 64 (US, v1.1) | `NWRE` 1.1 | not run on a console | first run; in xemu (the ROM alone with its shipped learnt facts): menus, a race at Dolphin Park drawn right since its microcode is read (579e267), 300 s with no crash |
+| Experimental | Donkey Kong 64 (US) | `NDOE` 1.0 | not run on a console | first run; in xemu: its file screen and on; its sound stops once graphics start (its audio thread misses its start timer: the handoff's 2026-10-22 night entry) |
 | Experimental | every other game | - | - | `docs/analyzer.md` ranks what stops the library (the sweep) |
 
 ## How a row changes
