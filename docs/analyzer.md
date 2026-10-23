@@ -506,6 +506,22 @@ probes. Both: Pokémon Snap interprets 4 functions, was 17; Paper Mario 37,
 was 38; Smash, Ocarina, Majora, F-Zero X, Bassmasters, Mario Tennis and
 GoldenEye unchanged.
 
+**s15 and s16 (2026-10-22/23; the dry boot and the shipped learnt facts,
+120 s boots on six xemus at once, `sweep.py --slots`).** s15's runs 78-242
+had all read one game's stale serial.log (fixed: 0da4c65); run again it is
+**183 of 242**. s16 (the dry boot no longer learning `send_mesg` from
+`__osException`, the TMEM wrap, learnt DMAs from halfword offsets copied,
+a stale "entry interpreted" mark dropped): **all 246 build, 192 present**.
+Gained against s15: Super Smash Bros., Blast Corps, Diddy Kong Racing,
+Kirby 64, Pokémon Snap, All-Star Baseball 2001, Duck Dodgers, F1 World
+Grand Prix II, Indy Racing 2000, Jeopardy!, Brunswick Bowling, San
+Francisco Rush 2049, Spider-Man, Tony Hawk's 2 and 3 (most of them the
+`send_mesg` fault, which stopped them before their first graphics task).
+The "losses" against s15 were s15's shorter runs ending before a later
+crash (Dual Heroes at retrace ~540 in both; Turok, NHL 99, WWF No Mercy,
+Bio F.R.E.A.K.S. deeper than before), or a loading-screen stall run again.
+Left: 20 present nothing, 23 crash on a KUSEG access near NULL, 4 fatal.
+
 ## Known gaps
 
 - **The debug libultra** (libultra_d: each call checks its arguments and

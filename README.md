@@ -32,8 +32,8 @@ real Xbox moves a game up:
 - **Silver**, playable, with issues that do not stop you: Mario Kart 64,
   GoldenEye 007, Banjo-Kazooie, Ocarina of Time, Castlevania: Legacy of Darkness.
 - **Experimental**, everything else: it may boot, run partly, or not at
-  all. Across a whole library, 245 of 246 games build today and 163
-  present frames in xemu (sweep s12), far fewer run well yet; what blocks the rest is tracked in
+  all. Across a whole library, all 246 games build today and 192
+  present frames in xemu (sweep s16, with the dry boot), far fewer run well yet; what blocks the rest is tracked in
   [`docs/analyzer.md`](docs/analyzer.md). The plan is
 [`docs/PLAN.md`](docs/PLAN.md); what was verified, and how, is
 [`docs/handoff.md`](docs/handoff.md).
