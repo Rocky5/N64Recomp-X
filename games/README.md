@@ -101,4 +101,4 @@ supplied, before a Yaz0 rebuild) reads it ahead of any `--learn`
 rounds left off for code a ROM DMA put there: Ocarina of Time's first build
 goes from 3,302 functions in 3 segments to 5,328 in 57 (its relocated
 overlays recompiled). Code the CPU made (Mario Tennis's scenes) needs its
-bytes, which the dry boot (`N64RX_DRYBOOT=1`) or a console round supplies.
+bytes, which the dry boot (`N64RX_DRYBOOT`, on by default) or a console round supplies.

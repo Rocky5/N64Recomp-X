@@ -1622,7 +1622,15 @@ overlay, whose libultra copy is never named); TLB-mapped code is saved by
 its virtual page, as the console's net does; thread entries are `eret`
 targets that never ran, were no exception's EPC and follow no call; START
 and A are pressed on a schedule so menus give way to the code they load.
-Off by default until a console set runs builds made with it.
+Off by default until a console set runs builds made with it; on 2026-10-23
+the maintainer made `N64RX_DRYBOOT=auto` the default without that set (set 30,
+staged): the dry boot runs on every ROM-only build and its learning is used
+when it found 16 functions or more, so the games that need it (GoldenEye,
+Banjo-Kazooie, Mario Tennis, Donkey Kong 64: the first three never start
+without it) build from the ROM alone and the ones that learn nothing (Super
+Mario 64, Smash, DKR, Mario Kart 64, Ocarina) build as before. The app's
+toolchain bundle carries the dry boot prebuilt (`dryboot/<source hash>/`,
+`N64RX_DRYBOOT_DIR`): its MSYS2 has clang without a C library.
 
 ## Status.FR per context: odd FPRs follow each thread's float mode (2026-10-22, `recomp.h XRC_FODD`, `ultra/thread.c`, `saves.thread_fr`, `pipeline.py write_fodd`, `XRC_FR`, `N64RX_FR`)
 

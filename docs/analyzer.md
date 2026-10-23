@@ -211,11 +211,11 @@ the function table before the recompiled sections.
    recompiles those (`N64RX_RELOC_OVL=all`: every one). Ocarina of Time:
    468 overlays, all link addresses as the decomp's; Majora's Mask: 612.
 
-## The dry boot: the learning loop's first rounds on the PC (`tools/dryboot/`, `N64RX_DRYBOOT=1`)
+## The dry boot: the learning loop's first rounds on the PC (`tools/dryboot/`, `N64RX_DRYBOOT=auto`, the default)
 
 `docs/roadmap.md` B2; `docs/decisions.md` has the choices. Before a ROM-only
 build, `n64rx_lib/dryboot.py` builds `tools/dryboot/dryboot.c` with the PC's
-compiler (once per source), runs the ROM's boot in it for
+compiler (once per source; the app's toolchain bundle carries it built), runs the ROM's boot in it for
 `N64RX_DRYBOOT_FRAMES` (1800: 30 s of game time, a few seconds here, START
 and A pressed on a schedule), and analyses again with its learn file
 (`<build>/dryboot/learn.txt`, `learn_code.bin`) ahead of any `--learn`. The

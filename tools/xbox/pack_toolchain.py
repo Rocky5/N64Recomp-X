@@ -47,7 +47,7 @@ import urllib.request
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-FORMAT = 1                      # bump when the bundle's layout changes
+FORMAT = 2                      # bump when the bundle's layout changes (2: dryboot/)
 LLVM_VERSION = '21.1.8'
 LLVM_MAJOR = 21
 PY_VERSION = '3.12.15'
@@ -138,8 +138,14 @@ def sha256_file(p):
     return h.hexdigest()
 
 
+def dryboot_hash():
+    """the dry boot's source hash (n64rx_lib/dryboot.py src_hash(): the folder its prebuilt copy goes in)"""
+    return hashlib.sha256((ROOT / 'tools/dryboot/dryboot.c').read_bytes()).hexdigest()[:12]
+
+
 def make_key(os_, arch, nxdk_pin, recomp_pin):
-    ident = json.dumps([os_, arch, LLVM_VERSION, nxdk_pin, recomp_pin, PY_VERSION, FORMAT], separators=(',', ':'))
+    ident = json.dumps([os_, arch, LLVM_VERSION, nxdk_pin, recomp_pin, PY_VERSION, FORMAT, dryboot_hash()],
+                       separators=(',', ':'))
     return hashlib.sha256(ident.encode()).hexdigest()[:12]
 
 
@@ -442,6 +448,31 @@ def gather_windows(stage, args, lic):
         if (msys / sub).is_dir():
             copy_tree(msys / sub, lic / name)
     return dest
+
+
+def gather_dryboot(stage, os_, args):
+    """the dry boot (tools/dryboot/dryboot.c) built here, so a user's PC needs no C library: the bundle's MSYS2
+    has clang without mingw's headers and CRT, and a Linux or macOS user may have neither (n64rx_lib/dryboot.py
+    reads N64RX_DRYBOOT_DIR/<source hash>/dryboot)"""
+    exe = 'dryboot.exe' if os_ == 'windows' else 'dryboot'
+    out = stage / 'dryboot' / dryboot_hash() / exe
+    out.parent.mkdir(parents=True, exist_ok=True)
+    src = ROOT / 'tools/dryboot/dryboot.c'
+    env = dict(os.environ)
+    if os_ == 'windows':
+        mb_ = pathlib.Path(args.msys or os.environ.get('MSYS2_ROOT', 'C:/msys64')) / 'mingw64/bin'
+        env['PATH'] = f'{mb_};{env.get("PATH", "")}'
+        cmd = [mb_ / 'clang.exe', '-O2', '-std=gnu11', '-static', '-o', out, src]
+    else:
+        cc = os.environ.get('CC') or shutil.which('cc') or shutil.which('clang') or shutil.which('gcc')
+        if not cc:
+            die('no C compiler for the dry boot (set CC)')
+        cmd = [cc, '-O2', '-std=gnu11', '-o', out, src, '-lm']
+    r = subprocess.run([str(c) for c in cmd], env=env, capture_output=True, text=True)
+    if r.returncode or not out.exists():
+        die('the dry boot did not build: ' + r.stdout + r.stderr)
+    say('dry boot', out.relative_to(stage).as_posix(), mb(out.stat().st_size))
+    return out
 
 
 def gather_posix(stage, os_, arch, args, cache, lic):
@@ -806,14 +837,15 @@ def main():
         gather_posix(stage, os_, arch, args, cache, lic)
     gather_nxdk(stage, nxdk, lic)
     gather_recomp(stage, recomp, os_, recomp_pin, lic)
+    gather_dryboot(stage, os_, args)
     py = gather_python(stage, os_, arch, args, cache)
     write_licenses(lic, os_, stage / 'python')
 
     if os_ == 'windows':
-        env = {'MSYS2_ROOT': 'msys64', 'NXDK_DIR': 'nxdk', 'N64RX_RECOMP': 'recomp'}
+        env = {'MSYS2_ROOT': 'msys64', 'NXDK_DIR': 'nxdk', 'N64RX_RECOMP': 'recomp', 'N64RX_DRYBOOT_DIR': 'dryboot'}
         path = []
     else:
-        env = {'LLVM': 'llvm', 'NXDK_DIR': 'nxdk', 'N64RX_RECOMP': 'recomp'}
+        env = {'LLVM': 'llvm', 'NXDK_DIR': 'nxdk', 'N64RX_RECOMP': 'recomp', 'N64RX_DRYBOOT_DIR': 'dryboot'}
         path = ['python/bin', 'llvm/bin', 'cmake/bin', 'bin']
     manifest = {
         'key': key, 'os': os_, 'arch': arch,

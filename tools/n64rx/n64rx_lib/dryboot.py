@@ -11,9 +11,13 @@ build folder; the files are facts and the RDRAM pages the CPU wrote, as the
 console's learn files are.
 
 N64RX_DRYBOOT_SCRIPT=<autopad.txt>: the input from a script (docs/testing.md's
-format) instead of the START/A schedule. N64RX_DRYBOOT=1 to use it (0, the default, until a console set has run
-builds made with it); N64RX_DRYBOOT_FRAMES: how long (1800 frames, 30 s of
-game time: a few seconds here)."""
+format) instead of the START/A schedule. N64RX_DRYBOOT=auto (the default: the
+maintainer, 2026-10-23) runs it and uses what it learnt for a game that needs
+it; 1 always uses it, 0 never runs it. N64RX_DRYBOOT_FRAMES: how long (1800
+frames, 30 s of game time: a few seconds here). N64RX_DRYBOOT_DIR: prebuilt
+dry boots (<dir>/<source hash>/dryboot), as the app's toolchain bundle ships
+them (tools/xbox/pack_toolchain.py): its Windows MSYS2 has clang but no C
+library to build one with."""
 import hashlib
 import os
 import pathlib
@@ -28,7 +32,7 @@ EXE = '.exe' if os.name == 'nt' else ''
 
 
 def enabled():
-    return os.environ.get('N64RX_DRYBOOT', '0') != '0'
+    return os.environ.get('N64RX_DRYBOOT', 'auto') != '0'
 
 
 # N64RX_DRYBOOT=auto: the dry boot runs, and what it learnt is used only when it found at least
@@ -40,7 +44,7 @@ AUTO_MIN = 16
 
 
 def auto():
-    return os.environ.get('N64RX_DRYBOOT', '0') == 'auto'
+    return os.environ.get('N64RX_DRYBOOT', 'auto') == 'auto'
 
 
 def worth(learn_file):
@@ -59,9 +63,17 @@ def tv_of_region(code):
     return 0 if r in 'DFHILPSUWXY' else 2 if r == 'B' else 1
 
 
+def src_hash():
+    """the dry boot's identity: its source's (a prebuilt one is used only for the same source)"""
+    return hashlib.sha256(SRC.read_bytes()).hexdigest()[:12]
+
+
 def _exe(log):
-    """the dry boot built for this PC (once per source: build-host/dryboot/<hash>/)"""
-    h = hashlib.sha256(SRC.read_bytes()).hexdigest()[:12]
+    """the dry boot built for this PC (once per source: build-host/dryboot/<hash>/), or the bundle's"""
+    h = src_hash()
+    pre = os.environ.get('N64RX_DRYBOOT_DIR')
+    if pre and (pathlib.Path(pre) / h / f'dryboot{EXE}').is_file():
+        return pathlib.Path(pre) / h / f'dryboot{EXE}'
     out = ROOT / 'build-host' / 'dryboot' / h / f'dryboot{EXE}'
     if out.exists():
         return out

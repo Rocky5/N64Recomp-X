@@ -121,6 +121,7 @@ What is in it (`<key>/`):
 | `cmake/`, `bin/` | - | the official portable cmake 3.31.6 and ninja 1.12.1 (pinned sha256) |
 | `nxdk/` | built nxdk at `NXDK_PIN`: `bin/` (wrappers), `lib/` (headers, built `.lib`s, the pbkit sources the game build compiles), `share/`, `tools/cxbe`, `tools/extract-xiso/build/extract-xiso`; no `.git`, objects, dependency files, samples or `tools/cg` (NVIDIA Cg is not redistributable and the build does not use it), and none of the upstream test suites and IDE projects the build never reads (`NXDK_PRUNE`: `lib/libcxx/test`, `lib/sdl/SDL2/test`, SDL's `Xcode*`, `VisualC*`, `visualtest`) | the same |
 | `recomp/` | `N64Recomp`, `RSPRecomp` and `.n64rx-key` (refuses to pack if the key is not `engines.recompiler_pin()`; it says how to rebuild) | the same |
+| `dryboot/` | `<source hash>/dryboot.exe`: the dry boot (`tools/dryboot/dryboot.c`, `N64RX_DRYBOOT_DIR`) built static with MSYS2's clang, since the bundle carries no C library to build it with | `<source hash>/dryboot`, built with the packing machine's `cc` |
 | `licenses/` | the texts of everything above, with where the MSYS2 sources are | the same |
 | `manifest.json` | read by the app | the same |
 
