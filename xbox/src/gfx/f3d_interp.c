@@ -2307,14 +2307,28 @@ static int s_fam = GFX_UC_F3D;   /* s_uc->family */
 #define XGFX_DKR 1
 #endif
 static int s_rare, s_dkr_on;   /* Rare's DKR microcode (below, run_dl) */
+/* Wave Race 64 (US)'s Fast3D: the same version text as Super Mario 64's
+ * ("RSP SW Version: 2.0D, 04-01-96") but its own vertex layout in the RSP
+ * (emulators call it F3DWRUS): G_VTX is 04 (v0*5) (n<<9 | n*16-1), up to
+ * 32 vertices; G_TRI1's indices are vertex*5, not *10; 0xB5 is a quad
+ * (four indices *5, two triangles from the first). Read as Fast3D, every
+ * load took one vertex and the race drew lines to one point. Found from
+ * its display list: Fast3D's G_VTX length is n*16, this one's n*16-1.
+ * -DXGFX_WRUS=0: Fast3D, as before */
+#ifndef XGFX_WRUS
+#define XGFX_WRUS 1
+#endif
+static int s_wrus;
 void f3d_set_ucode(const GfxUcode* uc) {
     int rare = XGFX_DKR && uc && !uc->found && uc->family == GFX_UC_F3D;
+    if ((uc ? uc : &s_uc_f3d) != s_uc) s_wrus = 0;
     s_uc = uc ? uc : &s_uc_f3d;
     s_fam = s_uc->family;
     s_vmax = s_uc->vtx_max > VC_MAX ? VC_MAX : s_uc->vtx_max < 16 ? 16 : s_uc->vtx_max;
     if (rare != s_rare) s_dkr_on = 0;
     s_rare = rare;
     if (s_rare && s_dkr_on) s_vmax = 32;
+    if (s_wrus) s_vmax = 32;
 }
 
 /* the RDP halves that follow a G_TEXRECT */
@@ -3038,6 +3052,17 @@ static void run_dl(const uint32_t* pc) {
                     dkr_vtx(w0, w1);
                     break;
                 }
+                if (XGFX_WRUS && !s_wrus && !s_rare && s_fam == GFX_UC_F3D && (w0 & 0xFu)) {
+                    s_wrus = 1;
+                    s_vmax = 32;
+                    xhw_logf("[GFX] a Fast3D vertex load of n*16-1 bytes (%08x): Wave Race 64's vertex layout from here on (XGFX_WRUS)",
+                             (unsigned)w0);
+                }
+                if (s_wrus) {
+                    s_vtx_loads++;
+                    do_vtx((w0 >> 9) & 0x7Fu, ((w0 >> 16) & 0xFFu) / 5u, w1);
+                    break;
+                }
                 f3d_vtx_decode(w0, w1, &n, &v0, &len, &addr);
                 s_vtx_loads++;
                 do_vtx(n, v0, addr);
@@ -3050,10 +3075,27 @@ static void run_dl(const uint32_t* pc) {
                     s_dkr_voff = w1 & 0xFFFFFFu;
                     break;
                 }
+                if (s_wrus) {
+                    a = (uint8_t)(((w1 >> 16) & 0xFFu) / 5u), b = (uint8_t)(((w1 >> 8) & 0xFFu) / 5u), c = (uint8_t)((w1 & 0xFFu) / 5u);
+                    if (a < 32 && b < 32 && c < 32) do_tri(a, b, c, (int)(w1 >> 24));
+                    break;
+                }
                 f3d_tri1_decode(w1, &a, &b, &c, &f);
                 if (a < 16 && b < 16 && c < 16) do_tri(a, b, c, f);
                 break;
             }
+            case 0xB5:   /* Wave Race 64's quad (XGFX_WRUS); nothing in Nintendo's Fast3D */
+                if (s_wrus) {
+                    unsigned qa = ((w1 >> 24) & 0xFFu) / 5u, qb = ((w1 >> 16) & 0xFFu) / 5u, qc = ((w1 >> 8) & 0xFFu) / 5u,
+                             qd = (w1 & 0xFFu) / 5u;
+                    if (qa < 32 && qb < 32 && qc < 32 && qd < 32) {
+                        do_tri((int)qa, (int)qb, (int)qc, 0);
+                        do_tri((int)qa, (int)qc, (int)qd, 0);
+                    }
+                } else {
+                    s_unknown[0xB5]++;
+                }
+                break;
             case F3D_G_RESERVED1:   /* Rare's G_TRIN (DKR, JFG): triangles from memory */
                 if (s_rare) {
                     if (!s_dkr_on) dkr_turn_on(0x05);

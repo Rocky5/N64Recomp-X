@@ -307,6 +307,19 @@ xgfx_frame_begin). Render to texture in the same frame (Zelda's pause,
 Banjo's jigsaw) is not done: an off-screen colour image still draws on the
 screen.
 
+## Wave Race 64 (US)'s Fast3D (`XGFX_WRUS`, 2026-10-22)
+
+Its microcode carries Super Mario 64's version text ("RSP SW Version: 2.0D,
+04-01-96") but keeps vertices in the RSP at half Fast3D's stride:
+G_VTX is `04 (v0*5) (n<<9 | n*16-1)` with up to 32 vertices, G_TRI1's
+indices are vertex*5, and 0xB5 is a quad (four indices *5, a fan of two
+triangles). Emulators call it F3DWRUS. Nintendo's Fast3D always loads n*16
+bytes, so a Fast3D G_VTX with a nonzero low nibble turns the layout on for
+that microcode (`[GFX] ... Wave Race 64's vertex layout`). Read as Fast3D,
+every load took one vertex and the race drew lines to one point (xemu and
+the host replay of a dumped race frame); read this way the host replay
+draws the jet ski, the water and the beach.
+
 ## Gaps
 
 - Framebuffer effects (a frame used as a texture or read by the CPU): the
