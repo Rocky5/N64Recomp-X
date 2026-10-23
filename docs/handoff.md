@@ -23,7 +23,7 @@ hwbuild31.sh`, `deploy-set31.sh`; app folders `N64Recomp-X-31-*`, title IDs
 4E52D011-13): Donkey Kong 64, Mario Tennis, GoldenEye built with the
 2026-10-23 defaults (the dry boot, hand-written spans, per-ROM patches, the
 Z-image and small-picture fixes); xemu: all three present with sound, no
-crash in 90 s. Red's FTP did not answer at deploy time: not deployed yet.
+crash in 90 s. Deployed and played (the last entry).
 What to look at, a few minutes each:
 - DK64: past the intro into play: does the sound keep going, is it smooth?
 - Mario Tennis: the attract intro: a black box at the top left? black
@@ -38,19 +38,28 @@ Results go in the set-31 entry at the end, and `docs/compat.md`'s rows.
 `XGFX_SMALL_SELF=1`. The app's Windows zip carries them and builds ROM-only
 games (it could not before 3689217).
 
+**Set 31 on red** (the last entry): DK64 plays with sound but at double
+speed (60 fps where the game assumes 30); Mario Tennis as before (black
+model copies at the top left, aspect, ball, replay); GoldenEye 12-34 fps from
+the ROM alone (123 routines interpreted).
+
 **Open, in order** (each with the entry that has its details):
-1. Set 31 on red (above).
-2. Pokémon Snap's tutorial: the detector's focus flickers on red, so
+1. DK64's pacing: no faster than the N64's RDP would let it (60 -> 30 fps),
+   the DK Rap's sync, the glitch at DK Island.
+2. GoldenEye from the ROM alone: its 123 interpreted routines.
+3. Mario Tennis's black model copies (an offscreen image over 128 wide?),
+   the aspect, the ball, the replay.
+4. Pokémon Snap's tutorial: the detector's focus flickers on red, so
    "Press Z to aim" never holds (`vsnap18a/b` staged, 2026-10-22 entries).
-3. Kirby 64's HUD and an enemy's textures on red (red only).
-4. Mario Tennis's line at the bottom and the ball; Mario Party's shuffled
-   board textures (red only).
-5. DK64 without the patch: the scheduler runs display lists inside its own
+5. Kirby 64's HUD and an enemy's textures on red (red only).
+6. Mario Tennis's line at the bottom; Mario Party's shuffled board
+   textures (red only).
+7. DK64 without the patch: the scheduler runs display lists inside its own
    task start, so every hop costs a retrace (graphics tasks off its thread
    would be the general fix; the 2026-10-23 entry).
-6. Banjo-Kazooie's shadows, fog and jigsaw; GoldenEye's road markings;
+8. Banjo-Kazooie's shadows, fog and jigsaw; GoldenEye's road markings;
    Castlevania's textures; Mario Kart 64's map TV.
-7. The s17 library sweep (all the new defaults; running) into
+9. The s17 library sweep (all the new defaults; running) into
    `docs/analyzer.md`'s table.
 
 **What exists** (each piece with host tests and a kill switch; the entries
@@ -3121,9 +3130,37 @@ on `dev`, not pushed; nothing deployed.
 - Not verified: anything on the console; DK64's audio on red; the s17 sweep
   (all defaults, running).
 
-### Set 31 on red (pending)
+### Set 31 on red (2026-10-23)
 
-Deployed: not yet (red's FTP timed out, 2026-10-23). Builds: `v31-dk`
-(1a8d415673c4), `v31-mt` (c04857f6e048), `v31-ge` (620412391c1d).
-Maintainer's report: -. Pulled logs (`console.py pull`): -. `[MEM]` /
-`[CLOCK]`: -.
+Builds `v31-dk` (1a8d415673c4), `v31-mt` (c04857f6e048), `v31-ge`
+(620412391c1d): the ROM alone with the day's defaults (dry boot, spans,
+patches, `XGFX_ZIMG_HIDE`, `XGFX_SMALL_SELF`). Logs pulled to
+`C:\xemu\hw\logs31-*`. `[MEM]`: boot free 49,628 KB (DK64), 49,300 KB (Mario
+Tennis), 51,988 KB (GoldenEye) of 65,536; `[CLOCK] cpu 733 MHz` on all three.
+No crash in any log; each ended with L + R + BACK + BLACK.
+
+- **Donkey Kong 64**: plays, **with sound** on the console for the first
+  time (the audio-loop patch: 29 tasks a second). But it runs at a steady
+  59.9 fps (display lists 3-7 ms, the rest 5-6 ms) and the maintainer sees
+  it **at double speed**: the DK Rap's audio runs ahead of its picture, and
+  things are out of step. On the N64 its RDP never finishes a frame inside
+  one retrace, so it runs at 30 fps or less and its timing assumes that;
+  here a task is done at once and it draws every retrace. Next: a frame
+  pacing rule (a frame swapped no sooner than two retraces after the last,
+  as the N64's RDP would allow; per game or detected), then the rap's sync.
+  It also "glitches out right at DK Island" (no crash in the log; not seen
+  in xemu, which ran it at ~35 fps).
+- **Mario Tennis**: the same faults as set 26: black copies of the
+  character models at the top left during play (most likely the players'
+  shadows drawn into an offscreen image wider than `XGFX_SMALL_CIMG`'s 128,
+  drawn on the screen instead: next to check), the aspect off, the ball's
+  textures, the live replay broken. 28.9 fps. The intro's black box was not
+  reported.
+- **GoldenEye**: plays; 12-34 fps in a mission, **worse than the Silver
+  builds** (built with the console's learn logs). Its code is the same as
+  set 30's: the ROM-only build interprets 123 hand-written routines, the
+  interpreter 30-110 ms of a frame (`[PERF2]`). The dry boot stays the
+  default: without it this ROM does not boot at all. Next: what keeps those
+  123 routines interpreted (the analysis's hazards and cross branches in
+  the 0x7F000000 code). The briefing's "classified documents" text is drawn
+  inverted (likely in earlier builds too, unnoticed).
