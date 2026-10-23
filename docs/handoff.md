@@ -3049,3 +3049,43 @@ on `dev`, not pushed; nothing deployed.
 - Mario Tennis: a black 256x128 block in its intro (strips of its own
   colour image, xemu and the host replay); `XGFX_FB_SELF` (opt-in) and
   readback mode 3 do not clear it. The TMEM wrap leaves no "too big" miss.
+
+### 2026-10-23, day (host + xemu; nothing on the console)
+
+- **The dry boot is on by default** (`N64RX_DRYBOOT=auto`, the
+  maintainer's call without set 30's console run; 53fadd1): its learning
+  is used when it found 16 functions or more, so GoldenEye, Banjo-Kazooie,
+  Mario Tennis and DK64 build whole from the ROM alone and Super Mario 64,
+  Smash, DKR, Mario Kart 64 and Ocarina build as before.
+- **The packaged app could not build a ROM-only game** (3689217): its
+  source copy had no `tools/recomp` (N64Recomp's symbol lists) and no
+  `tools/dryboot`. The bundle carries `recomp/symbol_lists.cpp` and a
+  prebuilt dry boot (`dryboot/<source hash>/`, MSYS2's clang has no C
+  library); `test:packaged` now builds a ROM-only game too (2 of 2 pass,
+  Windows; the zip is `app/dist/N64Recomp-X-0.1.0-win-x64.zip`, 328 MB).
+- **DK64's hand-written 0x806195D0 recompiled** (actor bone animation):
+  the frame-69 crash of `N64RX_HANDWRITTEN_SPAN=1` was a branch onto the
+  delay slot of its loop's `j` (0x8061A758): the function ended there and
+  returned without the shared exit that restores `$sp`, Status.FR and
+  `$f20-$f31`. `N64RX_SLOT_ENTRY` (on) follows such a branch; the routine
+  is one 0x16D0-byte function and runs: interpreter 24 ms of a 40 ms frame
+  -> 0.4 ms, 6,255 frames in 150 s (was ~4,300), DK and Squawks drawn as
+  interpreted (xemu). The span rule itself stays opt-in until the other
+  games it touches (Mario Party, Jet Force Gemini, the Turok engine's) are
+  checked (sweep `sspan`).
+- **DK64's audio** (open, xemu): traced with `XRC_WATCH_QUEUE*` and
+  `XRC_WATCH_PEEK=0x80767CA4` (the scheduler's audio list). The audio
+  thread (pri 20) runs one iteration per start message: kick (0x29E), build
+  the next list, wait for the last task's done. The scheduler (pri 25) arms
+  the start timer at every second retrace while a task waits. Each hop here
+  (kick -> start, done -> scheduler -> audio thread) costs about a retrace,
+  mostly because the scheduler runs display lists inside its own
+  osSpTaskStartGo; the loop takes ~2.5 retraces, a message comes for a
+  task already kicked, and one read with no task waiting leaves the thread
+  waiting for a done that never comes. Tried, not enough alone or together:
+  `XRC_RCP_RECV=1` (done one retrace sooner; kept, opt-in),
+  `XRC_RANK_LEVELS=1`, `XRC_RUN_TOKEN=1`, the AC97 up at
+  osAiSetFrequency, a one-shot timer not queued twice (both dropped). What
+  would: graphics tasks off the scheduler's thread (the RSP's parallelism),
+  or a pack patch of the audio loop (no patch mechanism yet). Whether red
+  keeps the two-retrace cadence is not known.

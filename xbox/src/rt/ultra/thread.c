@@ -1045,9 +1045,12 @@ ULTRA(osRecvMesg) {
     if (watched_queue(mq)) {   /* diagnosis: who takes what */
         static unsigned s_r;
         if (s_r++ < 64 || (XRC_WATCH_QUEUE_ALL && s_r < 20000))
-            xhw_logf("[OS] queue %08x -> %08x to N64 thread %08x, %d left", (unsigned)mq,
+#ifndef XRC_WATCH_PEEK   /* -DXRC_WATCH_PEEK=<N64 address>: its word beside each take (DK64: the scheduler's audio list) */
+#define XRC_WATCH_PEEK 0
+#endif
+            xhw_logf("[OS] queue %08x -> %08x to N64 thread %08x, %d left, peek %08x, retrace %u", (unsigned)mq,
                      (unsigned)rd32(rd32(mq + MQ_MSG) + 4 * (uint32_t)first), me ? (unsigned)me->t : (unsigned)self()->t,
-                     (int)(valid - 1));
+                     (int)(valid - 1), XRC_WATCH_PEEK ? (unsigned)rd32((uint32_t)(XRC_WATCH_PEEK)) : 0u, xu_retrace());
     }
 #endif
     wake_all(mq | 1);
