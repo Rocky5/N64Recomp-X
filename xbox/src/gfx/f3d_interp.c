@@ -216,6 +216,7 @@ typedef struct {
 #define XGFX_VTX_OUT_CACHE 1
 #endif
 static uint32_t s_ostamp = 1;
+static uint32_t s_draw_seq;   /* batches drawn (XGFX_FB_SELF) */
 
 typedef struct {
     uint8_t fmt, siz, cms, cmt, masks, maskt, shifts, shiftt, palette;
@@ -705,6 +706,7 @@ static void flush(void) {
                  s_st.env[0], s_st.env[1], s_st.env[2], s_st.env[3], (unsigned)R.geom, (unsigned)R.oml,
                  (int)s_batch[0].x, (int)s_batch[0].y, (int)(s_batch[0].z * 1000.0f / s_out.zmax), s_batch[0].rgba[3]);
     if (s_extend) s_side_drawn = 1;
+    s_draw_seq++;   /* (XGFX_FB_SELF: something was drawn since its last copy) */
     xgfx_draw(&s_st, s_batch, s_nb);
 #ifdef XGFX_TRACE_DUMP_AT
     if (s_trace) {   /* -DXGFX_TRACE_DUMP_AT=<n>: the picture after the trace frame's n-th draw */
@@ -800,6 +802,7 @@ static struct { uint32_t frame, addr, key; TexEntry* e; } s_memo[MEMO];
 static int s_fullsync;
 static void tex_miss(const char* why, int tidx);
 static void fb_touch(uint32_t addr, uint32_t bytes);
+static void fb_self(uint32_t addr, uint32_t bytes);
 #ifndef XGFX_ZCLEAR_INFER
 #define XGFX_ZCLEAR_INFER 1   /* a far-depth fill before any Z image is the Z clear (do_fillrect) */
 #endif
@@ -924,6 +927,7 @@ static TexEntry* texture_make(int tidx) {
         }
         key ^= th | 1u;
     }
+    fb_self(ld->addr, ld->tile ? (ld->rows - 1u) * ld->stride + ld->row_bytes : bytes);
 #if XGFX_TEX_MEMO
     {
         unsigned m = ((ld->addr >> 3) ^ (key * 0x9E3779B1u >> 26)) & (MEMO - 1);
@@ -3766,6 +3770,95 @@ static void fb_frame_start(void) {
         if (fbfx_frame_start(i, touched)) fb_resolve(i);
         fb_watch(sl, 1);
     }
+}
+
+/* A texture loaded from the colour image being drawn, in the same frame:
+ * Mario Tennis's intro takes strips of the frame so far (384 wide,
+ * LOADTILE from the colour image itself, 0x382000) and draw them back: the
+ * frame was on the GPU only, RDRAM held an old picture, and a black block
+ * covered the top-left (xemu, the host replay alike); on red the strips came
+ * from the other framebuffer as a line at the bottom. The first such load
+ * of a frame copies the picture so far into RDRAM through the readback
+ * stage (a GPU wait and a conversion), as the RDP would have it there. Not
+ * for small loads (Pokemon Snap's 8x8 photo-check copies: the probe answers
+ * those). Opt-in (-DXGFX_FB_SELF=1): in xemu it fires (each of the three
+ * framebuffers) but the black block stays, and with readback mode 3 too
+ * (552 readbacks per 600 frames); what the strips need is not known yet */
+#ifndef XGFX_FB_SELF
+#define XGFX_FB_SELF 0
+#endif
+#define FB_SELF_MIN 1024u
+static uint32_t s_self_frame, s_self_seq;
+static unsigned s_self_copies;
+static void fb_self(uint32_t addr, uint32_t bytes) {
+    uint32_t h, back, a = seg(addr) & 0x1FFFFFFFu, c = seg(R.cimg) & 0x1FFFFFFFu, cb;
+    int32_t sw, sh, r[4], pitch, bpp;
+    float bw, bh, x0, y0, x1, y1;
+    const uint8_t* stage;
+    FbfxSlot sl;
+    if (!XGFX_FB_SELF || !R.cimg || R.cimg == R.zimg || bytes < FB_SELF_MIN || s_hold_tex || !s_cimg_w ||
+        (s_cimg_siz != 2 && s_cimg_siz != 3))
+        return;
+    flush();   /* (the batch so far counts as drawn) */
+    if (s_self_frame == s_frame_no && s_self_seq == s_draw_seq) return;   /* nothing drawn since this frame's last copy */
+    h = s_cimg_w * 3u / 4u;
+    if (s_cimg_maxy >= 8u && s_cimg_maxy < h) h = s_cimg_maxy;
+    cb = s_cimg_w * h * (s_cimg_siz == 3 ? 4u : 2u);
+    if (a + bytes <= c || a >= c + cb) return;
+    s_self_frame = s_frame_no, s_self_seq = s_draw_seq;
+    back = xgfx_tex_linear_back(&bw, &bh);
+    if (!back) return;
+    if (xgfx_target_stage(1, &sw, &sh)) {
+        XgfxState st;
+        XgfxVtx q[6];
+        int k;
+        memset(&sl, 0, sizeof sl);
+        sl.addr = c, sl.w = s_cimg_w, sl.h = h, sl.siz = s_cimg_siz;
+        r[0] = 0, r[1] = 0, r[2] = (int32_t)sl.w, r[3] = (int32_t)sl.h;
+        if (r[2] > sw) r[2] = sw;
+        if (r[3] > sh) r[3] = sh;
+        x0 = s_ox;
+        y0 = s_oy;
+        x1 = s_ox + N64_W * s_sx;
+        y1 = s_oy + N64_H * s_sy * (float)sl.h / ((float)s_cimg_w * 0.75f);
+        memset(&st, 0, sizeof st);
+        st.cc0 = cc_words_const(1 /* TEXEL0 */, 1, &st.cc1);
+        st.tex[0] = back;
+        st.wrap_s[0] = st.wrap_t[0] = XGFX_WRAP_CLAMP;
+        st.filter[0] = 1;
+        st.color_write = 1;
+        st.scissor[0] = 0, st.scissor[1] = 0, st.scissor[2] = r[2], st.scissor[3] = r[3];
+        memset(q, 0, sizeof q);
+        for (k = 0; k < 6; k++) {
+            static const uint8_t corner[6] = { 0, 1, 2, 2, 1, 3 };
+            int cn = corner[k];
+            q[k].x = (float)((cn & 1) ? r[2] : 0);
+            q[k].y = (float)((cn & 2) ? r[3] : 0);
+            q[k].w = 1.0f;
+            q[k].s0 = (cn & 1) ? x1 : x0;
+            q[k].t0 = (cn & 2) ? y1 : y0;
+        }
+        xgfx_draw(&st, q, 2);
+        xgfx_target_stage(0, &sw, &sh);
+        DIRTY();
+        stage = (const uint8_t*)xgfx_stage_read(&pitch, &bpp);
+        if (stage) {
+            /* only the rows the load reads (a frame of strips copies again before each: cheap) */
+            uint32_t rb = sl.w * (sl.siz == 3 ? 4u : 2u), y0 = a > c ? (a - c) / rb : 0u, y1 = (a + bytes - c + rb - 1u) / rb;
+            if (y1 > sl.h) y1 = sl.h;
+            if (y1 > y0) {
+                FbfxSlot part = sl;
+                int32_t rr[4] = { r[0], r[1] + (int32_t)y0, r[2], (int32_t)(y1 - y0) };
+                part.addr = c + y0 * rb, part.h = y1 - y0;
+                fbfx_convert(&part, rr, stage, pitch, bpp, xu_host(0), xrc_rdram_size);
+            }
+            if (XHW_TEST_BUILD && s_self_copies < 4)
+                xhw_logf("[GFX] the frame being drawn (%08x, %ux%u) used as a texture: copied into RDRAM (XGFX_FB_SELF)",
+                         (unsigned)c, (unsigned)sl.w, (unsigned)sl.h);
+            s_self_copies++;
+        }
+    }
+    xgfx_tex_destroy(back);
 }
 
 /* the frame's picture onto the stage, its pages guarded (end of frame, before the port's own drawing) */
