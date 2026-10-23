@@ -262,7 +262,8 @@ def apply(a, learnt, rom_len):
             holders = [s for s in a.img.segments if s.has(x)]
             seg = holders[0] if len(holders) == 1 else None
         else:
-            seg = next((s for s in a.img.segments if s.has(x) and d and s.rom - s.vram == d[0] - d[1]), None) or \
+            seg = next((s for s in a.img.segments if s.has(x) and d and (s.rom - s.vram == d[0] - d[1] or
+                        getattr(s, 'dma_rom', None) == d[0] - d[1])), None) or \
                 next((s for s in a.img.segments if s.has(x) and not d), None)
         if seg is None and d is None:   # code no ROM DMA put there: the bytes the console saved
             blk = next((v for v in runs if v <= x < v + len(runs[v])), None)
@@ -304,10 +305,21 @@ def apply(a, learnt, rom_len):
             name = f'learn_{d[1]:08X}'
             if any(s.name == name for s in a.img.segments):
                 name += f'_{d[0]:X}'
-            seg = F.Segment(name, d[0], d[1], d[2])
+            at = d[0]
+            if at & 3 and (d[1] & 3) == 0 and os.environ.get('N64RX_LEARN_ALIGN', '1') != '0':
+                # a DMA from a halfword-aligned ROM offset (Tony Hawk's Pro Skater 3's 0xF0F5E6): N64Recomp
+                # refuses a function whose ROM address is not a word's ("isn't word aligned") and stops the
+                # whole build; its bytes are copied past the ROM's end at an aligned offset instead (the
+                # guard checks them against RDRAM, as captured code). N64RX_LEARN_ALIGN=0: as before
+                at = (len(a.img.rom) + 0xF) & ~0xF
+                a.img.rom = bytes(a.img.rom) + bytes(at - len(a.img.rom)) + bytes(a.img.rom[d[0]:d[0] + d[2]])
+            seg = F.Segment(name, at, d[1], d[2])
+            if at != d[0]:
+                seg.dma_rom = d[0] - d[1]   # the DMA's own ROM offset less vram: its other functions find this copy
             a.img.segments.append(seg)
             a.funcs[seg.name] = {}
-            notes.append(f'{seg.name}: ROM {d[0]:#x} at {d[1]:08X}, {d[2]:#x} bytes (learnt: a DMA the console saw)')
+            notes.append(f'{seg.name}: ROM {d[0]:#x} at {d[1]:08X}, {d[2]:#x} bytes (learnt: a DMA the console saw)'
+                         + (f'; its bytes copied to {at:#x} (the ROM offset is not a word\'s)' if at != d[0] else ''))
         todo.setdefault(seg.name, (seg, []))[1].append(x)
     for name, (seg, xs) in todo.items():
         have = a.funcs.get(name, {})
