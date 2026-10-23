@@ -10,12 +10,22 @@ framework, no bundler. The app never does a build step itself: every step is
 `n64rx`, run with an argument array (no shell) and read through its
 `--events json` lines.
 
-Standalone: no installer. Download, click, run. Nothing registers itself (no
+Standalone: no installer. Download one zip, unzip it, run. The build tools
+(Python, clang/lld, cmake, ninja, the MSYS2 shell on Windows, nxdk, the built
+N64Recomp) are inside it, already unpacked, so nothing else is downloaded or
+installed and building needs no network. Nothing registers itself (no
 shortcuts, no registry, no auto-start), and everything it writes goes into one
-folder next to it, **`N64Recomp-X Data`**: delete that folder to remove
+folder next to it, **`N64Recomp-X Data`**: delete the app's folder to remove
 everything.
 
 ## First launch
+
+Unzip the whole zip to a folder you own (the Desktop, Documents, `C:\Games`; a
+path with spaces is fine), not into Program Files, and start
+`N64Recomp-X.exe` from there. Starting it from inside the zip without
+unzipping does not work. Keep the folder's path under about 130 characters
+(the deepest file inside is 123 characters below the app's folder, and
+Windows' own unzip stops at 260).
 
 The builds are not signed yet, so each system asks once:
 
@@ -30,8 +40,10 @@ The builds are not signed yet, so each system asks once:
   Permissions > **Allow executing file as program**, or
   `chmod +x N64Recomp-X-*.AppImage`.
 
-The first time, the app downloads its build tools (about 125 MB on Windows,
-unpacked to ~650 MB) into the data folder.
+The first launch goes straight to the home screen: no "Get the build tools"
+step. Only the build made without the tools (`npm run dist:no-tools`) asks to
+download them, and only when `toolchain.json` names an archive; with none, it
+says to get the full zip instead.
 
 ## Run it from the checkout
 
@@ -42,7 +54,10 @@ npm start                 # the real app against this checkout
 npm run fake -- Gold      # the UI with a stand-in n64rx (Gold, Silver, Experimental, Unknown)
 npm test                  # node --test: toolchain, JSON lines, paths, the spawn side
 npm run test:smoke        # Playwright for Electron: ROM -> badge -> Build -> Done (fake), and the real `n64rx info`
-npm run dist              # standalone builds for this OS into app/dist/
+npm run dist              # the full build for this OS into app/dist/: the build tools inside
+npm run dist:dir          # the same, the unpacked folder only (dist/win-unpacked), no zip
+npm run dist:no-tools     # the app alone (it downloads the tools from toolchain.json's URL)
+N64RX_PACKAGED_EXE=... npm run test:packaged   # an unzipped full build builds the test ROM on its own tools
 ```
 
 `npm start`, the tests and `dist` first run `scripts/make-icon.js`, which copies
@@ -58,9 +73,35 @@ them are generated and gitignored.
 
 | OS | files in `app/dist/` |
 |---|---|
-| Windows x64 | `N64Recomp-X.exe` (one portable file) and `N64Recomp-X-<v>-win-x64.zip` (the unpacked folder: starts faster) |
-| macOS arm64, x64 | `N64Recomp-X-<v>-mac-<arch>.zip` (the .app) and a `.dmg` |
+| Windows x64 | `N64Recomp-X-<v>-win-x64.zip`: the unpacked app folder, the build tools in `resources/toolchain/` |
+| macOS arm64, x64 | `N64Recomp-X-<v>-mac-<arch>.zip` (the .app, the tools in `Contents/Resources/toolchain/`) and a `.dmg` |
 | Linux x64 | `N64Recomp-X-<v>-x86_64.AppImage` |
+
+The Windows zip is the one file to release. Measured on this machine
+(2026-10-22, Windows 11): the zip is 329 MB; unzipped, 11,100 files and 961 MB
+(the toolchain 565 MB of that, Electron and the app the rest). `npm run dist`
+took about 6 minutes (most of it the zip) with the toolchain already staged;
+packing it first adds about 1.5 minutes. Unzipping took 34 s with Windows'
+`tar -xf`, 11 minutes with PowerShell's `Expand-Archive` (it is known to be
+slow); Explorer's Extract All was not timed. The zip has no top folder of its
+own: Extract All makes one named after the zip. The portable single-file exe is
+no longer built: it unpacks itself to `%TEMP%` at every start, and with the
+tools inside that is more than half a gigabyte each launch.
+
+`npm run dist` first runs `scripts/stage-toolchain.js`: it asks
+`pack_toolchain.py --key` which bundle this checkout needs (OS, LLVM, nxdk pin,
+recompiler pin, Python) and reuses `app/stage/toolchain/` when its manifest has
+that key, else runs `pack_toolchain.py --no-archive --stage app/stage/toolchain`
+(about 1.5 minutes, from what `tools/xbox/setup.sh` installed: MSYS2 at
+`C:\msys64`, nxdk at `C:\xdev\nxdk`, N64Recomp in `build-host/recomp`, which
+must carry this checkout's `.n64rx-key`). `--fresh` packs again; `--from DIR`
+copies another unpacked bundle of the same key. It refuses a bundle with a file
+that looks like ROM material (an N64 header word at offset 0, a ROM or image
+extension) or a path longer than 140 characters, and prints the file count, the
+size and the longest path. Then `scripts/dist.js` runs electron-builder with the
+bundle as an extra resource and checks that `resources/toolchain/manifest.json`
+and `recomp/.n64rx-key` made it in. `npm run dist:no-tools` leaves the bundle out
+(artifacts named `...-no-tools`).
 
 electron-builder packs only what one OS can build (macOS needs a Mac). The app
 carries a source set of the repo (`scripts/stage-src.js`: `git ls-files` of
@@ -79,7 +120,7 @@ toolchain bundle has it built.
 | data folder | the user cache (`%LOCALAPPDATA%\n64rx`, `~/.n64rx`) | `N64Recomp-X Data` next to the exe / the `.app` / the `.AppImage`; the user cache if that is not writable (Program Files, a read-only folder, macOS App Translocation), said in Data and storage |
 | source tree (`ROOT`) | this checkout | `resources/src` copied to `<data>/src/<version>/` on first run |
 | Python | `N64RX_PYTHON`, else `py -3` / `python` (Windows), `python3` / `python` | the toolchain bundle's |
-| toolchain | whatever `n64rx` finds (`engines.pick('auto')`: native or Docker), or a bundle if one is installed | `<data>/toolchain/<key>/`, downloaded on first run |
+| toolchain | whatever `n64rx` finds (`engines.pick('auto')`: native or Docker), or a bundle if one is installed or `N64RX_TOOLCHAIN_DIR` names one | `resources/toolchain/` inside the app (the full build); else `<data>/toolchain/<key>/`, downloaded on first run (the no-tools build) |
 | builds | `build-xbox/` in the checkout | `<data>/builds` (`N64RX_BUILD_ROOT`) |
 | settings, logs, Electron's own files | Electron's userData | `<data>/electron/` |
 
@@ -101,7 +142,9 @@ it into place.
 
 | variable | effect |
 |---|---|
-| `N64RX_TOOLCHAIN=system` | never use a bundle: the machine's Python and toolchain |
+| `N64RX_TOOLCHAIN=system` | never use a bundle, not even the one inside the app: the machine's Python and toolchain |
+| `N64RX_TOOLCHAIN_DIR` | use this unpacked bundle (a `pack_toolchain.py` stage folder) as if it were inside the app |
+| `N64RX_PACKAGED_EXE` | `npm run test:packaged`: the unzipped full build's exe to drive |
 | `N64RX_TOOLCHAIN_URL` (+ `_SHA256`, `_SIZE`, `_KEY`) | download this archive instead of `toolchain.json`'s; `file://` works, for testing a local `pack_toolchain.py` archive |
 | `N64RX_PYTHON` | the Python to run `n64rx` with (system mode) |
 | `N64RX_HOME` | the data folder (also what `n64rx` uses for its cache) |
@@ -111,7 +154,14 @@ it into place.
 | `N64RX_TEST_PICK_OUT`, `N64RX_TEST_PICK_ISO` | dev builds only: answer the folder picker / ISO save dialog with this path (or `cancel`), for the tests |
 | `N64RX_DEVTOOLS=1` | allow DevTools in a packaged build |
 
-Test a packaged build against a local toolchain:
+Test the packaged full build (unzip it first, to a folder with a space in its
+path): `N64RX_PACKAGED_EXE` set to its `N64Recomp-X.exe`, then `npm run
+test:packaged`. It cuts PATH to the OS's folders, makes the test ROM with the
+app's own Python, presses Build (the folder picker answered in the main
+process), waits for `default.xbe` and checks the build log names no system
+toolchain path. On this machine: the window in 7.5 s, the test ROM built in 45 s.
+
+Test the no-tools build against a local toolchain archive:
 
 ```
 python tools/xbox/pack_toolchain.py            # dist/toolchain/<archive> + <archive>.json
@@ -122,11 +172,13 @@ app\dist\win-unpacked\N64Recomp-X.exe
 
 ## Releasing
 
-Fill `toolchain.json` from each OS's `pack_toolchain.py` `.json` (the archives
-uploaded to a release the public can reach), then `npm run dist` per OS. Updates:
+`npm run dist` per OS, on a machine where `tools/xbox/setup.sh` has run; publish
+the zip (Windows), the mac zip / dmg and the AppImage. `toolchain.json` is only for
+the no-tools build: fill it from each OS's `pack_toolchain.py` `.json` (the
+archives uploaded to a release the public can reach). Updates:
 `electron-updater` is wired but stays off until `build.publish` is set in
 `package.json` (e.g. `{"provider": "github", "owner": "TechProGabe", "repo":
-"N64Recomp-X"}`); a portable exe cannot update itself, the zip/AppImage/mac zip can.
+"N64Recomp-X"}`); the zip, the AppImage and the mac zip can update themselves.
 
 ## Security
 
@@ -147,7 +199,7 @@ first), and one job at a time (a build, a send, an ISO or the tools download).
 ```
 main.js              window, IPC, settings, the data folder, jobs
 preload.js           the renderer's API
-src/paths.js         data folder, source tree, Python, bundle manifest, how n64rx is run
+src/paths.js         data folder, source tree, Python, bundle manifest (shipped, then downloaded), how n64rx is run
 src/n64rx.js         spawn, JSON lines -> events, cancel (the whole process tree)
 src/jsonlines.js     the line parser
 src/toolchain.js     download, resume, verify, unpack, install
@@ -155,9 +207,10 @@ src/validate.js      IPC argument checks
 src/jobs.js          one job at a time, claimed before any await
 src/settings.js      checked, atomic settings; the password via safeStorage
 renderer/            index.html, style.css, galaxy.js (the sky), ui.js (the screens), icons.js, fonts/unscii-16.woff
-scripts/             stage-src.js (with the leak check), make-icon.js, shots.js, run-fake.js
-test/                node --test files, fake-n64rx.js, smoke.e2e.js
-toolchain.json       the archive per OS
+scripts/             stage-src.js (with the leak check), stage-toolchain.js (the bundle the app carries), dist.js
+                     (electron-builder with or without it), make-icon.js, shots.js, run-fake.js
+test/                node --test files, fake-n64rx.js, smoke.e2e.js, packaged.e2e.js (the unzipped full build)
+toolchain.json       the archive per OS (the no-tools build's download)
 ```
 
 unscii-16 is by viznut, public domain (http://viznut.fi/unscii/), the same

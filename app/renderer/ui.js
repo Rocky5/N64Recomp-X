@@ -192,7 +192,8 @@
     $('tools-progress').hidden = true;
     $('tools-go').disabled = false;
     if (!st.available) {
-      toolsError({ message: 'No build tools download is set for this version of the app on this system yet.', hint: 'If this computer already has the toolchain (n64rx doctor), use it with the link below. Otherwise get a newer release of the app.' });
+      // main.js says what to do (toolchain.NO_TOOLS): get the full zip, or use the tools already here
+      toolsError(st.error || { message: 'This copy of the app has no build tools inside it, and there is no download for them yet.', hint: 'Get the full N64Recomp-X zip for your system (the build tools are inside it), or use the tools already on this computer with the link below.' });
       $('tools-go').disabled = true;
       $('tools-go').querySelector('span').textContent = 'Download build tools';
     }
@@ -865,7 +866,9 @@
     $('s-dir').title = d.dir;
     $('s-note').textContent = d.note ? `${d.note} So the data lives in your user folder instead.` : 'Everything the app keeps is in this one folder. Delete it to remove everything.';
     $('s-note').classList.toggle('warn', !!d.note);
-    $('s-tools').textContent = d.toolchain ? mb(d.toolchain) : 'None';
+    // the full build carries its tools inside the app's folder: nothing in the data folder to remove
+    $('s-tools-desc').textContent = d.toolsShipped ? 'Compilers and the Xbox SDK, included with the app' : 'Compilers and the Xbox SDK, downloaded once';
+    $('s-tools').textContent = d.toolchain ? mb(d.toolchain) : (d.toolsShipped ? 'Included' : 'None');
     $('s-builds').textContent = d.builds ? mb(d.builds) : 'Empty';
     $('s-rm-tools').disabled = !d.toolchain;
     $('s-rm-builds').disabled = !d.builds;

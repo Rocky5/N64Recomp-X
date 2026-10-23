@@ -101,11 +101,15 @@ function pointers and the function table must not fold.
 
 ## The prebuilt toolchain (the app's)
 
-The app (a non-technical user, no Docker, no `setup.sh`) downloads one archive
-per OS and architecture and unpacks it to `<cache>/toolchain/<key>/`. The
-Native engine then builds with that and nothing else: no MSYS2 at
-`C:\msys64`, no nxdk at `C:\xdev`, no system LLVM. `tools/xbox/pack_toolchain.py`
-makes it from what `setup.sh` already installed on the packing machine.
+The app (a non-technical user, no Docker, no `setup.sh`) builds with one
+bundle per OS and architecture and nothing else: no MSYS2 at `C:\msys64`, no
+nxdk at `C:\xdev`, no system LLVM. `tools/xbox/pack_toolchain.py` makes it
+from what `setup.sh` already installed on the packing machine. The app's
+full build carries the bundle inside itself, already unpacked
+(`resources/toolchain/`, "Inside the app" below), so the user downloads one
+zip and nothing else; the app built without it (`npm run dist:no-tools`)
+downloads the archive once instead and unpacks it to
+`<cache>/toolchain/<key>/`.
 
 What is in it (`<key>/`):
 
@@ -115,7 +119,7 @@ What is in it (`<key>/`):
 | `msys64/` | MSYS2 trimmed to the build: `usr/bin` bash, coreutils, make, sed, grep, gawk, **cmake**, **ninja** (MSYS2's own) and the DLLs they import (found by reading the PE import tables), `etc/`, cmake's modules; `mingw64/bin` clang, lld, `llvm-ar/lib/ranlib/nm/objcopy/strip/dlltool`, their DLLs, `mingw64/lib/clang/21` headers; a `usr/bin/python3` shim that runs the bundle's Python (the build's `python3` calls) | - |
 | `llvm/` | - | LLVM 21.1.8 trimmed to clang, lld and the llvm-* tools nxdk calls, plus `lib/clang/21/include` (macOS: brew's dylibs copied to `lib/ext` and re-pointed, then ad-hoc signed) |
 | `cmake/`, `bin/` | - | the official portable cmake 3.31.6 and ninja 1.12.1 (pinned sha256) |
-| `nxdk/` | built nxdk at `NXDK_PIN`: `bin/` (wrappers), `lib/` (headers, built `.lib`s, the pbkit sources the game build compiles), `share/`, `tools/cxbe`, `tools/extract-xiso/build/extract-xiso`; no `.git`, objects, dependency files, samples or `tools/cg` (NVIDIA Cg is not redistributable and the build does not use it) | the same |
+| `nxdk/` | built nxdk at `NXDK_PIN`: `bin/` (wrappers), `lib/` (headers, built `.lib`s, the pbkit sources the game build compiles), `share/`, `tools/cxbe`, `tools/extract-xiso/build/extract-xiso`; no `.git`, objects, dependency files, samples or `tools/cg` (NVIDIA Cg is not redistributable and the build does not use it), and none of the upstream test suites and IDE projects the build never reads (`NXDK_PRUNE`: `lib/libcxx/test`, `lib/sdl/SDL2/test`, SDL's `Xcode*`, `VisualC*`, `visualtest`) | the same |
 | `recomp/` | `N64Recomp`, `RSPRecomp` and `.n64rx-key` (refuses to pack if the key is not `engines.recompiler_pin()`; it says how to rebuild) | the same |
 | `licenses/` | the texts of everything above, with where the MSYS2 sources are | the same |
 | `manifest.json` | read by the app | the same |
@@ -129,6 +133,7 @@ python tools/xbox/pack_toolchain.py --no-archive          # the stage folder onl
 python tools/xbox/pack_toolchain.py --install-to "D:/odd path/tc"      # unpack the newest archive and run the checks
 python tools/xbox/pack_toolchain.py --check "D:/odd path/tc"           # n64rx's Native checks with the manifest's env applied
 python tools/xbox/pack_toolchain.py --selftest "D:/odd path/tc"        # the ROM-free test ROM, built with ONLY the bundle
+python tools/xbox/pack_toolchain.py --key                              # the key this checkout packs (JSON), for app/scripts/stage-toolchain.js
 ```
 
 `--selftest` runs the bundle's Python on `tools/n64rx/n64rx.py build`, applies
@@ -172,4 +177,32 @@ python 148, recomp 9, licenses 1); `.tar.zst` level 19 124 MB; packing about
 2 min; unpacking about 50 s with the checks; the ROM-free test ROM builds from
 an unpacked bundle at a path with spaces in 19 s (ThinLTO, clean build folder).
 Linux and macOS packing is written but was not run here; the CI workflow is its
-first run.
+first run. Since `NXDK_PRUNE` (2026-10-22) the stage is 562 MB (nxdk 107 MB
+instead of 190) and its longest path 103 characters (was 176).
+
+### Inside the app (the full build)
+
+`npm run dist` in `app/` ships the staged folder itself, not the archive:
+`app/scripts/stage-toolchain.js` reuses `app/stage/toolchain/` when its
+`manifest.json` has the key `pack_toolchain.py --key` gives for this checkout,
+else runs `pack_toolchain.py --no-archive --stage app/stage/toolchain`; then
+electron-builder copies it to `resources/toolchain/` (Windows, Linux) or
+`Contents/Resources/toolchain/` (macOS). The app reads that manifest exactly
+as it reads a downloaded one (`paths.shippedBundle`) and prefers it to
+anything in the data folder; nothing is unpacked or written into it, except
+the Python's own `__pycache__` where the folder is writable. The packaged app
+runs n64rx from its source copy, so `N64RX_RECOMPILER_KEY` (the manifest's
+`recompiler`) is what makes `Native.ensure_recompiler` take the shipped
+`recomp/`.
+
+One n64rx fix came out of it: `Native.checks()` asked `git -C <nxdk> rev-parse
+HEAD` of any nxdk, and a bundle has no `.git`, so inside a git work tree (the
+app unzipped under `Documents\GitHub\...`, or the stage in the checkout) git
+answered with that repository's commit and the nxdk check failed. The commit is
+now asked only when `<nxdk>/.git` exists (`test_n64rx.Doctor`).
+
+Measured on this machine (2026-10-22, Windows 11): `--check` and `--selftest`
+of `app/stage/toolchain` OK (the test ROM in 43 s); the app zip 329 MB, 961 MB
+unpacked; unzipped to a path with spaces, `--check` OK and `--selftest` 41 s
+on its `resources/toolchain`, and the packaged app itself, PATH cut to
+System32, built the test ROM through its UI in 45 s (`npm run test:packaged`).

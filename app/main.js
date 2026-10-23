@@ -96,14 +96,22 @@ function pinnedEntry() {
   return toolchain.pinned(paths.platformKey(), { manifest: path.join(__dirname, 'toolchain.json') });
 }
 
+// the toolchain inside the app (the full build's resources/toolchain), read once: it does not change while the app runs
+let shippedMemo;
+function shipped() {
+  if (shippedMemo === undefined) shippedMemo = paths.shippedBundle({ resources: app.isPackaged ? process.resourcesPath : null });
+  return shippedMemo;
+}
+
+/** N64RX_TOOLCHAIN=system always; the setting only when the app has no tools inside (the UI offers it only then) */
 function useSystem() {
-  return process.env.N64RX_TOOLCHAIN === 'system' || loadSettings().toolchain === 'system';
+  return process.env.N64RX_TOOLCHAIN === 'system' || (!shipped() && loadSettings().toolchain === 'system');
 }
 
 async function currentRunner() {
   const root = await srcReady;
   const entry = pinnedEntry();
-  const bundle = useSystem() ? null : paths.installedBundle(cache(), entry.key);
+  const bundle = useSystem() ? null : paths.pickBundle({ shipped: shipped(), cache: cache(), pinnedKey: entry.key });
   return paths.runner({ root, cache: cache(), bundle, packaged: app.isPackaged });
 }
 
@@ -114,13 +122,18 @@ function toolchainStatus() {
   }
   if (process.env.N64RX_FAKE === '1') return { state: 'ready', mode: 'fake' };
   if (useSystem()) return { state: 'ready', mode: 'system' };
+  // 1. inside the app: nothing to download, ever
+  if (shipped()) return { state: 'ready', mode: 'bundle', shipped: true, key: shipped().key };
+  // 2. a download already unpacked into the data folder
   const bundle = paths.installedBundle(cache(), entry.key);
   if (bundle) {
     const outdated = !!(entry.key && entry.url && bundle.key !== entry.key);
     return { state: outdated ? 'missing' : 'ready', mode: 'bundle', key: bundle.key, size: entry.size, available: !!entry.url, update: outdated };
   }
   if (!app.isPackaged && !process.env.N64RX_TOOLCHAIN_URL) return { state: 'ready', mode: 'system' };
-  return { state: 'missing', size: entry.size, available: !!entry.url, platform: entry.platform };
+  // 3. the download (or, with no URL, what to do instead)
+  const st = { state: 'missing', size: entry.size, available: !!entry.url, platform: entry.platform };
+  return entry.url ? st : { ...st, error: toolchain.NO_TOOLS };
 }
 
 // ---------------------------------------------------------------- jobs
@@ -177,7 +190,7 @@ function registerIpc() {
   handle('app:about', async () => ({
     version: app.getVersion(), platform: process.platform, arch: process.arch, packaged: app.isPackaged,
     fake: process.env.N64RX_FAKE === '1', electron: process.versions.electron, repo: REPO_URL, data: cache(),
-    src: await srcReady.catch(() => null),
+    src: await srcReady.catch(() => null), tools: shipped() ? shipped().dir : null,
   }));
   handle('settings:get', () => loadSettings());
   // the output folder is set only by the folder picker below, never by the renderer
@@ -324,7 +337,7 @@ function registerIpc() {
     return {
       dir: c, portable: DATA.portable, note: DATA.portable || DATA.reason === 'dev' || DATA.reason === 'N64RX_HOME' ? null : DATA.reason,
       builds: await dirSize(path.join(c, 'builds')), toolchain: await dirSize(path.join(c, 'toolchain')),
-      src: await dirSize(path.join(c, 'src')), packaged: app.isPackaged,
+      src: await dirSize(path.join(c, 'src')), packaged: app.isPackaged, toolsShipped: !!shipped(),
     };
   });
   handle('data:open', async () => {
@@ -340,7 +353,8 @@ function registerIpc() {
       type: 'question', buttons: ['Remove', 'Cancel'], defaultId: 1, cancelId: 1,
       title: tools ? 'Remove build tools' : 'Remove build cache',
       message: tools ? 'Remove the build tools?' : 'Remove the build cache?',
-      detail: tools ? 'They are downloaded again before the next build. Your built folders are kept.'
+      detail: tools ? (shipped() ? 'This removes the downloaded copy only; the build tools inside the app are kept. Your built folders are kept.'
+        : 'They are downloaded again before the next build. Your built folders are kept.')
         : 'The next build of each game takes longer. Your built folders and the build tools are kept.',
     });
     if (r.response !== 0) return { removed: false };
@@ -369,6 +383,7 @@ function registerIpc() {
     const slot = jobs.claimToolchain(() => ac.abort());
     try {
       if (process.env.N64RX_FAKE_TOOLCHAIN === 'missing') return await fakeInstall(ac.signal);
+      if (shipped()) return { ok: true, dir: shipped().dir, status: toolchainStatus() };   // nothing to fetch
       const dir = await toolchain.install({ cache: cache(), entry: pinnedEntry(), signal: ac.signal, onProgress: (p) => send('toolchain:progress', p) });
       setSettings({ toolchain: 'auto' });
       return { ok: true, dir, status: toolchainStatus() };

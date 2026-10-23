@@ -10,8 +10,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const MEANING = {
-  Gold: 'fully working on a real Xbox',
-  Silver: 'playable on a real Xbox; it has bugs, none that stop the game',
+  Gold: 'fully playable on a real Xbox, no major issues',
+  Silver: 'playable on a real Xbox, with issues; none that stop the game',
   Experimental: 'not proven on a real Xbox yet: it may run, run in part, or not at all',
 };
 const ROWS = {

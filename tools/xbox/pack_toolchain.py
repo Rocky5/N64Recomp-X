@@ -12,6 +12,10 @@ standalone Python (python-build-standalone) with rabbitizer and pillow.
     python tools/xbox/pack_toolchain.py --no-archive     # only the staged folder
     python tools/xbox/pack_toolchain.py --install-to DIR # unpack the newest archive, for testing
     python tools/xbox/pack_toolchain.py --check DIR      # n64rx's Native checks against an unpacked bundle
+    python tools/xbox/pack_toolchain.py --key            # the key this checkout packs (app/scripts/stage-toolchain.js)
+
+The app's full build (app/: npm run dist) ships the staged folder itself as
+resources/toolchain, so it needs no download (docs/app.md).
 
 Sources (all default to what tools/xbox/setup.sh makes):
     MSYS2_ROOT   C:\\msys64            (Windows)
@@ -94,6 +98,9 @@ llvm-objcopy llvm-strip llvm-dlltool llvm-readobj llvm-objdump llvm-size llvm-cv
 # files in nxdk that are build intermediates, not tools or SDK
 NXDK_DROP = ['.git', '.github', '.gitmodules', '.gitignore', '*.obj', '*.o', '*.d', '*.pdb', 'samples', 'Dockerfile',
              'docker_entry.sh', '__pycache__']
+# folders under nxdk/ the game build never reads: upstream test suites and IDE projects. libcxx's test suite alone
+# has 176-character paths, which break a Windows unzip (260-character MAX_PATH) once the app folder is a few levels deep
+NXDK_PRUNE = ['lib/libcxx/test', 'lib/sdl/SDL2/test', 'lib/sdl/*/Xcode*', 'lib/sdl/*/VisualC*', 'lib/sdl/*/visualtest']
 NXDK_TOOLS = {'cxbe': ['cxbe', 'cxbe.exe'], 'extract-xiso': ['build/extract-xiso', 'build/extract-xiso.exe']}
 
 
@@ -318,6 +325,10 @@ def gather_nxdk(stage, nxdk, lic):
     say('nxdk', nxdk)
     for d in ('bin', 'lib', 'share'):
         copy_tree(nxdk / d, dest / d, drop=NXDK_DROP)
+    for pat in NXDK_PRUNE:
+        for p in dest.glob(pat):
+            if p.is_dir():
+                shutil.rmtree(p)
     for f in nxdk.iterdir():
         if f.is_file() and (f.name.startswith('LICENSE') or f.name == 'README.md'):
             copy_file(f, dest / f.name)
@@ -745,8 +756,18 @@ def main():
     ap.add_argument('--nxdk', help='nxdk (default $NXDK_DIR, C:/xdev/nxdk or /opt/nxdk)')
     ap.add_argument('--recomp', help='N64Recomp build folder (default $N64RX_RECOMP or build-host/recomp)')
     ap.add_argument('--cache', help='download cache (default <out>/downloads)')
+    ap.add_argument('--key', action='store_true',
+                    help='print the bundle identity this checkout would pack (JSON: key, os, arch, nxdk, recompiler) and exit')
     args = ap.parse_args()
     out = pathlib.Path(args.out).resolve()
+
+    if args.key:
+        os.environ.pop('N64RX_RECOMPILER_KEY', None)
+        e = engines()
+        os_, arch = host_os(), host_arch()
+        print(json.dumps({'key': make_key(os_, arch, e.NXDK_PIN, e.recompiler_pin()), 'os': os_, 'arch': arch,
+                          'nxdk': e.NXDK_PIN, 'recompiler': e.recompiler_pin()}))
+        return 0
 
     if args.check:
         return check_bundle(args.check)
@@ -805,6 +826,8 @@ def main():
     for part in sorted(p for p in stage.iterdir() if p.is_dir()):
         say(f'  {part.name:<10} {mb(tree_size(part))}')
     say('staged:', stage, mb(tree_size(stage)))
+    longest = max((os.path.relpath(os.path.join(dp, f), stage) for dp, _, fs in os.walk(stage) for f in fs), key=len)
+    say(f'longest path inside the bundle: {len(longest)} characters ({longest})')
     if args.no_archive:
         return 0
     out.mkdir(parents=True, exist_ok=True)

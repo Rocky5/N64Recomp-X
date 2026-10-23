@@ -15,12 +15,15 @@
     "test:smoke": "node --test test/smoke.e2e.js",
     "stage": "node scripts/stage-src.js",
     "icon": "node scripts/make-icon.js",
-    "dist": "node scripts/make-icon.js && node scripts/stage-src.js && electron-builder --publish never",
-    "dist:dir": "node scripts/make-icon.js && node scripts/stage-src.js && electron-builder --dir --publish never",
+    "dist": "node scripts/make-icon.js && node scripts/stage-src.js && node scripts/stage-toolchain.js && node scripts/dist.js",
+    "dist:dir": "node scripts/make-icon.js && node scripts/stage-src.js && node scripts/stage-toolchain.js && node scripts/dist.js --dir",
     "prestart": "node scripts/make-icon.js",
     "pretest": "node scripts/make-icon.js",
     "pretest:smoke": "node scripts/make-icon.js",
-    "prefake": "node scripts/make-icon.js"
+    "prefake": "node scripts/make-icon.js",
+    "dist:no-tools": "node scripts/make-icon.js && node scripts/stage-src.js && node scripts/dist.js --no-tools",
+    "stage:toolchain": "node scripts/stage-toolchain.js",
+    "test:packaged": "node --test test/packaged.e2e.js"
   },
   "dependencies": {
     "electron-updater": "6.8.9",
@@ -67,12 +70,6 @@
     "win": {
       "target": [
         {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
           "target": "zip",
           "arch": [
             "x64"
@@ -81,9 +78,6 @@
       ],
       "icon": "build/icon.ico",
       "artifactName": "N64Recomp-X-${version}-win-${arch}.${ext}"
-    },
-    "portable": {
-      "artifactName": "N64Recomp-X.exe"
     },
     "mac": {
       "target": [

@@ -40,12 +40,13 @@ real Xbox moves a game up:
 
 ## Three steps
 
-1. Download the app for your computer (Windows `N64Recomp-X.exe`, macOS
-   `.zip`, Linux `.AppImage`) and open it: nothing to install. The first
-   start downloads the build tools (about 125 MB on Windows) into an
-   `N64Recomp-X Data` folder next to the app; deleting that folder removes
-   everything. (Not released yet: until then, run it from a checkout,
-   [`app/README.md`](app/README.md).)
+1. Download the app for your computer (Windows
+   `N64Recomp-X-<version>-win-x64.zip`, macOS `.zip`, Linux `.AppImage`),
+   unzip it to a folder you own and start `N64Recomp-X.exe`: nothing to
+   install and nothing more to download, the build tools are inside it.
+   What it writes goes into an `N64Recomp-X Data` folder next to the app;
+   deleting the app's folder removes everything. (Not released yet: until
+   then, run it from a checkout or build the zip, [`app/README.md`](app/README.md).)
 2. Drop your ROM on the window. It shows the game, its tier and its known
    problems. Choose an Xbox folder (XBE) or a disc image (ISO), press
    Build, and say where to save it: about 1 to 3 minutes.

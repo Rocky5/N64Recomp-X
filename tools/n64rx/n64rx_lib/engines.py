@@ -131,7 +131,9 @@ class Native:
             ok = bool(p and p.exists())
             c.append(Check(t, ok, str(p) if ok else 'not found', SETUP_HINT))
         built = (self.nxdk / 'lib/libpdclib.lib').exists() and (self.nxdk / 'tools/cxbe' / f'cxbe{EXE}').exists()
-        head = git_head(self.nxdk) if built else None
+        # only nxdk's own checkout: the app's bundled copy has no .git, and `git -C` would answer for whatever
+        # repository it sits in (an app unzipped into a git work tree failed this check)
+        head = git_head(self.nxdk) if built and (self.nxdk / '.git').exists() else None
         c.append(Check('nxdk', built and head in (None, NXDK_PIN),
                        (f'{self.nxdk} at {head[:7]}' if head else f'{self.nxdk}') if built else f'not built at {self.nxdk}',
                        SETUP_HINT if not built else f'check nxdk out at {NXDK_PIN[:7]} and rebuild it ({SETUP_HINT})'))

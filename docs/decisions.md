@@ -1663,3 +1663,26 @@ Castlevania: Legacy of Darkness (texture issues), Mario Kart 64 (the map
 TV, drift boosts in question), Banjo-Kazooie (the intro's texture errors,
 shadows now and then orange); Ocarina of Time's scene-load hitches and
 audio skips are the likeliest to count as major.
+
+## The app carries its build tools; the zip is the download (2026-10-22, the maintainer; `app/scripts/stage-toolchain.js`, `app/scripts/dist.js`, `paths.shippedBundle`)
+
+The maintainer: "fix the tools dependency in the app ... download run and
+go". The first-run download was never live (no archive published, so
+`toolchain.json` held placeholders and every user had to install the tools
+themselves). Chosen: `npm run dist` puts the toolchain bundle, as
+`pack_toolchain.py` stages it, inside the app (`resources/toolchain/`,
+already unpacked), and the app uses it before anything else: no download,
+no unpack, no install, no network to build. The order is the shipped
+bundle, then one unpacked in the data folder, then the download (kept for
+`npm run dist:no-tools` and a future published archive);
+`N64RX_TOOLCHAIN=system` still forces the system's. The Windows artifact
+is the zip of the unpacked folder only: the portable single-file exe was
+dropped, since it unpacks itself to `%TEMP%` at every start and with the
+tools inside that is more than half a gigabyte each launch. The bundle's
+nxdk loses the upstream test suites and IDE projects the build never reads
+(`NXDK_PRUNE`): libcxx's tests had 176-character paths, which break
+Windows' unzip (260) once the folder is a few levels deep; the longest is
+now 103. Not chosen: a self-extracting first run (the same wait the user
+complained about) or an installer (the app is meant to be one folder to
+delete). Cost: a bigger download (the zip against a 125 MB archive plus the
+app); macOS and Linux get the same layout but were not built here.

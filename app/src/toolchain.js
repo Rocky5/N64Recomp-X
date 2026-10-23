@@ -1,6 +1,8 @@
 'use strict';
 // The build tools (Python, LLVM, nxdk, N64Recomp, MSYS2 on Windows) as one
-// archive per OS, made by tools/xbox/pack_toolchain.py. Downloaded once:
+// archive per OS, made by tools/xbox/pack_toolchain.py. The full build of the
+// app ships them unpacked (resources/toolchain, paths.shippedBundle) and never
+// comes here; otherwise they are downloaded once:
 // free-space check, download with progress and resume (a .part file and an
 // HTTP Range request), SHA-256 check (a mismatch is refused and the part
 // deleted), unpack to a scratch folder, then one rename into
@@ -23,6 +25,13 @@ class ToolchainError extends Error {
 }
 
 const MB = 1024 * 1024;
+
+// a packaged app with no toolchain inside it (the no-tools build) and no download set for this OS
+const NO_TOOLS = {
+  message: 'This copy of the app has no build tools inside it, and there is no download for them yet.',
+  hint: 'Get the full N64Recomp-X zip for your system (the build tools are inside it), unzip it to a folder you own and run the app from there. '
+    + 'If this computer already has the toolchain (n64rx doctor --install), press "Use the tools already on this computer" instead.',
+};
 
 /** the archive for this OS/arch: toolchain.json's entry, or N64RX_TOOLCHAIN_URL (+ _SHA256) */
 function pinned(key, { env = process.env, manifest = path.join(__dirname, '..', 'toolchain.json') } = {}) {
@@ -365,10 +374,7 @@ async function sweep(tdir) {
  * bundle's folder.
  */
 async function install({ cache, entry, onProgress = () => {}, signal }) {
-  if (!entry || !entry.url) {
-    throw new ToolchainError('No build tools download is set for this version of the app on this system.',
-      'Use the build tools already on this computer (n64rx doctor --install sets them up), or get a release of the app that includes them.');
-  }
+  if (!entry || !entry.url) throw new ToolchainError(NO_TOOLS.message, NO_TOOLS.hint);
   const tdir = toolchainDir(cache);
   await sweep(tdir);
   const dl = path.join(tdir, 'downloads');
@@ -427,4 +433,4 @@ async function install({ cache, entry, onProgress = () => {}, signal }) {
   }
 }
 
-module.exports = { ToolchainError, pinned, toolchainDir, archiveName, freeBytes, checkSpace, sha256File, download, unpack, bundleRoot, install, sweep };
+module.exports = { ToolchainError, NO_TOOLS, pinned, toolchainDir, archiveName, freeBytes, checkSpace, sha256File, download, unpack, bundleRoot, install, sweep };

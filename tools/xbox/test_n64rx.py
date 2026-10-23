@@ -414,6 +414,21 @@ class Doctor(unittest.TestCase):
             self.assertIn('Docker Desktop', text)
             self.assertIn('run setup.sh', text)
 
+    def test_bundled_nxdk_ignores_the_repository_around_it(self):
+        # the app's toolchain has no nxdk/.git; `git -C` would answer for any repository it was unzipped into
+        with tempfile.TemporaryDirectory() as d:
+            nx = pathlib.Path(d) / 'nxdk'
+            (nx / 'lib').mkdir(parents=True)
+            (nx / 'lib/libpdclib.lib').write_bytes(b'')
+            (nx / 'tools/cxbe').mkdir(parents=True)
+            (nx / 'tools/cxbe' / f'cxbe{engines.EXE}').write_bytes(b'')
+            with mock.patch.dict(engines.os.environ, {'NXDK_DIR': str(nx)}), \
+                    mock.patch.object(engines, 'git_head', lambda p: '0' * 40):
+                check = lambda: next(c for c in engines.Native().checks() if c.name == 'nxdk')  # noqa: E731
+                self.assertTrue(check().ok)
+                (nx / '.git').mkdir()   # nxdk's own checkout at another commit: still refused
+                self.assertFalse(check().ok)
+
 
 class Cli(unittest.TestCase):
     def test_dropped_rom_is_build(self):

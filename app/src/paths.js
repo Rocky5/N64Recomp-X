@@ -157,6 +157,28 @@ function readBundle(dir) {
   };
 }
 
+/** a bundle that can run: its manifest reads and its Python is there */
+function usableBundle(dir) {
+  const b = readBundle(dir);
+  return b && (!b.python || fs.existsSync(b.python)) ? b : null;
+}
+
+/**
+ * The toolchain shipped inside the app (the full build: resources/toolchain,
+ * already unpacked), or N64RX_TOOLCHAIN_DIR (any unpacked bundle, for tests and
+ * dev). Null when there is none: then installedBundle() and the download.
+ */
+function shippedBundle({ resources = null, env = process.env } = {}) {
+  const dirs = [];
+  if (env.N64RX_TOOLCHAIN_DIR) dirs.push(path.resolve(env.N64RX_TOOLCHAIN_DIR));
+  if (resources) dirs.push(path.join(resources, 'toolchain'));
+  for (const d of dirs) {
+    const b = usableBundle(d);
+    if (b) return { ...b, shipped: true };
+  }
+  return null;
+}
+
 /** the installed bundle: <cache>/toolchain/current.json names it, else the pinned key's folder */
 function installedBundle(cache, pinnedKey) {
   const tdir = path.join(cache, 'toolchain');
@@ -168,16 +190,21 @@ function installedBundle(cache, pinnedKey) {
   if (pinnedKey) keys.push(pinnedKey);
   if (cur && cur.key && !keys.includes(cur.key)) keys.push(cur.key);
   for (const k of keys) {
-    const b = readBundle(path.join(tdir, k));
-    if (b && (!b.python || fs.existsSync(b.python))) return b;
+    const b = usableBundle(path.join(tdir, k));
+    if (b) return b;
   }
   return null;
+}
+
+/** which toolchain runs, in order: the shipped one, an unpacked download, else null (the download, or the system's) */
+function pickBundle({ shipped, cache, pinnedKey }) {
+  return shipped || installedBundle(cache, pinnedKey);
 }
 
 /**
  * How n64rx is run: {cmd, args (before the n64rx arguments), env, cwd, root, mode}.
  *   mode 'fake'   - N64RX_FAKE=1: the JS stand-in (test/fake-n64rx.js) run by this Node/Electron
- *   mode 'bundle' - the downloaded toolchain's Python and environment
+ *   mode 'bundle' - the toolchain bundle's Python and environment (shipped in the app or downloaded)
  *   mode 'system' - the machine's Python; n64rx finds its own toolchain (engines.pick('auto'))
  */
 function runner({ root, cache, bundle, env = process.env, packaged = false, execPath = process.execPath }) {
@@ -216,5 +243,5 @@ function defaultOutDir(documents, home = os.homedir()) {
 
 module.exports = {
   APP_DIR, IS_WIN, DATA_NAME, appHome, canWrite, dataDir, cacheDir, platformKey, devRoot, packagedSrcDir, n64rxScript, fakeScript,
-  whichAll, findSystemPython, probePython, readBundle, installedBundle, runner, defaultOutDir,
+  whichAll, findSystemPython, probePython, readBundle, shippedBundle, installedBundle, pickBundle, runner, defaultOutDir,
 };

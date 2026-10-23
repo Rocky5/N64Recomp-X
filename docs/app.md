@@ -56,15 +56,25 @@ Lines that are not JSON (a tool's own output) are kept as log by the app.
   nothing from any ROM) and copies it to `<cache>/src/<version>/` on first
   run; builds go to `<cache>/builds` (`N64RX_BUILD_ROOT`). The cache is
   n64rx's: `%LOCALAPPDATA%\n64rx` on Windows, `~/.n64rx` elsewhere.
-- **Toolchain**: `<cache>/toolchain/<key>/`, its `manifest.json` giving
-  the Python to run and the environment (`MSYS2_ROOT`, `NXDK_DIR`, `LLVM`,
-  `N64RX_RECOMP`, PATH entries). `N64RX_TOOLCHAIN=system` skips it;
-  `N64RX_TOOLCHAIN_URL` (`file://` too) and `N64RX_TOOLCHAIN_SHA256`
-  point the app at another archive.
+- **Toolchain**: a bundle made by `tools/xbox/pack_toolchain.py`, its
+  `manifest.json` giving the Python to run and the environment
+  (`MSYS2_ROOT`, `NXDK_DIR`, `LLVM`, `N64RX_RECOMP`, PATH entries). The app
+  takes the first of: the one inside the app (`resources/toolchain/`, the
+  full build that `npm run dist` makes: already unpacked, so the first
+  launch goes straight to the home screen, with no download and no
+  install); one already unpacked in the data folder
+  (`<cache>/toolchain/<key>/`); the download named by `toolchain.json`
+  (the build made with `npm run dist:no-tools`). With none of them and no
+  download set, the first-run card says to get the full zip, or to use
+  the tools already on the computer. `N64RX_TOOLCHAIN=system` skips every
+  bundle; `N64RX_TOOLCHAIN_DIR` points at any unpacked bundle (tests, dev);
+  `N64RX_TOOLCHAIN_URL` (`file://` too) and `N64RX_TOOLCHAIN_SHA256` point
+  the download at another archive.
 
 Nothing leaves the machine but what the user sends to their own Xbox
 (Send to Xbox: FTP over the local network, unencrypted, the app says so
-under the fields); the toolchain's download from GitHub only comes in.
+under the fields); the full build uses no network at all to build, and
+the no-tools build's toolchain download from GitHub only comes in.
 The home screen's footer says the same in one line.
 
 ## How long a build takes
@@ -83,4 +93,5 @@ Step 1 is Python on one core (the analyser), step 3 is clang on every
 core. A mid-range machine (4-6 cores, a few years old) is about 1.5-2x on
 step 1 and 2-3x on step 3: roughly 1.5 to 2 minutes; an old dual-core
 laptop on a hard disk 3 to 5. `n64rx info` says "about 1 to 3 minutes".
-The app's first run adds the toolchain's one-time download.
+The full build adds nothing on its first run (its toolchain is inside
+it); the no-tools build adds the toolchain's one-time download.

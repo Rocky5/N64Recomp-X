@@ -68,7 +68,10 @@ test('bundle mode drops the PYTHON* variables of the user environment', () => {
 });
 
 function makeBundle(cache, key) {
-  const dir = path.join(cache, 'toolchain', key);
+  return makeBundleAt(path.join(cache, 'toolchain', key), key);
+}
+
+function makeBundleAt(dir, key) {
   fs.mkdirSync(path.join(dir, 'python'), { recursive: true });
   const exe = path.join(dir, 'python', process.platform === 'win32' ? 'python.exe' : 'python3');
   fs.writeFileSync(exe, '');
@@ -104,6 +107,44 @@ test('current.json finds a bundle with another key (a N64RX_TOOLCHAIN_URL instal
   fs.writeFileSync(path.join(cache, 'toolchain', 'current.json'), JSON.stringify({ key: 'local-test' }));
   assert.equal(paths.installedBundle(cache, 'pinned-key').key, 'local-test');
   assert.equal(paths.installedBundle(tmp(), 'pinned-key'), null);
+});
+
+test('the full build: the toolchain inside the app (resources/toolchain) is used before a download', () => {
+  const resources = tmp();
+  const { exe } = makeBundleAt(path.join(resources, 'toolchain'), 'shipped');   // <resources>/toolchain/manifest.json
+  const s = paths.shippedBundle({ resources, env: {} });
+  assert.ok(s && s.shipped);
+  assert.equal(s.key, 'shipped');
+  assert.equal(s.python, exe);
+  // a download unpacked in the data folder loses to it
+  const cache = tmp();
+  makeBundle(cache, 'downloaded');
+  assert.equal(paths.pickBundle({ shipped: s, cache, pinnedKey: 'downloaded' }).key, 'shipped');
+  assert.equal(paths.pickBundle({ shipped: null, cache, pinnedKey: 'downloaded' }).key, 'downloaded');
+  assert.equal(paths.pickBundle({ shipped: null, cache: tmp(), pinnedKey: 'downloaded' }), null);
+  // the runner runs the shipped Python with the shipped env
+  const run = paths.runner({ root: '/src', cache, bundle: s, env: { PATH: '/usr/bin' }, packaged: true });
+  assert.equal(run.mode, 'bundle');
+  assert.equal(run.cmd, s.python);
+  assert.equal(run.env.NXDK_DIR, path.join(resources, 'toolchain', 'nxdk'));
+  // and N64RX_TOOLCHAIN=system still forces the system's
+  assert.equal(paths.runner({ root: '/src', cache, bundle: s, env: { N64RX_TOOLCHAIN: 'system', N64RX_PYTHON: 'p' } }).mode, 'system');
+});
+
+test('no shipped toolchain: none in resources, a manifest without its Python, or a bad N64RX_TOOLCHAIN_DIR', () => {
+  assert.equal(paths.shippedBundle({ resources: tmp(), env: {} }), null);
+  assert.equal(paths.shippedBundle({ resources: null, env: {} }), null);
+  const resources = tmp();
+  fs.mkdirSync(path.join(resources, 'toolchain'));
+  fs.writeFileSync(path.join(resources, 'toolchain', 'manifest.json'), JSON.stringify({ key: 'k', python: 'python/python.exe', env: {}, path: [] }));
+  assert.equal(paths.shippedBundle({ resources, env: {} }), null);
+  assert.equal(paths.shippedBundle({ resources: null, env: { N64RX_TOOLCHAIN_DIR: tmp() } }), null);
+});
+
+test('N64RX_TOOLCHAIN_DIR points the app at any unpacked bundle', () => {
+  const cache = tmp();
+  const { dir } = makeBundle(cache, 'mine');
+  assert.equal(paths.shippedBundle({ resources: null, env: { N64RX_TOOLCHAIN_DIR: dir } }).key, 'mine');
 });
 
 test('N64RX_TOOLCHAIN=system ignores the bundle; N64RX_FAKE=1 runs the stand-in', () => {
