@@ -106,6 +106,10 @@ sweep's "boot code came back" class (19) and its second round
 the game and capture RDRAM, round after round, before a user's build is
 whole: a user cannot do that.
 
+**Done (2026-10-23):** `tools/dryboot/`, on by default as `N64RX_DRYBOOT=auto`
+(used when it learns 16 functions or more), prebuilt in the app's bundle;
+`docs/analyzer.md` has how it works and what it finds.
+
 **Fix: a build-time dry boot.** Run the ROM's boot on the user's PC in a
 CPU-only emulator built from pieces the project already has: `interp.c`
 (host-tested MIPS interpreter), `mmio.c` (the RCP register model), a PI DMA

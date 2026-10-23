@@ -69,7 +69,12 @@ Lines that are not JSON (a tool's own output) are kept as log by the app.
   the tools already on the computer. `N64RX_TOOLCHAIN=system` skips every
   bundle; `N64RX_TOOLCHAIN_DIR` points at any unpacked bundle (tests, dev);
   `N64RX_TOOLCHAIN_URL` (`file://` too) and `N64RX_TOOLCHAIN_SHA256` point
-  the download at another archive.
+  the download at another archive. The bundle also carries what the
+  source copy lacks for a ROM-only build: N64Recomp's `symbol_lists.cpp`
+  (`recomp/`) and the dry boot built for the OS (`dryboot/<source hash>/`,
+  `N64RX_DRYBOOT_DIR`). `npm run test:packaged` builds the test ROM
+  through the window and a ROM-only build with the dry boot, with only the
+  OS's folders on PATH.
 
 Nothing leaves the machine but what the user sends to their own Xbox
 (Send to Xbox: FTP over the local network, unencrypted, the app says so

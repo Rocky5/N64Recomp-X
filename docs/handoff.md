@@ -4,7 +4,7 @@ One entry per milestone: what was verified, how, and where ("xemu" results
 are emulator-only; timing, audio, memory and HDD latency are judged on the
 console).
 
-## Where things stand (2026-10-22, late)
+## Where things stand (2026-10-23)
 
 Each game's tier is in `docs/compat.md` (Gold fully playable with no
 major issues, Silver playable with issues, Experimental the rest; only a console run promotes); a console
@@ -16,28 +16,42 @@ Anything not marked red is xemu or host only.
 |---|---|
 | Gold | Super Mario 64, Pilotwings 64, Super Smash Bros., Diddy Kong Racing |
 | Silver | Mario Kart 64, GoldenEye 007, Banjo-Kazooie, Ocarina of Time 1.2, Castlevania: Legacy of Darkness |
-| Experimental | Kirby 64 (title fixed; HUD and an enemy's textures), Pokémon Snap (the tutorial's focus), Mario Tennis (a line at the bottom, the ball), Mario Party, Majora's Mask, Jet Force Gemini, and every other game |
+| Experimental | Kirby 64 (HUD, an enemy's textures), Pokémon Snap (the tutorial's focus), Mario Tennis (a line at the bottom, the ball), Mario Party (textures shuffled on the board), Donkey Kong 64, Wave Race 64, Majora's Mask, Jet Force Gemini, and every other game |
 
-**Last red round:** set 26 (`ff928b7`), the last entry below. **Staged,
-not deployed:** `vsnap18a/b` (`build-host/hwbuild27.sh`: Snap's detector
-logged at every task; B also holds a graphics task's done a retrace).
+**Last red round:** set 26 (`ff928b7`). **Set 31** (`build-host/
+hwbuild31.sh`, `deploy-set31.sh`; app folders `N64Recomp-X-31-*`, title IDs
+4E52D011-13): Donkey Kong 64, Mario Tennis, GoldenEye built with the
+2026-10-23 defaults (the dry boot, hand-written spans, per-ROM patches, the
+Z-image and small-picture fixes); xemu: all three present with sound, no
+crash in 90 s. Red's FTP did not answer at deploy time: not deployed yet.
+What to look at, a few minutes each:
+- DK64: past the intro into play: does the sound keep going, is it smooth?
+- Mario Tennis: the attract intro: a black box at the top left? black
+  trophies? the line at the bottom?
+- GoldenEye: boots to the Dam (the dry boot default, which every user's
+  build of it now depends on)?
+Results go in the set-31 entry at the end, and `docs/compat.md`'s rows.
+
+**Changed defaults since the last red round** (each with a kill switch,
+`docs/testing.md`): `N64RX_DRYBOOT=auto`, `N64RX_HANDWRITTEN_SPAN=1`,
+`N64RX_SLOT_ENTRY=1`, `N64RX_PATCHES=1` (`games/patches`), `XGFX_ZIMG_HIDE=1`,
+`XGFX_SMALL_SELF=1`. The app's Windows zip carries them and builds ROM-only
+games (it could not before 3689217).
 
 **Open, in order** (each with the entry that has its details):
-1. Pokémon Snap's tutorial: the detector's focus flickers on red, so
-   "Press Z to aim" never holds; `vsnap18a/b` tell whether the done
-   events' timing is why (last entry).
-2. Kirby 64's HUD (lives, the ability card) and an enemy's textures on
-   red; next, the port's own RDRAM of the HUD picture (last entry).
-3. Mario Tennis: the line at the bottom, the ball's textures; a 384x15
-   tile bigger than TMEM (the set-19 night entry).
-4. Banjo-Kazooie: the orange shadows, the intro's dark fog, the jigsaw
-   pieces (the last two entries).
-5. GoldenEye's road markings flicker; Castlevania's textures; Mario Kart
-   64's map TV.
-6. The roadmap's buckets (`docs/roadmap.md`): the run token (B1), the dry
-   boot and learnt facts (B2), microcodes (B3), framebuffer effects by
-   default (B4), memory (B5), the M3 measurement gate (B6).
-7. The s15 library sweep (running) into `docs/analyzer.md`'s table.
+1. Set 31 on red (above).
+2. Pokémon Snap's tutorial: the detector's focus flickers on red, so
+   "Press Z to aim" never holds (`vsnap18a/b` staged, 2026-10-22 entries).
+3. Kirby 64's HUD and an enemy's textures on red (red only).
+4. Mario Tennis's line at the bottom and the ball; Mario Party's shuffled
+   board textures (red only).
+5. DK64 without the patch: the scheduler runs display lists inside its own
+   task start, so every hop costs a retrace (graphics tasks off its thread
+   would be the general fix; the 2026-10-23 entry).
+6. Banjo-Kazooie's shadows, fog and jigsaw; GoldenEye's road markings;
+   Castlevania's textures; Mario Kart 64's map TV.
+7. The s17 library sweep (all the new defaults; running) into
+   `docs/analyzer.md`'s table.
 
 **What exists** (each piece with host tests and a kill switch; the entries
 below say how each was verified): the ROM inside the XBE and its page cache;
@@ -3106,3 +3120,10 @@ on `dev`, not pushed; nothing deployed.
   in xemu: no black box; the trophy shot not caught yet.
 - Not verified: anything on the console; DK64's audio on red; the s17 sweep
   (all defaults, running).
+
+### Set 31 on red (pending)
+
+Deployed: not yet (red's FTP timed out, 2026-10-23). Builds: `v31-dk`
+(1a8d415673c4), `v31-mt` (c04857f6e048), `v31-ge` (620412391c1d).
+Maintainer's report: -. Pulled logs (`console.py pull`): -. `[MEM]` /
+`[CLOCK]`: -.
