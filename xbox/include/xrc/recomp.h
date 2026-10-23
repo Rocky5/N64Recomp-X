@@ -570,6 +570,9 @@ void switch_error(const char* func, uint32_t vram, uint32_t jtbl);
 void do_break(uint32_t vram);
 
 typedef void(recomp_func_t)(uint8_t* rdram, recomp_context* ctx);
+/* a function of the game written here (games/patches/<code>.<sha1>.c, pipeline.py write_patch_c): n64rx
+ * leaves the recompiled one out and puts this where calls and the lookup go */
+#define XRC_PATCH(vram) void xrc_patch_##vram(uint8_t* rdram, recomp_context* ctx)
 typedef void(recomp_func_ext_t)(uint8_t* rdram, recomp_context* ctx, uintptr_t arg);
 
 recomp_func_t* get_function(int32_t vram);

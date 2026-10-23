@@ -102,3 +102,17 @@ rounds left off for code a ROM DMA put there: Ocarina of Time's first build
 goes from 3,302 functions in 3 segments to 5,328 in 57 (its relocated
 overlays recompiled). Code the CPU made (Mario Tennis's scenes) needs its
 bytes, which the dry boot (`N64RX_DRYBOOT`, on by default) or a console round supplies.
+
+## Patches (`games/patches/`)
+
+`games/patches/<code>.<sha1[:12]>.c` holds functions of one ROM written in
+C (MIT, written here; each departure from the game marked `DIVERGES:`). A
+ROM-only build of the ROM with that SHA-1 leaves each `XRC_PATCH(0x<vram>)`
+function out of the recompile (or the interpreter) and builds this one under
+the name the recompiled code calls; the function lookup finds it too
+(`romonly.py`, `pipeline.py write_patch_c`, `gen/xrc_patch.c`;
+`N64RX_PATCHES=0`: not used). A patch works on the context as generated
+code does: the game's other functions are called through `LOOKUP_FUNC`
+with the arguments in `ctx`, libultra through the runtime's `*_recomp`. It
+holds addresses and C, never a byte of the game. Donkey Kong 64's audio loop
+is the first (`NDOE.cf806ff26036.c`).

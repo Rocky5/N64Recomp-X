@@ -19,8 +19,9 @@ recompiler submodule is a link, not files), or the files given with
     offset of its first 64 bytes (a ROM cut or shifted by a byte)
   - the header's first 8 bytes (its word and the usual clock rate) as hex
     text or base64 in any order and alignment (a ROM pasted into a file)
-  - generated code: `recomp_context* ctx` in a .c/.h/.inc outside xbox/src/rt
-    and tests/, and anywhere the recompiler's per-instruction comments
+  - generated code: `recomp_context* ctx` in a .c/.h/.inc outside xbox/src/rt,
+    xbox/include, tests/ and games/patches/ (functions written here for one
+    ROM, games/README.md), and anywhere the recompiler's per-instruction comments
     (`// 0x80000400: addiu ...`) run to 20 lines: the hand-written runtime
     has none
   - a non-text file of 1 MiB or more
@@ -51,7 +52,7 @@ HEADER8 = (b"\x80\x37\x12\x40\x00\x00\x00\x0f", b"\x37\x80\x40\x12\x00\x00\x0f\x
 ARCHIVE_MAGIC = ((b"PK\x03\x04", "a zip archive"), (b"\x1f\x8b", "a gzip stream"), (b"7z\xbc\xaf\x27\x1c", "a 7z archive"),
                  (b"\xfd7zXZ\x00", "an xz stream"), (b"BZh", "a bzip2 stream"), (b"Rar!\x1a\x07", "a rar archive"))
 GEN_MARK = re.compile(rb"recomp_context\s*\*\s*ctx")
-GEN_OK = re.compile(r"^(xbox/src/rt/|xbox/include/|tests/)")
+GEN_OK = re.compile(r"^(xbox/src/rt/|xbox/include/|tests/|games/patches/)")
 GEN_COMMENT = re.compile(rb"^\s*// 0x[0-9A-F]{8}: +[a-z]", re.M)
 TEXT_EXT = {".c", ".h", ".inc", ".py", ".js", ".json", ".md", ".txt", ".toml", ".yml", ".yaml", ".sh", ".cmd", ".ps1",
             ".html", ".css", ".cmake", ".patch", ".svg", ".xml", ".ld", ".s", ".cpp"}
@@ -143,7 +144,7 @@ def scan(rel, data, allowed=None):
     elif len(data) >= 1 << 20:
         why.append("a binary file of %d KB (nothing of that size belongs in the tree)" % (len(data) >> 10))
     if ext in (".c", ".h", ".inc") and GEN_MARK.search(data) and not GEN_OK.match(rel):
-        why.append("generated code (recomp_context* ctx) outside xbox/src/rt, xbox/include and tests/")
+        why.append("generated code (recomp_context* ctx) outside xbox/src/rt, xbox/include, tests/ and games/patches/")
     if text and len(GEN_COMMENT.findall(data)) >= 20:
         why.append("generated code (the recompiler's per-instruction comments)")
     return why

@@ -235,6 +235,24 @@ def make(rom, bdir, base=None, learnt=None):
             a.notes.append(f'{len(readers)} functions read $ra as a value ({", ".join(list(readers.values())[:4])}'
                            f'{"..." if len(readers) > 4 else ""}): {len(hooks)} calls set it first')
     (pdir / 'interp_ra.txt').write_text(''.join(f'{n}\n' for n in sorted(ra_interp.values())), encoding='utf-8')
+    # games/patches/<code>.<sha1[:12]>.c: functions of this ROM written in C (MIT, each departure marked
+    # DIVERGES), built in place of the recompiled or interpreted ones (pipeline.py write_patch_c; Donkey
+    # Kong 64's audio loop). N64RX_PATCHES=0: not used
+    patched = {}
+    pfile = ROOT / 'games' / 'patches' / f'{rom.code}.{rom.sha1[:12]}.c'
+    if os.environ.get('N64RX_PATCHES', '1') != '0' and pfile.is_file():
+        ptext = pfile.read_text(encoding='utf-8')
+        for v in re.findall(r'^XRC_PATCH\(0x([0-9A-Fa-f]{8})\)', ptext, re.M):
+            x = int(v, 16)
+            if x in nm and nm[x] not in replaced:
+                patched[x] = nm[x]
+                interp.pop(x, None)
+        if patched:
+            (pdir / 'patch.c').write_text(ptext, encoding='utf-8', newline='\n')
+    if not patched:
+        (pdir / 'patch.c').unlink(missing_ok=True)
+    (pdir / 'patch.txt').write_text(''.join(f'{n} 0x{x:08X}\n' for x, n in sorted(patched.items())), encoding='utf-8')
+    ignored |= set(patched.values())
     ignored |= set(interp.values())
     # pipeline.py's mark that the recompiler refused the entry belongs to the build that wrote it: kept, a
     # later build of the ROM whose entry is recompiled linked against a stub nobody made (s16: BattleTanx,

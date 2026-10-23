@@ -1694,3 +1694,19 @@ now 103. Not chosen: a self-extracting first run (the same wait the user
 complained about) or an installer (the app is meant to be one folder to
 delete). Cost: a bigger download (the zip against a 125 MB archive plus the
 app); macOS and Linux get the same layout but were not built here.
+
+## Per-ROM patches: functions written in C for one ROM (2026-10-23, `games/patches/`, `N64RX_PATCHES`)
+
+The runtime stays game-agnostic, and a fix that only one game's code needs
+had nowhere to live in a ROM-only build: the full packs (`games/<id>/`) hold
+symbols and configs, and Donkey Kong 64 has none. Its audio loop
+(0x80601D24) assumes it keeps up with a timer its scheduler sets every
+second retrace; in xemu it does not (the scheduler runs display lists inside
+its own task start), a stale start message reaches it, and it waits for ever.
+Runtime switches (done events sooner, ranked levels, the run token, timers
+not queued twice) narrowed the gap and did not close it. A patch keyed by the
+ROM's SHA-1, like `games/learned/`, replaces that one function with a C
+version that drops a start message finding no task waiting (`DIVERGES`),
+which is safe because only the loop itself starts the game's audio tasks.
+The patch is MIT code written here from the decomp's description; it holds
+addresses and C, no bytes of the game. Kill switch: `N64RX_PATCHES=0`.
