@@ -2924,3 +2924,71 @@ Banjo were not run this round.
   for a tester was started and paused (the Docker SDK image is not public,
   no Mac runner: the command-line kit from a shallow checkout is the way).
 - The s15 sweep is still running (65 of 242 runs at the last look).
+
+## 2026-10-22 (night, no hardware): Wave Race 64's microcode, the dry boot's exception calls, Mario Party's board, the run token on Star Fox (xemu + host)
+
+The maintainer: work on alone, no console test; Wave Race 64, Mario Party
+and Donkey Kong 64 towards Gold, Pokémon Snap and Mario Tennis fixed; Gold
+now means "fully playable with no major issues", Silver "playable but with
+issues" (`docs/compat.md`, `docs/decisions.md`). Machine maxed out
+allowed: several xemus at once (`sweep.py --slots`). Commits 0da4c65..HEAD
+on `dev`, not pushed; nothing deployed.
+
+- **Wave Race 64 (US)** (579e267, c7fb496). Two faults, both fixed:
+  - its main code (0x4CAC0 bytes DMA'd to 0x801DAFA0) is a load the
+    analyser misses, so a ROM-only build interpreted it and crashed near
+    frame 7600 (an interpreted call got a display-list pointer of 0x11;
+    a learning round or the dry boot avoids it). `games/learned/NWRE`
+    ships the facts: release build, 300 s, 6,946 frames, no crash (xemu).
+  - its microcode has Super Mario 64's version text but its own vertex
+    layout (F3DWRUS: 32 vertices at half stride, TRI1 indices *5, 0xB5
+    quads); read as Fast3D the race drew lines to one point.
+    `XGFX_WRUS` finds it from the first G_VTX whose length is n*16-1. A
+    dumped race frame replays right on the host; xemu: the course
+    preview, the start, the race (water, jet skis, buoys, HUD) right.
+  The interpreter fault behind the crash is not found (the facts hide it).
+- **Mario Party** (xemu, 410 s, A/START every 1.5 s): menus, a board, its
+  intro and turns, a "?" space; no freeze (the vmp17 fix), no shuffled
+  textures seen. Red's shuffle is not reproduced here.
+- **The dry boot learnt `send_mesg`** (9bce95f): `__osException` calls it
+  with jal after clearing EXL, and a build with it as a function never
+  made a graphics task (Kirby 64 US, Star Fox 64, and in s15 also Paper
+  Mario, DKR, Snap, Wipeout, Mischief Makers...). Calls between an
+  exception and its eret are no longer learnt (`N64RX_DRYBOOT_EXL=1`: as
+  before). xemu: Kirby 64 1,365 frames in 90 s (was 0).
+- **Star Fox 64 with the run token alone** (`XRC_RUN_TOKEN=1`, no
+  per-game switch): 8,617 frames in 325 s, past the scene change where it
+  used to stop (short gaps there, then on). Without the token: 0 frames
+  (its boot race).
+- **Donkey Kong 64's silence** (open): the decomp's audio loop
+  (code_6710.c) starts a task on a timer message the scheduler arms every
+  second retrace while one is pending. Here the audio thread makes a task
+  every ~3.5 retraces (xemu), the timer messages pile up (its queue holds
+  8), one is taken with nothing pending, no 0x29E goes out, and the thread
+  waits for a done that never comes. The run token does not change it;
+  `XRC_GFX_BREATHE` (a graphics task yields to its level) was tried under
+  load only. Whether red is fast enough to keep the game's 2-retrace
+  assumption is not known. The release build without the old learn logs
+  (`vdk2`) runs 90 s, no crash; DK64's Oct 16 learn logs crash it at frame
+  321 (not used any more).
+- **Mario Tennis** (9b124a6): red's 48 "too big" misses a boot were
+  LOADTILEs of 384 x 15..224 rows into TMEM 0: `XGFX_TMEM_WRAP` wraps them
+  at 4 KB as the RDP does (`test_f3dex`). Not yet seen in xemu (the run
+  stalled at the loading screen beside the sweep).
+- **Pokémon Snap** (c7fb496): the detector's regions are one shared
+  array read at the DP done of the frame that drew them; here the next
+  frame's copies could already be there. `XGFX_PROBE_DPSYNC=1` (opt-in)
+  puts each task's copies back when the game takes its DP done. xemu
+  (`snap27` route): no change, Pidgey and Snorlax in focus.
+- **Tony Hawk's Pro Skater 2/3, Spider-Man, Goemon** failed in N64Recomp
+  ("Function's rom address isn't word aligned": learnt DMAs from halfword
+  offsets); 9c44fc5 copies such a DMA's bytes to an aligned offset.
+- **The sweep**: s15's runs 78-242 had all read one stale serial.log
+  (0da4c65); re-run on six slots, s15 is 183 of 242 presenting. s16 (the
+  dry-boot fix, the TMEM wrap) is running.
+- Staged, not deployed (`build-host/hwbuild28.sh`, `hwbuild29.sh`,
+  `deploy-set29.sh`): vmp20, vwr3, vdk2, vdk2t, and set 28's list.
+- `[MEM]`/`[CLOCK]`: xemu only (Kirby 64 test build: 51,976 KB free at
+  boot, `[CLOCK] cpu 734 MHz`).
+- Not verified: anything on a console; DK64's audio; Mario Tennis's line
+  on red; Snap's tutorial on red.
