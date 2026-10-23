@@ -803,6 +803,8 @@ static int s_fullsync;
 static void tex_miss(const char* why, int tidx);
 static void fb_touch(uint32_t addr, uint32_t bytes);
 static void fb_self(uint32_t addr, uint32_t bytes);
+static void small_self(uint32_t addr, uint32_t bytes);
+static uint32_t s_shot_cimg, s_shot_w, s_shot_siz;   /* the last screen-sized colour image set (small_self) */
 #ifndef XGFX_ZCLEAR_INFER
 #define XGFX_ZCLEAR_INFER 1   /* a far-depth fill before any Z image is the Z clear (do_fillrect) */
 #endif
@@ -2011,6 +2013,18 @@ static int small_cimg(void) {
            !swap_buffer(R.cimg);
 }
 
+/* Any other texrect while the colour image is the Z image (not a 1:1
+ * RGBA16 copy) went to the screen: Mario Tennis draws a CI8 mask (texel x
+ * prim, prim black) into its depth buffer's memory as scratch, then dims the
+ * middle of its frame with it, and the mask came out as a black 256x128 box
+ * over the frame's top left (its intro and the court's fly-in, xemu and the
+ * host replay). The Z image's memory is never the screen. DIVERGES: not
+ * drawn, and its picture is not made in RDRAM. -DXGFX_ZIMG_HIDE=0: drawn on
+ * the screen, as before */
+#ifndef XGFX_ZIMG_HIDE
+#define XGFX_ZIMG_HIDE 1
+#endif
+
 /* the texrect into the Z image's RDRAM (XGFX_ZIMG_TEXRECT); 1 when done */
 static int zimg_texrect(uint16_t xl, uint16_t yl, uint16_t xh, uint16_t yh, uint8_t tile, int16_t s, int16_t t,
                         int16_t dsdx, int16_t dtdy, int cycle) {
@@ -2023,13 +2037,14 @@ static int zimg_texrect(uint16_t xl, uint16_t yl, uint16_t xh, uint16_t yh, uint
     uint32_t cw = zim ? s_zcimg_w : s_cimg_w;
     if (!zim && !small) return 0;
     if (!ld->valid || !ld->tile || tt->fmt != F3D_G_IM_FMT_RGBA || tt->siz != F3D_G_IM_SIZ_16b || dsdx != one || dtdy != 1 << 10)
-        return small;   /* not a plain copy: into a small image it is still not the screen's */
+        return small || (XGFX_ZIMG_HIDE && zim);   /* not a plain copy: into a small image or the Z image it is still not the screen's */
     if (XHW_TEST_BUILD) {   /* the first few: what is copied where */
         static unsigned s_n;
         if (s_n++ < 4) xhw_logf("[GFX] texrect into RDRAM at %08x (%s) from %08x, %dx%d (by the CPU)", (unsigned)R.cimg, zim ? "the Z image" : "a small image",
                                (unsigned)ld->addr, (int)(x1 - x0), (int)(y1 - y0));
     }
     if (fbfx_stale_count()) fb_touch(ld->addr, (ld->rows - 1u) * ld->stride + ld->row_bytes);   /* the frame into RDRAM first */
+    if (small) small_self(ld->addr, (ld->rows - 1u) * ld->stride + ld->row_bytes);   /* or the frame drawn before it */
     if (cycle < 2 && XGFX_TEXRECT_SNAP) x1 = (xh + 3) >> 2, y1 = (yh + 3) >> 2;
     for (y = y0; y < y1; y++) {
         int ti = (t >> 5) + (y - y0) - (tt->ult >> 2);
@@ -3377,6 +3392,8 @@ static void run_dl(const uint32_t* pc) {
                     s_cimg_siz = (w0 >> 19) & 3u;
                     s_cimg_w = (w0 & 0xFFFu) + 1u;
                 }
+                if (c != R.zimg && (w0 & 0xFFFu) + 1u >= 256u && ((w0 >> 19) & 3u) >= 2u)   /* (small_self) */
+                    s_shot_cimg = c, s_shot_w = (w0 & 0xFFFu) + 1u, s_shot_siz = (w0 >> 19) & 3u;
                 if (c != R.zimg) frame_cimg(c);
                 if (c != R.zimg) screen_size(c, s_cimg_w);
                 if ((R.cimg == R.zimg) != (c == R.zimg)) DIRTY();
@@ -3859,6 +3876,96 @@ static void fb_self(uint32_t addr, uint32_t bytes) {
         }
     }
     xgfx_tex_destroy(back);
+}
+
+/* A small colour image made from the frame drawn before it: Mario Tennis
+ * copies 8x1 pieces of its frame (cimg 0x382000, 384 wide) into a 32x32
+ * picture (0xD7C10, XGFX_SMALL_CIMG) and maps its trophies with it. The
+ * pieces were read from RDRAM, which holds what the game last wrote there,
+ * not the picture on the GPU: the trophies came out black (xemu). The rows a
+ * copy reads are converted from the GPU's picture first: one capture of the
+ * frame for each run of copies with nothing drawn on the screen between,
+ * each row once. -DXGFX_SMALL_SELF=0: as before */
+#ifndef XGFX_SMALL_SELF
+#define XGFX_SMALL_SELF 1
+#endif
+static void small_self(uint32_t addr, uint32_t bytes) {
+    static uint32_t s_frame, s_seq, s_c;
+    static uint8_t s_done[1024];
+    static const uint8_t* s_stage;
+    static int32_t s_pitch, s_bpp, s_r[4];
+    static uint32_t s_h, s_n;
+    uint32_t a = seg(addr) & 0x1FFFFFFFu, c = seg(s_shot_cimg) & 0x1FFFFFFFu, rb, y, y0, y1;
+    if (!XGFX_SMALL_SELF || !c || !s_shot_w || s_hold_tex) return;
+    rb = s_shot_w * (s_shot_siz == 3 ? 4u : 2u);
+    if (a + bytes <= c || a >= c + rb * (s_shot_w * 3u / 4u)) return;
+    flush();
+    if (s_frame != s_frame_no || s_seq != s_draw_seq || s_c != c || !s_stage) {
+        uint32_t back;
+        int32_t sw, sh;
+        float bw, bh;
+        s_frame = s_frame_no, s_seq = s_draw_seq, s_c = c, s_stage = NULL;
+        memset(s_done, 0, sizeof s_done);
+        s_h = s_shot_w * 3u / 4u;
+        if (s_h > sizeof s_done) s_h = sizeof s_done;
+        back = xgfx_tex_linear_back(&bw, &bh);
+        if (!back) return;
+        if (xgfx_target_stage(1, &sw, &sh)) {
+            XgfxState st;
+            XgfxVtx q[6];
+            int k;
+            float x0 = s_ox, y0f = s_oy, x1 = s_ox + N64_W * s_sx, y1f = s_oy + N64_H * s_sy;
+            s_r[0] = 0, s_r[1] = 0, s_r[2] = (int32_t)s_shot_w, s_r[3] = (int32_t)s_h;
+            if (s_r[2] > sw) s_r[2] = sw;
+            if (s_r[3] > sh) s_r[3] = sh;
+            memset(&st, 0, sizeof st);
+            st.cc0 = cc_words_const(1 /* TEXEL0 */, 1, &st.cc1);
+            st.tex[0] = back;
+            st.wrap_s[0] = st.wrap_t[0] = XGFX_WRAP_CLAMP;
+            st.filter[0] = 1;
+            st.color_write = 1;
+            st.scissor[0] = 0, st.scissor[1] = 0, st.scissor[2] = s_r[2], st.scissor[3] = s_r[3];
+            memset(q, 0, sizeof q);
+            for (k = 0; k < 6; k++) {
+                static const uint8_t corner[6] = { 0, 1, 2, 2, 1, 3 };
+                int cn = corner[k];
+                q[k].x = (float)((cn & 1) ? s_r[2] : 0);
+                q[k].y = (float)((cn & 2) ? s_r[3] : 0);
+                q[k].w = 1.0f;
+                q[k].s0 = (cn & 1) ? x1 : x0;
+                q[k].t0 = (cn & 2) ? y1f : y0f;
+            }
+            xgfx_draw(&st, q, 2);
+            xgfx_target_stage(0, &sw, &sh);
+            DIRTY();
+            s_stage = (const uint8_t*)xgfx_stage_read(&s_pitch, &s_bpp);
+            if (XHW_TEST_BUILD && s_n++ < 4)
+                xhw_logf("[GFX] a small picture from the frame (%08x, %u wide): its rows from the GPU (XGFX_SMALL_SELF)",
+                         (unsigned)c, (unsigned)s_shot_w);
+#ifdef XGFX_SMALL_SELF_SHOT   /* debug: a screenshot at the n-th capture, and every 120 after */
+            {
+                static unsigned s_k;
+                if (++s_k >= (unsigned)(XGFX_SMALL_SELF_SHOT) && (s_k - (unsigned)(XGFX_SMALL_SELF_SHOT)) % 120u == 0)
+                    xhw_shot_request(1);
+            }
+#endif
+        }
+        xgfx_tex_destroy(back);
+        if (!s_stage) return;
+    }
+    y0 = a > c ? (a - c) / rb : 0u;
+    y1 = (a + bytes - c + rb - 1u) / rb;
+    if (y1 > s_h) y1 = s_h;
+    for (y = y0; y < y1; y++) {
+        FbfxSlot part;
+        int32_t rr[4];
+        if (s_done[y]) continue;
+        s_done[y] = 1;
+        memset(&part, 0, sizeof part);
+        part.addr = c + y * rb, part.w = s_shot_w, part.h = 1, part.siz = s_shot_siz;
+        rr[0] = s_r[0], rr[1] = (int32_t)y, rr[2] = s_r[2], rr[3] = 1;
+        fbfx_convert(&part, rr, s_stage, s_pitch, s_bpp, xu_host(0), xrc_rdram_size);
+    }
 }
 
 /* the frame's picture onto the stage, its pages guarded (end of frame, before the port's own drawing) */

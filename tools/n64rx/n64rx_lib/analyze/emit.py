@@ -246,10 +246,11 @@ def _follow(a, seg, f, fs, end):
 # interpreted whole (cross_funcs: 14 million instructions every 5 s in xemu). Its range takes those
 # functions' bodies too, up to SPAN_MAX past its start; they stay functions of their own for their
 # callers. A compiler's branch never lands on another function's start (its tail calls are j).
-# Opt-in (N64RX_HANDWRITTEN_SPAN=1): DK64's routine crashed the game at frame 69 until SLOT_ENTRY let its
-# range run on past the branch onto a delay slot to its shared exit; now it runs (xemu). Other games'
-# cross-branching routines it takes (Mario Party, Jet Force Gemini, the Turok engine's) are not checked yet
-HANDWRITTEN_SPAN = os.environ.get('N64RX_HANDWRITTEN_SPAN', '0') != '0'
+# DK64's routine crashed the game at frame 69 until SLOT_ENTRY let its range run on past the branch onto a
+# delay slot to its shared exit. On (N64RX_HANDWRITTEN_SPAN=0: interpreted, as before) after the sweep
+# sspan (xemu, 22 games, s16's settings): no new crash; DK64 2,267 -> 5,827 frames in 120 s, Turok 1's
+# crash gone, Turok 2 and 3 a third more frames; Mario Party's board the same, shot for shot
+HANDWRITTEN_SPAN = os.environ.get('N64RX_HANDWRITTEN_SPAN', '1') != '0'
 SPAN_MAX = 0x4000
 
 

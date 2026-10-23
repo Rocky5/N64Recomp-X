@@ -1019,6 +1019,31 @@ static void test_zimg_copy(void) {
     CHECK(nv == 0, "zimg copy: drew %u triangles on the screen", nv);
 }
 
+/* any other texrect into the Z image is not the screen's either (Mario
+ * Tennis's CI8 mask, 1-cycle, drawn there as scratch: it came out as a black
+ * box over the frame; XGFX_ZIMG_HIDE) */
+static void test_zimg_hide(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    unsigned nv;
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xFE000000u, ZB_AT);                                                       /* SETZIMG */
+    cmd(0xFD000000u | (2u << 21) | (1u << 19) | (256u - 1u), ZSRC_AT);             /* SETTIMG CI8, 256 wide */
+    cmd(0xF5000000u | (2u << 21) | (1u << 19) | (32u << 9), 7u << 24);             /* SETTILE 7 */
+    cmd(0xF4000000u, (7u << 24) | (255u * 4u << 12) | (7u * 4u));                   /* LOADTILE 256 x 8 */
+    cmd(0xF5000000u | (2u << 21) | (1u << 19) | (32u << 9), 0);                    /* SETTILE 0 */
+    cmd(0xF2000000u, (255u * 4u << 12) | (7u * 4u));                               /* SETTILESIZE 0 */
+    cmd(0xFF000000u | (0u << 21) | (2u << 19) | (384u - 1u), ZB_AT);               /* SETCIMG the Z image */
+    cmd(0xE3000A01u, 0);                                                           /* cycle type 1-cycle */
+    cmd(0xE4000000u | (256u * 4u << 12) | (8u * 4u), 0);                           /* TEXRECT 0,0..256,8 */
+    cmd(0xE1000000u, 0);
+    cmd(0xF1000000u, (1u << 26) | (1u << 10));
+    cmd(0xFF000000u | (0u << 21) | (2u << 19) | (320u - 1u), CIMG_AT);             /* the frame again */
+    cmd(0xDF000000u, 0);
+    nv = run(&u);
+    CHECK(nv == 0, "zimg hide: drew %u triangles on the screen", nv);
+}
+
 
 /* fog is the blender's: G_FOG with a render mode whose P input is not the
  * fog colour draws unfogged (Banjo-Kazooie's PASS models, its orange shadows
@@ -1125,6 +1150,7 @@ int main(void) {
     test_line3d();
     test_dl_guards();
     test_zimg_copy();
+    test_zimg_hide();
     test_fog_blender();
     test_vi_origin();
     test_zclear_infer();
