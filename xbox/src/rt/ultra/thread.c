@@ -13,6 +13,9 @@
 
 #include "ultra.h"
 
+static struct { uint32_t mq, msg; } s_events[OS_NUM_EVENTS];
+__attribute__((weak)) void xrc_gfx_dp_taken(void) {}   /* gfx.c: XGFX_PROBE_DPSYNC */
+
 /* N64 threads with a record (and, once started, a host thread with a
  * committed 128 KB stack): Pokemon Snap's object threads on its Beach
  * course passed 32 at once ("Too many N64 threads"); only a game that makes
@@ -931,19 +934,34 @@ static void send_yield(uint32_t mq) {
         while (w[i]->sleeps == gen[i] && !w[i]->stopped && !w[i]->dead && xhw_time_us() - t0 < 20000u) xhw_yield();
 }
 
+#ifdef XRC_WATCH_QUEUE
+/* -DXRC_WATCH_QUEUE2/3=<N64 address>: more queues in the same watch (Donkey Kong 64's audio thread
+ * between its timer queue, the scheduler's and its done queue) */
+static int watched_queue(uint32_t mq) {
+    return mq == (uint32_t)(XRC_WATCH_QUEUE)
+#ifdef XRC_WATCH_QUEUE2
+        || mq == (uint32_t)(XRC_WATCH_QUEUE2)
+#endif
+#ifdef XRC_WATCH_QUEUE3
+        || mq == (uint32_t)(XRC_WATCH_QUEUE3)
+#endif
+        ;
+}
+#endif
 int xu_send(uint32_t mq, uint32_t msg, int block, int jam) {
     Thr* me = block ? self() : NULL;
     int32_t count, valid, first;
 #ifdef XRC_WATCH_QUEUE
-    if (mq == (uint32_t)(XRC_WATCH_QUEUE)) {   /* diagnosis: what goes into one queue, from whom */
+    if (watched_queue(mq)) {   /* diagnosis: what goes into one queue, from whom */
         static unsigned s_n;
         Thr* who = self();
 #ifndef XRC_WATCH_QUEUE_ALL   /* -DXRC_WATCH_QUEUE_ALL=1: every message both ways (the first 20000) */
 #define XRC_WATCH_QUEUE_ALL 0
 #endif
         if (((s_n < 8 || msg != 1u) && s_n < 64) || s_n % 600 == 0 || (XRC_WATCH_QUEUE_ALL && s_n < 20000))
-            xhw_logf("[OS] queue %08x <- %08x by N64 thread %08x (ra %08x)%s #%u valid %u", (unsigned)mq, (unsigned)msg,
-                     (unsigned)who->t, who->ctx ? (unsigned)who->ctx->r31 : 0u, jam ? " jammed" : "", s_n, (unsigned)rd32(mq + MQ_VALIDCOUNT));
+            xhw_logf("[OS] queue %08x <- %08x by N64 thread %08x (ra %08x)%s #%u valid %u, retrace %u", (unsigned)mq, (unsigned)msg,
+                     (unsigned)who->t, who->ctx ? (unsigned)who->ctx->r31 : 0u, jam ? " jammed" : "", s_n, (unsigned)rd32(mq + MQ_VALIDCOUNT),
+                     xu_retrace());
         s_n++;
     }
 #endif
@@ -1020,8 +1038,10 @@ ULTRA(osRecvMesg) {
     if (out) wr32(out, rd32(rd32(mq + MQ_MSG) + 4 * (uint32_t)first));
     wr32(mq + MQ_FIRST, (uint32_t)((first + 1) % (count > 0 ? count : 1)));
     wr32(mq + MQ_VALIDCOUNT, (uint32_t)(valid - 1));
+    if (mq == s_events[OS_EVENT_DP].mq && rd32(rd32(mq + MQ_MSG) + 4 * (uint32_t)first) == s_events[OS_EVENT_DP].msg)
+        xrc_gfx_dp_taken();   /* the game takes a DP done: what the RDP wrote for that task is what it sees */
 #ifdef XRC_WATCH_QUEUE
-    if (mq == (uint32_t)(XRC_WATCH_QUEUE)) {   /* diagnosis: who takes what */
+    if (watched_queue(mq)) {   /* diagnosis: who takes what */
         static unsigned s_r;
         if (s_r++ < 64 || (XRC_WATCH_QUEUE_ALL && s_r < 20000))
             xhw_logf("[OS] queue %08x -> %08x to N64 thread %08x, %d left", (unsigned)mq,
@@ -1036,12 +1056,13 @@ ULTRA(osRecvMesg) {
 }
 
 /* ---- events ---- */
-static struct { uint32_t mq, msg; } s_events[OS_NUM_EVENTS];
 
 #ifndef XRC_VI_ON_EVENT
 #define XRC_VI_ON_EVENT 1   /* -DXRC_VI_ON_EVENT=0: retraces only after the runtime's osCreateViManager */
 #endif
 void xu_vi_start(void);   /* vi.c */
+
+int xu_event_set(int e) { return e >= 0 && e < OS_NUM_EVENTS && s_events[e].mq != 0; }
 
 ULTRA(osSetEventMesg) {
     uint32_t e = ARG(0);

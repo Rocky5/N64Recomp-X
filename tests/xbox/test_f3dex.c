@@ -745,6 +745,41 @@ static void test_probe(void) {
           probe_diff(PROBE_SMALL + 128u, PROBE_SMALL + 256u));
 }
 
+/* XGFX_PROBE_DPSYNC: a task's probe copies come back when the game takes its
+ * DP done, after a later task wrote its own over them (Pokemon Snap's
+ * detector reads the frame whose DP done it took) */
+static void probe_task(const GfxUcode* u, int tri) {
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xFF000000u | (0u << 21) | (2u << 19) | (320u - 1u), CIMG_AT);
+    probe_copy_cmds(PROBE_SMALL);
+    if (tri) {
+        cmd(0x01000000u | (3u << 12) | (3u << 1), VTX_AT + 48u * 16u);
+        cmd(0x05000000u | (0u << 16) | (2u << 8) | 4u, 0);
+    }
+    probe_copy_cmds(PROBE_SMALL + 128u);
+    cmd(0xDF000000u, 0);
+    run(u);
+}
+static void test_probe_dpsync(void) {
+#if defined(XGFX_PROBE_DPSYNC) && XGFX_PROBE_DPSYNC
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    unsigned ta, d_a, d_b;
+    vtx(48, -200, -150, 0);
+    vtx(49, 200, -150, 0);
+    vtx(50, 0, 200, 0);
+    probe_task(&u, 1);
+    ta = f3d_task_no();
+    d_a = probe_diff(PROBE_SMALL, PROBE_SMALL + 128u);
+    probe_task(&u, 0);
+    d_b = probe_diff(PROBE_SMALL, PROBE_SMALL + 128u);
+    f3d_probe_restore(ta);
+    CHECK(d_a == 64 && d_b == 0 && probe_diff(PROBE_SMALL, PROBE_SMALL + 128u) == 64,
+          "probe dpsync: the first task's copies differ in %u (want 64), the second's %u (want 0), after the restore %u (want 64)",
+          d_a, d_b, probe_diff(PROBE_SMALL, PROBE_SMALL + 128u));
+#endif
+}
+
 /* a raw RDP triangle sent as RDPHALF_1/RDPHALF_CONT pairs (GoldenEye's sky,
  * XGFX_RDP_TRI): YH 10, YM 20, YL 40; the major edge x = 10; the high
  * minor edge from (10,10) to (30,20), the low one back to (10,40); shade
@@ -1077,6 +1112,7 @@ int main(void) {
     test_loadtile32();
     test_tmem_wrap();
     test_probe();
+    test_probe_dpsync();
     test_readback();
     test_tile_rowhash();
     test_clamp_extent();

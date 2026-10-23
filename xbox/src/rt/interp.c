@@ -781,6 +781,19 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
             }
         }
     }
+#ifdef XRC_INTERP_RETLOG   /* diagnosis: runs that return a small number in v0 (Wave Race 64's display-list pointer 0x11) */
+    {
+        static unsigned s_n;
+        uint32_t v0 = (uint32_t)st.r[2];
+#ifdef XRC_INTERP_RETLOG_V   /* only that value */
+        if (v0 == (uint32_t)(XRC_INTERP_RETLOG_V) && s_n++ < (unsigned)(XRC_INTERP_RETLOG))
+#else
+        if (v0 && v0 < 0x1000u && s_n++ < (unsigned)(XRC_INTERP_RETLOG))
+#endif
+            xhw_logf("[INTERP] %08x returned v0 %08x (a0 at entry %08x, ra %08x, sp %08x -> %08x, %u steps)", (unsigned)entry,
+                     (unsigned)v0, (unsigned)ctx->r4, (unsigned)ra, (unsigned)ctx->r29, (unsigned)st.r[29], steps);
+    }
+#endif
     regs_out(&st, ctx);
     ctx->r31 = saved_ra;   /* back as the caller had it */
     last->st = outer;      /* an enclosing run's registers, not this frame's gone ones */

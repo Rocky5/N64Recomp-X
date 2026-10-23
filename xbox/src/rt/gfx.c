@@ -232,6 +232,47 @@ static void peek_task(void) {
 }
 #endif
 
+/* A graphics task runs on the thread that starts it, where on the N64 the
+ * RSP and RDP drew beside the CPU: a long one held up the game threads that
+ * share the scheduler's kernel level. Donkey Kong 64's audio thread then
+ * answered its start timer two retraces late, its scheduler armed the timer
+ * again, and the extra message left the audio thread waiting for a task
+ * nobody started (silence once graphics begin). -DXRC_GFX_BREATHE=<ms>:
+ * every <ms> of a task the thread yields to the others of its level, when it
+ * holds no level of the runtime's lock. 0 (the default until measured): as before */
+#ifndef XRC_GFX_BREATHE
+#define XRC_GFX_BREATHE 0
+#endif
+static int s_breathe_ok;
+static uint64_t s_breathe_t;
+void xrc_gfx_breathe(void) {
+    uint64_t now;
+    if (!XRC_GFX_BREATHE || !s_breathe_ok) return;
+    now = xhw_time_us();
+    if (now - s_breathe_t < (uint64_t)(XRC_GFX_BREATHE) * 1000u) return;
+    xhw_yield();
+    s_breathe_t = xhw_time_us();
+}
+
+/* XGFX_PROBE_DPSYNC (f3d_interp.c): the tasks whose DP done went to the
+ * game's queue, in order; thread.c says when the game takes one. One
+ * producer (the task's thread, under the graphics lock), one consumer (the
+ * thread taking the message, under the runtime's lock) */
+#define DPQ 16
+static uint32_t s_dpq[DPQ];
+static volatile unsigned s_dpq_in, s_dpq_out;
+void xrc_gfx_dp_taken(void) {
+    if (s_dpq_out == s_dpq_in) return;
+    if (XHW_TEST_BUILD) {   /* how far behind the tasks the game takes its DP dones */
+        static unsigned s_n;
+        if (!(s_n++ % 600))
+            xhw_logf("[GFX] DP done %u taken: task %u, %u tasks run, %u waiting", s_n, (unsigned)s_dpq[s_dpq_out % DPQ],
+                     f3d_task_no(), s_dpq_in - s_dpq_out - 1u);
+    }
+    f3d_probe_restore(s_dpq[s_dpq_out % DPQ]);
+    s_dpq_out++;
+}
+
 /* DIVERGES: a task that comes while the BACK menu is open waits for it to
  * close (the game is frozen under the menu; settings_menu.c) */
 static int s_dp = 1;
@@ -262,13 +303,20 @@ void xrc_gfx_task(uint32_t task) {
 #endif
     if (XRC_DLBENCH) dl_bench(task);
     s_busy = 1;
+    s_breathe_ok = n == 0, s_breathe_t = xhw_time_us();
     f3d_set_ucode(gfx_ucode_for_task(rd32(task + TK_UCODE_DATA), rd32(task + TK_UCODE_DATA_SIZE),
                                      rd32(task + TK_DATA_PTR)));
     f3d_run(rd32(task + TK_DATA_PTR), !split);
     s_busy = 0;
+    s_breathe_ok = 0;
     s_task_retrace = xu_retrace();
     if (split) s_open_tasks = f3d_presents() != before ? 0 : s_open_tasks + 1;
     s_dp = f3d_last_fullsync();
+    if (s_dp && xu_event_set(OS_EVENT_DP)) {   /* (a DP done no queue gets is never taken) */
+        if (s_dpq_in - s_dpq_out == DPQ) s_dpq_out++;   /* lost track (dropped posts): the oldest goes */
+        s_dpq[s_dpq_in % DPQ] = f3d_task_no();
+        s_dpq_in++;
+    }
     xrc_gfx_unlock();
 }
 

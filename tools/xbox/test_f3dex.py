@@ -13,8 +13,9 @@ ROOT = hostcc.ROOT
 
 def main():
     rc = 0
-    # the defaults, then the opt-in switches a test covers (XGFX_FOG_BLENDER: the blender's fog rule)
-    for extra in ([], ['-DXGFX_FOG_BLENDER=1']):
+    # the defaults, then the opt-in switches a test covers (XGFX_FOG_BLENDER: the blender's fog rule;
+    # XGFX_PROBE_DPSYNC: a task's probe copies back at its DP done)
+    for extra in ([], ['-DXGFX_FOG_BLENDER=1', '-DXGFX_PROBE_DPSYNC=1']):
         rc |= hostcc.run(['tests/xbox/test_f3dex.c', 'xbox/src/gfx/f3d_interp.c', 'xbox/src/gfx/texconv.c',
                           'xbox/src/gfx/ucode.c', 'xbox/src/gfx/fbfx.c'],
                          includes=['xbox/include', 'xbox/include/xrc', 'xbox/src/rt', 'xbox/src/gfx'],

@@ -133,6 +133,7 @@ void xu_count_set32(uint32_t v);   /* its low word set (osSetCount, an interpret
 
 /* vi.c */
 unsigned xu_retrace(void);
+int xu_event_set(int e);   /* a queue was given for event e (osSetEventMesg) */
 uint32_t xu_vi_mode(void);              /* the OSViMode the game set (N64 address), or 0 */
 uint32_t xu_vi_framebuffer(void);       /* the one shown now */
 

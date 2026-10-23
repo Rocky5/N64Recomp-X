@@ -1552,6 +1552,55 @@ static int probe_cimg(uint32_t c, unsigned w, unsigned siz) {
 #ifndef XGFX_PROBE_LOG
 #define XGFX_PROBE_LOG 0
 #endif
+/* Pokemon Snap's detector compares the copies when the scheduler takes that
+ * task's DP done (sched.c scHandleDPFullSync): on the N64 the RDP drew the
+ * next frame's copies after it. Here a task runs whole at its start, so the
+ * next frame's copies could be in RDRAM already when the game analyses the
+ * frame before (red: the tutorial's focus flickered; xemu's slower timing kept
+ * the order). -DXGFX_PROBE_DPSYNC=1: each task's copies are kept (the last
+ * PJ_TASKS tasks), and when the game takes a DP done (thread.c) the copies of
+ * the task it belongs to go back into RDRAM (gfx.c pairs them). 0 (default
+ * until a console says): as before */
+#ifndef XGFX_PROBE_DPSYNC
+#define XGFX_PROBE_DPSYNC 0
+#endif
+#define PJ_TASKS 8
+#define PJ_COPIES 32
+static unsigned s_task_no;
+static struct {
+    unsigned task, n;
+    struct { uint32_t addr, bytes; uint8_t px[256]; } c[PJ_COPIES];
+} s_pj[PJ_TASKS];
+unsigned f3d_task_no(void) { return s_task_no; }
+static void pj_note(uint32_t addr, uint32_t bytes) {   /* a copy's target, as it now is */
+    unsigned k;
+    if (!XGFX_PROBE_DPSYNC) return;
+    for (k = 0; k < PJ_TASKS && s_pj[k].task != s_task_no; k++) {}
+    if (k == PJ_TASKS) {
+        k = s_task_no % PJ_TASKS;
+        s_pj[k].task = s_task_no, s_pj[k].n = 0;
+    }
+    bytes = bytes > 256u ? 256u : (bytes + 3u) & ~3u;
+    {
+        unsigned i;
+        for (i = 0; i < s_pj[k].n && s_pj[k].c[i].addr != addr; i++) {}
+        if (i == s_pj[k].n) {
+            if (s_pj[k].n == PJ_COPIES) return;
+            s_pj[k].n++;
+        }
+        s_pj[k].c[i].addr = addr, s_pj[k].c[i].bytes = bytes;
+        memcpy(s_pj[k].c[i].px, xu_host(addr), bytes);   /* the image's own word order: put back as it was */
+    }
+}
+/* gfx.c: the game took the DP done of task `task`: its copies back into RDRAM */
+void f3d_probe_restore(unsigned task) {
+    unsigned k, i;
+    if (!XGFX_PROBE_DPSYNC) return;
+    for (k = 0; k < PJ_TASKS && s_pj[k].task != task; k++) {}
+    if (k == PJ_TASKS) return;
+    for (i = 0; i < s_pj[k].n; i++) memcpy(xu_host(s_pj[k].c[i].addr), s_pj[k].c[i].px, s_pj[k].c[i].bytes);
+}
+
 static int probe_copy(uint32_t w0, uint32_t w1) {
     uint16_t xl, yl, xh, yh;
     uint8_t tile;
@@ -1586,6 +1635,7 @@ static int probe_copy(uint32_t w0, uint32_t w1) {
             wr16(XU_K0(s_probe.target + 2u * (dy * s_probe.tw + dx)),
                  (uint16_t)((s_probe.id[j * s_probe.w + i] << 1) | 1u));
         }
+    pj_note(XU_K0(s_probe.target), s_probe.tw * (unsigned)((yl >> 2) + ch) * 2u);
     if (XHW_TEST_BUILD || XGFX_PROBE_LOG) {   /* test builds: the first copies that saw something drawn since the one before
                              * (a frame's first copy, the background, apart: it spent the lines) */
         static unsigned s_said, s_said1;
@@ -2934,6 +2984,9 @@ static void dkr_trin(uint32_t w0, uint32_t w1) {
 #define XGFX_DL_BOUNDS 1
 #endif
 static uint32_t s_dl_cmds;
+/* every 256 commands: the runtime may let other game threads run (rt/gfx.c XRC_GFX_BREATHE: on the
+ * N64 the RCP drew while the CPU ran them); weak, a no-op for the host tools */
+__attribute__((weak)) void xrc_gfx_breathe(void) {}
 static void run_dl(const uint32_t* pc) {
     const uint32_t* stack[DL_DEPTH];
     int sp = 0;
@@ -2953,6 +3006,7 @@ static void run_dl(const uint32_t* pc) {
                 xhw_logf("[GFX] display list: %u commands in one task (a loop?): the task ends there", (unsigned)XGFX_DL_BUDGET);
             return;
         }
+        if (!(s_dl_cmds & 255u)) xrc_gfx_breathe();
         w0 = pc[0], w1 = pc[1];
         if (XHW_TEST_BUILD) {   /* test builds: the last commands, for tex_miss's report */
             s_ring[s_ring_n & 15][0] = w0, s_ring[s_ring_n & 15][1] = w1;
@@ -3852,6 +3906,7 @@ int f3d_frame_open(void) { return s_fopen; }
 void f3d_run(uint32_t dl, int present) {
     uint64_t t0 = xhw_time_us();
     int i;
+    s_task_no++;
     if (!s_init) {
         s_init = 1;
         R.vp_sx = 160.0f; R.vp_sy = 120.0f; R.vp_tx = 160.0f; R.vp_ty = 120.0f;

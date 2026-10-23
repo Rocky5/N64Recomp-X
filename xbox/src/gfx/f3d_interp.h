@@ -12,6 +12,8 @@
 void f3d_run(uint32_t dl, int present);   /* present: 0 leaves the frame open for the next task */
 void f3d_present_frame(void);   /* the open frame presented (none open: nothing) */
 int f3d_swap(uint32_t fb);
+unsigned f3d_task_no(void);             /* tasks run so far (XGFX_PROBE_DPSYNC) */
+void f3d_probe_restore(unsigned task);  /* that task's probe copies back into RDRAM (XGFX_PROBE_DPSYNC) */
 void f3d_fb_inval(uint32_t addr, uint32_t bytes);   /* osInvalDCache: a staged frame there into RDRAM (XGFX_FB_READBACK) */   /* osViSwapBuffer: presents the open frame if it is fb's; 1 when it did */
 unsigned f3d_presents(void);   /* frames presented so far */
 void f3d_bench(uint32_t dl, int null_back);   /* gfx.c XRC_DLBENCH: the list once more into the open frame (null_back: nothing drawn) */
