@@ -103,6 +103,14 @@ goes from 3,302 functions in 3 segments to 5,328 in 57 (its relocated
 overlays recompiled). Code the CPU made (Mario Tennis's scenes) needs its
 bytes, which the dry boot (`N64RX_DRYBOOT`, on by default) or a console round supplies.
 
+## Routes (`games/routes/`)
+
+`games/routes/<code>.<sha1[:12]>.txt` is an input script for one ROM's dry boot: button
+presses in `docs/testing.md`'s autopad format and an optional `# frames N` line, no code
+and no addresses. It takes the training past the menus into play, so the game unpacks
+what a plain boot never reaches (`N64RX_DRYBOOT_ROUTES=0`: not read). None ships yet:
+check a new one with a full build in xemu, Banjo-Kazooie's crashed (`docs/handoff.md`).
+
 ## Patches (`games/patches/`)
 
 `games/patches/<code>.<sha1[:12]>.c` holds functions of one ROM written in

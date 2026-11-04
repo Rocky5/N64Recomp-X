@@ -1727,3 +1727,13 @@ checksums of the pages the console captured to prove the build recreated
 them; plus analyser fixes for the routines a rule, not missing bytes, keeps
 interpreted. Tiers describe the ROM-only build (`docs/compat.md`).
 `docs/roadmap.md` section 0 has the order of work.
+
+## The build's training asks again rather than ship more facts (2026-11-04)
+
+The gap between a ROM-only build and a learn-log build was mostly pages the analysis
+could name but nobody had saved. So the dry boot runs again with the analysis's own
+`want.txt`, on the user's PC, from the user's ROM: nothing new is committed and it works
+on ROMs the project has never seen, where recipes per game would not. Routes stay the way
+to reach what a boot never runs, and are not on by default for any game until one proves
+itself in a full build. Raising TLB misses to page in wanted pages was built, measured
+(2 pages of 232 across 28 games) and removed rather than kept as an untested path.

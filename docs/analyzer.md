@@ -281,8 +281,19 @@ scenes are versions of the same pages the match replaced: kept since the
 versions rule (`N64RX_DRYBOOT_VERSIONS`, `docs/testing.md`), the first build
 has 2,280 functions in 16 segments (the console's 32 rounds: 2,375 in 29).
 
+**Want rounds** (`pipeline.train`, 2026-11-04): the first analysis names the RDRAM
+it could not read (`pack/want.txt`: jump tables of functions the run never entered,
+code on pages it never ran), and the boot runs again saving those pages as it ends
+(`--want`), up to 3 rounds, keeping the first run's known functions so its learn file
+is still whole. The console's rounds use the same list. GoldenEye: 102 hazards to 12,
+123 routines interpreted to 33 (its 31 console rounds: 34). Table in `docs/handoff.md`.
+
+**Routes** (`games/routes/`, `dryboot.route`): the plumbing for a committed input script
+per ROM. None ships: Banjo-Kazooie's reaches all its safety-net functions but keeps
+so many page versions that the build crashes (`docs/handoff.md`).
+
 `decomp_check.py --learn <file>` scores a learn file against a decomp.
-Open: nothing here is checked on a console yet.
+Open: the trained builds are not checked on a console yet.
 
 ## How well it does (checked against decomps)
 
@@ -524,6 +535,10 @@ Left: 20 present nothing, 23 crash on a KUSEG access near NULL, 4 fatal.
 
 ## Known gaps
 
+- **ROM hacks that hook code** (WWF No Mercy Plus V3, `docs/handoff.md`): an entry hook and
+  the code it copies are read, but a retail function that jumps into the hack's code and back
+  lands mid-function, the walks fail on the patched overlays, and calls from those overlays into
+  the hack's code are found only at run time. It crashes before its first frame.
 - **One bad walk fails a whole overlay** (`segments.find`: `not any(f.bad ...)`, even for a load a
   ROM table describes with its text range). WWF WrestleMania 2000 loses its match overlay this way
   (ROM 0xD2720: several unresolved `jr`s, data walked as code) and would run the menu overlay's code

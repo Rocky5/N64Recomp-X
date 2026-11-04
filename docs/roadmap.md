@@ -19,6 +19,15 @@ bytes (`learn_code.bin`: the game's own code as it sat in RDRAM) can never
 be committed (CLAUDE.md's first hard rule); the facts already are
 (`games/learned/`), and they are not enough.
 
+**State (2026-11-04, xemu only):** step 1 is done and most of step 3's
+interpreted-routine measure holds: GoldenEye from the ROM alone interprets 33
+routines (the learn-log build 34), and only Donkey Kong 64 of the games with both
+numbers stays above its learn-log count, with its interpreted load 15 times smaller
+(`docs/handoff.md`'s last entry has the table). Routes are built, none ships
+(Banjo-Kazooie's crashed: too many page versions). Checksums are not built. No
+console has run these builds, which step 3 requires. Open from step 1's list below:
+what a route adds once it can keep the right versions.
+
 What closes it, in order:
 
 1. **The 123 vs 34.** Diff `build-hw19-v31-ge/ngee/pack/interp.txt` (and

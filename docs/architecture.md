@@ -169,7 +169,8 @@ docs/look/           baseline shots: the loading screen (xemu, STILL; the deep-s
   window moved (`XRC_RDRAM_USER`) and that span's host range held at the
   start of boot, before the ROM's page cache and the rest are placed
   (`XRC_KUSEG_HOLD`, `xhw_alias_hold`, `boot.c`: Perfect Dark's 0x70000000
-  at host 16 MB). The TLB mapping physical memory past the window logs
+  at host 16 MB; moved up in 4 MB steps when the image reaches past that,
+  `xrc_rdram_user`, its 17.6 MB did). The TLB mapping physical memory past the window logs
   `[LEARN] rdram 8`: the next build gets the Expansion Pak's 8 MB.
 - Screenshots (`[FBDUMP]`, the BMP shot) hold the game's clock still while
   they are written (`xhw_game_time_us`, `XHW_SHOT_FREEZE`): a game that

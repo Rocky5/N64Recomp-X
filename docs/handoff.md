@@ -4,7 +4,7 @@ One entry per milestone: what was verified, how, and where ("xemu" results
 are emulator-only; timing, audio, memory and HDD latency are judged on the
 console).
 
-## Where things stand (2026-10-23)
+## Where things stand (2026-11-04)
 
 Each game's tier is in `docs/compat.md` (Gold fully playable with no
 major issues, Silver playable with issues, Experimental the rest; only a console run promotes); a console
@@ -18,19 +18,11 @@ Anything not marked red is xemu or host only.
 | Silver | Mario Kart 64, GoldenEye 007, Banjo-Kazooie, Ocarina of Time 1.2, Castlevania: Legacy of Darkness |
 | Experimental | Kirby 64 (HUD, an enemy's textures), Pokémon Snap (the tutorial's focus), Mario Tennis (a line at the bottom, the ball), Mario Party (textures shuffled on the board), Donkey Kong 64, Wave Race 64, Majora's Mask, Jet Force Gemini, and every other game |
 
-**Last red round:** set 26 (`ff928b7`). **Set 31** (`build-host/
-hwbuild31.sh`, `deploy-set31.sh`; app folders `N64Recomp-X-31-*`, title IDs
-4E52D011-13): Donkey Kong 64, Mario Tennis, GoldenEye built with the
-2026-10-23 defaults (the dry boot, hand-written spans, per-ROM patches, the
-Z-image and small-picture fixes); xemu: all three present with sound, no
-crash in 90 s. Deployed and played (the last entry).
-What to look at, a few minutes each:
-- DK64: past the intro into play: does the sound keep going, is it smooth?
-- Mario Tennis: the attract intro: a black box at the top left? black
-  trophies? the line at the bottom?
-- GoldenEye: boots to the Dam (the dry boot default, which every user's
-  build of it now depends on)?
-Results go in the set-31 entry at the end, and `docs/compat.md`'s rows.
+**Last console rounds:** set 31 on red (2026-10-23, its entry below). Set 32
+(WWF No Mercy, Ocarina's regression check) on red and gold, set 33 (set 32 plus
+the scanout check for gold's 720p) on gold, both deployed 2026-11-04 and not
+reported yet: their checklist is in the 2026-11-04 No Mercy entry. Gold is the
+HDTV console (720p), red runs 480i.
 
 **Changed defaults since the last red round** (each with a kill switch,
 `docs/testing.md`): `N64RX_DRYBOOT=auto`, `N64RX_HANDWRITTEN_SPAN=1`,
@@ -43,19 +35,20 @@ speed (60 fps where the game assumes 30); Mario Tennis as before (black
 model copies at the top left, aspect, ball, replay); GoldenEye 12-34 fps from
 the ROM alone (123 routines interpreted).
 
-**Release blocker, the next run's top priority** (maintainer,
-2026-10-23; `docs/roadmap.md` section 0): a user's first build from the app
-must be as good as the project's best (learn-log) build. GoldenEye from the
-ROM alone interprets 123 routines (12-34 fps on red) against the learn-log
-build's 34. Start: diff the two builds' `interp.txt`/`hazards.txt`, then turn
-the console learn logs into committed recipes (unpacking facts, dry-boot
-routes, page checksums), game by game.
+**Release blocker** (maintainer, 2026-10-23; `docs/roadmap.md` section 0): a
+user's first build from the app must be as good as the project's best
+(learn-log) build. On interpreted routines it now matches or beats it on every
+game with both numbers (the last entry: GoldenEye 123 to 33 against 34); no
+console has run that yet, which is the next step. Routes are built but none
+ships: Banjo-Kazooie's crashed.
 
 **Open, in order** (each with the entry that has its details):
-0. The release blocker above.
+0. The release blocker above: a console pass of the trained builds (GoldenEye,
+   DK64, Turok 2), and a route that works.
 1. DK64's pacing: no faster than the N64's RDP would let it (60 -> 30 fps),
    the DK Rap's sync, the glitch at DK Island.
-2. GoldenEye from the ROM alone: its 123 interpreted routines.
+2. Perfect Dark's crash at frame 369 (a write near NULL); Turok 2's hand-written
+   `0029E3B0` (1.2 million interpreted instructions per 300 retraces).
 3. Mario Tennis's black model copies (an offscreen image over 128 wide?),
    the aspect, the ball, the replay.
 4. Pokémon Snap's tutorial: the detector's focus flickers on red, so
@@ -68,8 +61,8 @@ routes, page checksums), game by game.
    would be the general fix; the 2026-10-23 entry).
 8. Banjo-Kazooie's shadows, fog and jigsaw; GoldenEye's road markings;
    Castlevania's textures; Mario Kart 64's map TV.
-9. The s17 library sweep (all the new defaults; running) into
-   `docs/analyzer.md`'s table.
+9. A library sweep with the training defaults (none since these changes).
+10. ROM hacks that hook code: WWF No Mercy Plus V3 (the last entry).
 
 **What exists** (each piece with host tests and a kill switch; the entries
 below say how each was verified): the ROM inside the XBE and its page cache;
@@ -3223,3 +3216,75 @@ working tree on 64afa6f, `build-host/hwbuild32.sh`, `deploy-set32.sh red|gold`
 Set 33 (`hwbuild33.sh`, `deploy-set33.sh`) is set 32 plus this, in set 32's folders and title IDs: `v33-nm` badfcfaa4498, `v33-zel` 4c4edfa52c77. On gold (set 32's logs in `C:/xemu/hw/gold/`, and the first boot.log in `C:/xemu/hw/logsgold-32-nm/`); not on red (FTP down; red runs 480i, set 32 is enough there). Check on gold: `[VIDEO] scanout set back` in boot.log and a clean 720p picture.
 
 **A build for ROM hacks** (2026-11-04, the maintainer's request): `-DXHW_ROM_ANY=1` with `--rom-beside`, title ID 4E52D024, in `out-hack/` (xbe a09472ff3475): no size, game code or SHA-1 check, the SHA-1 logged. xemu: boots and presents with the plain ROM and with one changed in size (34 MB), game code and SHA-1. Not run on a console, no real hack tried, no match reached. The XBE's code is the retail ROM's, so a hack that changes code does not take effect. With `v33-nm`, the ROM and a readme in `Downloads/WWF-No-Mercy-Xbox.zip` on the maintainer's PC (private: it holds the ROM).
+
+## 2026-11-04: the build's training catches up with the learn logs (xemu; no console)
+
+The release blocker's step 1 (`docs/roadmap.md` section 0): GoldenEye's 90 extra
+hazards were jump tables in rodata its boot decompresses. A console round gets those
+pages through `want.txt`; the dry boot only saved a table's page when a `jr` ran it.
+Everything below is default on, with a switch (`docs/testing.md`).
+
+- **Want rounds** (`pipeline.train`, dryboot `--want`, `N64RX_DRYBOOT_WANT`): after
+  the dry boot's analysis, the boot runs again saving what `pack/want.txt` asks for, up
+  to 3 rounds. The second run also has the build's real memory size, so a game the
+  first analysis moved to 8 MB boots differently (Perfect Dark: 2,217 functions, not
+  2,138).
+- **KUSEG table sources** (`N64RX_TABLE_KUSEG`) and **KUSEG code wants** (under
+  `N64RX_KUSEG_WANT`, near targets no segment holds): Perfect Dark's TLB-mapped rodata
+  and code. Asking for far targets pulled junk pages beside GoldenEye's 0x70200000 and
+  cost it the match with the ROM (33 to 36 routines), hence the limits.
+- **A weak start its own segment calls is a start** (`N64RX_CALLED_WEAK`): GoldenEye's
+  `sinf`, which `cosf` falls into, was swallowed and reached only through the safety net.
+- **Learnt entries inside a function get their own copy** (`learn._mid_entries`,
+  `N64RX_LEARN_MID_ENTRY`): the holder stays whole, captured code's guard checks the
+  copy. DK64's 0x80612794 and 0x80612D1C were 93% of its interpreted instructions.
+- **RDRAM's home clears the image** (`xrc_rdram_user`, `-DXRC_RDRAM_USER_FIXED`):
+  Perfect Dark's recompiled code reaches 17.6 MB, past the 16 MB `learn.rdram_user`
+  assumes, so its 0x70000000 could not be aliased. The boot hold now runs through
+  RDRAM's window too: allocations the hold pushed up had taken that range.
+- **Analysis about 2x faster:** `emit._slot_entered` and `_run_on` copied the ROM's
+  whole tail for each word (45 of 79 s on GoldenEye). Its training: 195 s to 100 s.
+- `dryboot._exe` moves its compiled binary into place whole (parallel builds failed
+  with `PermissionError`).
+
+Measured from the ROM alone. "Before" is the dry boot's first analysis, what shipped;
+"learn-log" is the console-round build's `interp.txt` where one exists.
+
+| game | routines interpreted, before | now | learn-log | interpreted instructions per 300 retraces (xemu) |
+|---|---|---|---|---|
+| GoldenEye | 123 | 33 | 34 | 1.1 million with the want rounds alone, ~50-68 thousand now; the Dam right, 1 boot, no crash, no safety-net calls |
+| Turok 2 | 62 | 9 | 66 | 1.24 million, unchanged: one hand-written routine, `0029E3B0` |
+| Perfect Dark | 122 | 40 | 101 | ~11 thousand; was a fatal stop at boot, now 115 frames, then a crash at frame 369 (write near NULL, 0x91400004) |
+| All-Star Baseball 2000 | 38 | 30 | 80 | ~79 thousand |
+| Mario Tennis | 120 | 116 | 131 | ~100 thousand |
+| Banjo-Kazooie | 21 | 20 | 24 | from under 100 to ~186 thousand by scene; 18 functions through the safety net |
+| Donkey Kong 64 | 27 | 35 (hazards 15 to 2; more hand-written code found) | 18 | 400 thousand to 26 thousand |
+
+Run in xemu, ROM-only test builds, 90-120 s: those seven plus Castlevania LoD, and at the
+end Super Mario 64 and retail WWF No Mercy: one boot each, no crash but Perfect Dark's. `[MEM]` free in play 7.7-27 MB (test builds).
+GoldenEye's test build: `[MEM] boot               free 52196 KB of 65536 KB (image 11628 KB, virt 11824 KB, pool 20 KB)`; `[CLOCK] cpu 733 MHz (TSC against the ACPI timer, 3375000 Hz); nxdk's guess 733 MHz`. Frame rates not compared: xemu is
+not hardware, and no console has run these. Host: `test_dryboot.py`, `test_n64rx.py`
+(`--want`, the weak start, the entry hook), `test_romcache.py`.
+
+Tried and dropped:
+- **Raising a TLB miss for a wanted page the TLB does not map.** Across 28 games 2 pages
+  came in that way and 230 were refused; removed.
+- **Banjo-Kazooie's route.** `N64RX_DRYBOOT_SCRIPT` with its scenario covers all 18 of
+  the functions its build hits the safety net on (0 of 18 without) and finds 3,449
+  functions against 2,704, but it saves 5,713 code pages (versions), the analysis grows
+  to 8,539 functions and 87 interpreted, and the build crashes at frame 0. The plumbing
+  stays (`games/routes/`, `dryboot.route`, `N64RX_DRYBOOT_ROUTES`), no route ships. A
+  route needs a rule for which versions to keep before it helps.
+
+**ROM hacks: WWF No Mercy Plus V3 does not run yet** (`NEDE`, 68,203,420 bytes, the
+maintainer's). 97% of its pages differ from retail, so the earlier `XHW_ROM_ANY` build
+(retail code, hack beside it) cannot run it; it has to be built from its own ROM. Done
+for that: the entry hook read (`funcs._entry_hook`, `N64RX_ENTRY_HOOK`), its
+copy to 0x80400FE0 made a segment (`funcs.hook_copies`), its Expansion Pak check read
+(`romonly._wants_8mb`), ROMs past 64 MB in the page cache (`XROMC_MAX_CHUNKS` 2048) and
+the dry boot. Result in xemu: boots, loads, no frame presented, crash at frame ~48 in
+the match overlay's range (`write of address 027f7864`, a pointer of 0xFFFF8864). Two
+of retail's overlays at 0x80107C60 are not found, and the hack jumps from retail
+functions into its own code and back mid-function (47 functions interpreted; 34 found
+in its 0x9F020 bytes). Next: `docs/analyzer.md`'s known gaps. The zip on the
+maintainer's PC (private, it holds the ROM) is labelled as not working.
