@@ -464,7 +464,7 @@ no evidence yet, and the game's first sweep row decides.
 | 26 | Mario Golf | NMFE | 32 | SRAM | 4 | R T | xemu: builds since `N64RX_J_LATER`; 70-125 frames, then stops (Camelot engine) | B2 | verify (Camelot) |
 | 27 | 1080° Snowboarding | NTEA | 16 | SRAM | 2 | R | - | ? | verify |
 | 28 | Excitebike 64 | NMXE | 16 | EEP 16K | 4 | R C | - | ? | verify; Expansion Pak optional (high resolution) ? |
-| 29 | WWF No Mercy | NW4E | 32 | Flash | 4 | R C | sweep s7: 849 frames | B1? | verify |
+| 29 | WWF No Mercy | NW4E | 32 | Flash | 4 | R C | xemu 2026-11-04: full matches from the ROM alone; `v32-nm` staged | console | verify |
 | 30 | Jet Force Gemini | NJFE | 32 | Flash | 4 | R | Exp. (red: Rare logo, broken menu, slow, silent); xemu: menus whole since opcode 0x07 (2026-10-20); 3D not read | B3, B2 | Rare's later GBI (opcode 0x07, record); its 3D and audio unknown |
 | 31 | Blast Corps | NBCE | 8 | EEP 4K | 1 | C | xemu: Rare logo, title, profile (portrait frame empty), attract demo at 50-56 fps (15 rounds) | B2, B4 | verify (Rare); decomp in progress ? |
 | 32 | Pilotwings 64 | NPWE | 8 | EEP 4K | 1 | - | Gold (red: 53-59 fps) | keep | verify |

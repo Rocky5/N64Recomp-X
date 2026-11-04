@@ -3173,3 +3173,53 @@ No crash in any log; each ended with L + R + BACK + BLACK.
   123 routines interpreted (the analysis's hazards and cross branches in
   the 0x7F000000 code). The briefing's "classified documents" text is drawn
   inverted (likely in earlier builds too, unnoticed).
+
+## 2026-11-04: WWF No Mercy from the ROM alone; set 32 staged for red and gold (xemu; no hardware yet)
+
+**WWF No Mercy (`NW4E`, no pack, no learn logs) plays full exhibition matches in
+xemu** (slot 10, test build, autopad `build-host/scen/nm2`): title, Exhibition,
+Superstar Select with its 3D model, the versus screen, the arena, crowd and HUD,
+the CPU fighting, the clock past 03:46, ~30 fps, Controller Pak and
+Rumble lines, no crash, 0 `[LEARN]` lines. A learning round would add nothing.
+Two fixes, both uncommitted at this entry, both general:
+
+- `funcs._table_linear` follows a switch's entry address through a stack spill
+  (`N64RX_TABLE_SPILL`). One such `jr` failed `segments.find`'s trial of the
+  900-function match overlay (ROM 0x144C50), which shares its address with a menu
+  overlay; the boot code then called the menu overlay's recompiled `func_800DAE90`
+  on the match overlay's data: `[TLB] miss 00e01019`, a crash at the versus screen.
+  3,466 functions in 6 segments (2,566 in 5). `analyze()` with the rule on and off
+  on 16 other tiered or ladder ROMs: the same, but without their dry boots, so it says little for the ones packed behind their boot (Mario Tennis 5 functions, Banjo-Kazooie 76, Ocarina 136, Donkey Kong 64 223, GoldenEye 658). No library sweep ran.
+- `G_MOVEMEM G_MV_MATRIX` sets the clip matrix (`XGFX_FORCE_MTX`). No Mercy loads
+  no other matrix: its matches showed only the clock (`tris 2890, rejected 2834`,
+  `unhandled op DC` ~94,000 per 600 frames).
+
+`[MEM]` boot free 53,420 KB (release `v32-nm`), 12,588 KB free in a match (test build); `[CLOCK]`
+733 MHz, retrace 58.99 Hz (xemu). Audio ran 29,224 tasks with 45 AI underruns:
+not heard, and xemu is not hardware.
+
+Not verified: anything on a console; a whole match to its end; saving to FlashRAM;
+the release builds past their boot (150 s in xemu, no input, no crash); the Exhibition
+tabs' panels looked empty before the forced matrix (not shot again, not compared with a real N64); widescreen
+(a forced matrix leaves `R.proj` alone, so hor+ does not extend these draws).
+
+**WWF WrestleMania 2000 (`NWXE`) still loses its match overlay** (ROM 0xD2720 at
+800E1B90, record 0x48AEC): its trial fails on several walks (more `jr` without a
+table, data walked as code at 8010B7F0, 8010BB88), so it would crash the same way.
+Left out of set 32. One bad walk failing a whole described overlay is the gap
+(`docs/analyzer.md`).
+
+**Set 32, deployed to red and gold** (2026-11-04, sizes verified; gold's first N64Recomp-X build; superseded on gold by set 33): release,
+working tree on 64afa6f, `build-host/hwbuild32.sh`, `deploy-set32.sh red|gold`
+(gold: `/E/Applications`).
+
+| build | game | folder, title ID | xbe | check |
+|---|---|---|---|---|
+| `v32-nm` | WWF No Mercy | `N64Recomp-X-32-NM`, 4E52D021 | 3cbf48bfedb7 | play one exhibition match to its end: a crash at the versus screen? the 3D, frame rate, sound; on gold the same at 480i |
+| `v32-zel` | Ocarina of Time 1.2 | `N64Recomp-X-32-ZEL`, 4E52D023 | 69e6f4e4de85 | the forced matrix's regression check (its red log `logszel13` counted skipped `G_MOVEMEM`s, of an index not logged then): Kokiri Forest looks as in Silver, nothing 3D out of place |
+
+**720p on gold, set 33** (2026-11-04; the maintainer: 720p does not work on gold, the same issue as Melee and Prime). Gold (encoder `004a0104`, AV pack 4) leaves the wrong pitch after the mode set: its Melee-X boots log `pitch 6656 (want 2560)`. This repo never had Melee-X's `check_scanout` (its #18), so `xhw_video.c` now has it, after every mode set (`XHW_SCANOUT_CHECK`). The maintainer's report is the evidence that it failed here; gold's boot.log has no error and no scanout line. xemu at 480i: values match, nothing changed; 720p itself is judged on gold.
+
+Set 33 (`hwbuild33.sh`, `deploy-set33.sh`) is set 32 plus this, in set 32's folders and title IDs: `v33-nm` badfcfaa4498, `v33-zel` 4c4edfa52c77. On gold (set 32's logs in `C:/xemu/hw/gold/`, and the first boot.log in `C:/xemu/hw/logsgold-32-nm/`); not on red (FTP down; red runs 480i, set 32 is enough there). Check on gold: `[VIDEO] scanout set back` in boot.log and a clean 720p picture.
+
+**A build for ROM hacks** (2026-11-04, the maintainer's request): `-DXHW_ROM_ANY=1` with `--rom-beside`, title ID 4E52D024, in `out-hack/` (xbe a09472ff3475): no size, game code or SHA-1 check, the SHA-1 logged. xemu: boots and presents with the plain ROM and with one changed in size (34 MB), game code and SHA-1. Not run on a console, no real hack tried, no match reached. The XBE's code is the retail ROM's, so a hack that changes code does not take effect. With `v33-nm`, the ROM and a readme in `Downloads/WWF-No-Mercy-Xbox.zip` on the maintainer's PC (private: it holds the ROM).

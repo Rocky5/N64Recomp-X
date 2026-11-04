@@ -524,6 +524,10 @@ Left: 20 present nothing, 23 crash on a KUSEG access near NULL, 4 fatal.
 
 ## Known gaps
 
+- **One bad walk fails a whole overlay** (`segments.find`: `not any(f.bad ...)`, even for a load a
+  ROM table describes with its text range). WWF WrestleMania 2000 loses its match overlay this way
+  (ROM 0xD2720: several unresolved `jr`s, data walked as code) and would run the menu overlay's code
+  on its data; WWF No Mercy did until its one `jr` resolved (`N64RX_TABLE_SPILL`).
 - **The debug libultra** (libultra_d: each call checks its arguments and
   calls `__osError(code, n, ...)`; -O0 code, arguments spilled to the
   stack). Mischief Makers ships it: the rules, written for the optimised

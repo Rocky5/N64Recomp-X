@@ -1165,7 +1165,7 @@ real one (interlace flicker on the sweep and the sparks is judged there).
 Each milestone ends with a `default.xbe` that boots on the console (from
 M1), the host tests green on the three OSes, a `docs/handoff.md` entry
 (what was verified, how; "xemu" results say so) and a commit on `dev`.
-"console" is the maintainer's hardware (red: HDTV pack; gold: 480i only)
+"console" is the maintainer's hardware (red: AV pack 1, 480i; gold: HDTV pack, 720p, softmod with no F:)
 through `console.py`/`n64rx deploy`, logs pulled before every relaunch.
 
 **Progress (2026-10-16; `docs/handoff.md` "Where things stand").** M0 and M1

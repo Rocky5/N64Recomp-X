@@ -339,9 +339,13 @@ draws the jet ski, the water and the beach.
 
 - S2DEX's G_SELECT_DL is skipped (backgrounds and objects are drawn; no game in the ladder needs it yet
   from its ROM alone).
-- F3DEX2's forced matrix (`G_MV_MATRIX` + `G_MW_FORCEMTX`), `G_MV_POINT`,
-  `G_DMA_IO`, `G_SPECIAL_*`: skipped (counted). `G_LINE3D` (L3DEX, L3DEX2)
-  draws each line as a thin quad (`XGFX_LINES`, 2026-10-22).
+- F3DEX2's forced matrix (`G_MOVEMEM G_MV_MATRIX`, 64 bytes at offset 0) sets
+  the clip matrix directly; the next `G_MTX` or pop recomputes it, and
+  `G_MW_FORCEMTX` needs nothing (`XGFX_FORCE_MTX`, 2026-11-04: WWF No Mercy
+  sets every matrix this way, nothing 3D showed without it).
+- `G_MV_POINT`, a part of a forced matrix, `G_DMA_IO`, `G_SPECIAL_*`: skipped
+  (counted). `G_LINE3D` (L3DEX, L3DEX2) draws each line as a thin quad
+  (`XGFX_LINES`, 2026-10-22).
 - F3DEX2 runs from the ROM alone in Pokémon Snap (Beach on a console),
   Kirby 64, Ocarina of Time (Silver) and Ridge Racer 64; 70 of the s12
   sweep's games switch to an F3DEX2 microcode (`sweep.py --rescan`'s
