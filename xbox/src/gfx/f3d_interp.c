@@ -68,6 +68,9 @@
 /* ---- switches (docs/testing.md) ---- */
 /* vertices and matrices read as words of the image (their halves and bytes in
  * N64 order within them); -DXGFX_VTX_WORDS=0: halfword by halfword, as before */
+#ifndef XGFX_FORCE_MTX
+#define XGFX_FORCE_MTX 1       /* F3DEX2's G_MOVEMEM G_MV_MATRIX sets the clip matrix; 0: skipped, as before */
+#endif
 #ifndef XGFX_VTX_WORDS
 #define XGFX_VTX_WORDS 1
 #endif
@@ -2876,7 +2879,17 @@ static int ex_cmd(uint32_t* pw0, uint32_t* pw1) {
             f3dex2_movemem_decode(w0, &idx, &ofs, &len);
             if (idx == F3DEX2_G_MV_VIEWPORT) do_viewport(m);
             else if (idx == F3DEX2_G_MV_LIGHT) do_light(f3dex2_light_index(ofs), m);
-            else s_unknown[op]++;   /* the forced matrix, points: not used by the games so far */
+            else if (XGFX_FORCE_MTX && idx == F3DEX2_G_MV_MATRIX && ofs == 0 && len >= 64) {
+                /* gSPForceMatrix: the clip matrix itself, the game's own MV x P (WWF No
+                 * Mercy's matches load no other). The next G_MTX or pop recomputes it,
+                 * as the microcode does; G_MW_FORCEMTX only says so, and needs nothing here */
+                mtx_from_n64(R.mvp, m);
+                R.mvp_dirty = 0;
+            } else {
+                s_unknown[op]++;   /* points, a part of a forced matrix: not used by the games so far */
+                if (XHW_TEST_BUILD && s_unknown[op] == 1)
+                    xhw_logf("[GFX] G_MOVEMEM index %u offset %u, %u bytes: skipped", (unsigned)idx, (unsigned)ofs, (unsigned)len);
+            }
             return 1;
         }
         case F3DEX2_G_LOAD_UCODE: load_ucode(w0); return 1;
