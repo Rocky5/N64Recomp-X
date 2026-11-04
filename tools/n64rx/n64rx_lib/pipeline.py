@@ -850,6 +850,40 @@ def _inflate(rom, prog):
     return dataclasses.replace(rom, data=img, sha1=hashlib.sha1(img).hexdigest())
 
 
+def train(rom, rom_sha1, base, bdir, pack, ainfo, learn, learnt, prog):
+    """the build's training on this PC (dryboot.py): the ROM's boot run with its route if the project has one,
+    what it learnt into the analysis, then the boot again for what that analysis asks of RDRAM (jump tables and
+    code of functions the run never entered), as a console round would, so their functions recompile instead of
+    being interpreted. Each round's walks can ask for more. N64RX_DRYBOOT_WANT=0: not asked.
+    Returns pack, ainfo, learn, learnt"""
+    if not dryboot.enabled():   # its learn file goes before the user's
+        return pack, ainfo, learn, learnt
+    route = dryboot.route(rom.code, rom_sha1)
+    if route:
+        prog.note(f'training with the project\'s route for this ROM: {route.relative_to(ROOT)}')
+    db = dryboot.run(rom, ainfo['analysis'], pack, bdir, prog, bdir / 'dryboot.log', route=route)
+    if db and dryboot.auto():   # N64RX_DRYBOOT=auto: only for a game that needs it
+        ok, n = dryboot.worth(db)
+        prog.note(f'dry boot (auto): {n} functions learnt: ' + ('used' if ok else 'not needed, left out'))
+        db = db if ok else None
+    if db:
+        learn = [db] + list(learn)
+        learnt = learnmod.read(learn)
+        pack, ainfo = romonly.make(rom, bdir, base, learnt)
+        asked = set()
+        for _round in range(3):
+            more = dryboot.wants(pack)
+            if more <= asked:
+                break
+            asked |= more
+            prog.note(f'dry boot: again, for {len(asked)} spans of RDRAM the analysis asks for')
+            if not dryboot.run(rom, ainfo['analysis'], pack, bdir, prog, bdir / 'dryboot.log', want=asked, route=route):
+                break
+            learnt = learnmod.read(learn)
+            pack, ainfo = romonly.make(rom, bdir, base, learnt)
+    return pack, ainfo, learn, learnt
+
+
 def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None, echo=None, eng=None,
           analyze=False, rom_beside=False, learn=(), events=None):
     echo = echo or (lambda s: print(s, flush=True))
@@ -881,16 +915,7 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
         bdir.mkdir(parents=True, exist_ok=True)
         t0 = time.time()
         pack, ainfo = romonly.make(rom, bdir, base, learnt)
-        if dryboot.enabled():   # the boot run on this PC first (dryboot.py): its learn file before the user's
-            db = dryboot.run(rom, ainfo['analysis'], pack, bdir, prog, bdir / 'dryboot.log')
-            if db and dryboot.auto():   # N64RX_DRYBOOT=auto: only for a game that needs it
-                ok, n = dryboot.worth(db)
-                prog.note(f'dry boot (auto): {n} functions learnt: ' + ('used' if ok else 'not needed, left out'))
-                db = db if ok else None
-            if db:
-                learn = [db] + list(learn)
-                learnt = learnmod.read(learn)
-                pack, ainfo = romonly.make(rom, bdir, base, learnt)
+        pack, ainfo, learn, learnt = train(rom, rom_sha1, base, bdir, pack, ainfo, learn, learnt, prog)
         if learnt is not None:
             prog.note(f'learnt on the console: {len(learnt.funcs)} functions, {len(learnt.dmas)} DMAs ({", ".join(map(str, learn))})')
         a = ainfo['analysis']

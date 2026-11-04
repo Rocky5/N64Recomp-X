@@ -352,6 +352,13 @@ def _wants_8mb(a):
                     if any(n.op == 35 and n.rs == ins.rt and n.imm == 0 for n in near) and \
                             any(n.op == 43 and n.rs == ins.rt and n.imm == 0 for n in near):
                         return True
+                # osMemSize's second byte read and compared with 0x80 (0x00800000): a ROM hack's hook that uses
+                # the Expansion Pak's memory for its own code (WWF No Mercy Plus)
+                if ins.op == 36 and ins.imm == 0x319:
+                    near = [Ins(x, 0) for x in ws[max(0, i - 2):i + 4]]
+                    if any(n.op == 15 and n.rt == ins.rs and n.imm == 0x8000 for n in near) and \
+                            any(n.op == 9 and n.rs == 0 and n.imm == 0x80 for n in near):
+                        return True
                 if ins.op != 35 or ins.imm != 0x318:
                     continue
                 near = [Ins(x, 0) for x in ws[max(0, i - 6):i + 6]]

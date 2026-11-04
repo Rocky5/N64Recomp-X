@@ -33,7 +33,7 @@
  * 1 MB of KUSEG the TLB maps code into; "rdram 8" when code runs past 4 MB.
  *
  * Usage: dryboot <rom.z64> <out dir> --entry X --boot-size N [--cic N]
- *        [--tv 0|1|2] [--rdram 4|8] [--known file] [--frames N] [--press F|0] [-v]
+ *        [--tv 0|1|2] [--rdram 4|8] [--known file] [--frames N] [--press F|0] [--want file] [-v]
  * The ROM in z64 order (n64rx's rom.z64: the image the console runs).
  * Exit 0 with the files written, 1 on bad arguments, 2 when the CPU met an
  * instruction it does not know (said on stderr; the files are still
@@ -757,6 +757,21 @@ static void table_page(uint32_t ea) {
     capture(ea);
 }
 
+/* --want: pages the analysis asked for (n64rx's pack/want.txt, "lo hi" in hex), saved as the run ends:
+ * a jump table of a function this run never entered, in rodata the boot decompressed. A jr that runs
+ * saves its own table's page (table_page), one that never ran did not, and every such function was
+ * interpreted: 90 of GoldenEye's 102 hazards from the ROM alone (the console's rounds get these pages
+ * from the same list, xrc_learn_want). A page the TLB does not map now is skipped */
+static void capture_wants(const char* path) {
+    FILE* f = fopen(path, "r");
+    unsigned long lo, hi;
+    uint32_t p;
+    if (!f) { fprintf(stderr, "dryboot: cannot read %s\n", path); return; }
+    while (fscanf(f, "%lx %lx", &lo, &hi) == 2)
+        for (p = (uint32_t)lo & ~0xFFFu; p < (uint32_t)hi; p += 0x1000) capture(p);
+    fclose(f);
+}
+
 /* the records out: a page's versions all when an older one came back (an overlay the game loads at
  * that address again and again: Mario Tennis's scenes), else its last one alone when the older ran
  * at boot, before the first graphics task (a loader the code it unpacked replaced for good: one early
@@ -1425,12 +1440,12 @@ static int usage(void) {
     fprintf(stderr, "usage: dryboot <rom.z64> <out dir> --entry X --boot-size N [--cic N] [--tv 0|1|2] [--rdram 4|8]\n"
                     "               [--known file] [--frames N] [--press frame|0] [--script autopad.txt] [--eep 4|16]\n"
                     "               [--dump addr bytes file] [--snap gfx-task file] [--watch addr bytes]\n"
-                    "               [--versions boot|all|last] [--window keep] [-v]\n");
+                    "               [--versions boot|all|last] [--window keep] [--want file] [-v]\n");
     return 1;
 }
 
 int main(int argc, char** argv) {
-    const char *rom_path, *out, *known_path = NULL, *dump_path = NULL;
+    const char *rom_path, *out, *known_path = NULL, *dump_path = NULL, *want_path = NULL;
     uint32_t dump_at = 0, dump_n = 0;
     uint32_t entry = 0, boot_size = 0x100000, cic = 6102, tv = 1, mb = 4, frames = 600, i;
     int keep8 = 0;
@@ -1457,7 +1472,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(a, "--eep")) s_eep16 = strtoul(v, NULL, 10) == 16;
         else if (!strcmp(a, "--exl-calls")) s_exl_calls = (int)strtoul(v, NULL, 10);
         else if (!strcmp(a, "--jump-tables")) s_tables = (int)strtoul(v, NULL, 10);
-        else if (!strcmp(a, "--window")) keep8 = !strcmp(v, "keep");
+        else if (!strcmp(a, "--want")) want_path = v;        else if (!strcmp(a, "--window")) keep8 = !strcmp(v, "keep");
         else if (!strcmp(a, "--versions")) s_versions = !strcmp(v, "all") ? 1 : !strcmp(v, "last") ? 0 : 2;
         else if (!strcmp(a, "--watch") && i + 2 < (uint32_t)argc) {   /* --watch <addr> <bytes>: who stores there */
             s_watch_lo = (uint32_t)strtoul(v, NULL, 16) & 0x1FFFFFFFu;
@@ -1483,7 +1498,7 @@ int main(int argc, char** argv) {
     fseek(f, 0, SEEK_END);
     n = ftell(f);
     fseek(f, 0, SEEK_SET);
-    if (n < 0x101000 || n > 0x4000000) { fprintf(stderr, "dryboot: %s is not a ROM\n", rom_path); fclose(f); return 1; }
+    if (n < 0x101000 || n > 0xFC00000) {   /* (the cartridge window: a ROM hack can pass 64 MB) */ fprintf(stderr, "dryboot: %s is not a ROM\n", rom_path); fclose(f); return 1; }
     s_romsize = (uint32_t)n;
     s_rom = (uint8_t*)malloc(s_romsize);
     if (!s_rom || fread(s_rom, 1, s_romsize, f) != s_romsize) { fclose(f); return 1; }
@@ -1558,6 +1573,7 @@ int main(int argc, char** argv) {
         for (pg = 0; pg < np; pg++)
             if (s_take[pg] && !s_pcap[pg]) capture(0x80000000u | pg << 12);   /* (in the boot copy too: rewritten, it is not the ROM's) */
     }
+    if (want_path) capture_wants(want_path);
     write_captures();
     fprintf(s_txt, "# %u frames, %llu instructions, %u RSP tasks (%u graphics), %u PI DMAs\n", s_frames,
             (unsigned long long)s_cycles, s_tasks, s_gfx_tasks, s_ndma);

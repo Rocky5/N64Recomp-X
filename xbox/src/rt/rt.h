@@ -15,6 +15,7 @@
 extern uint8_t* xrc_rdram;
 extern uint8_t* xrc_rdram_host;
 extern uint32_t xrc_rdram_size;
+uint32_t xrc_rdram_user(void);        /* mem.c, with -DXRC_RDRAM_USER: RDRAM's KSEG0 home for this image */
 extern uint32_t xrc_ipl3_vec[4];   /* boot.c: what the IPL3's copy left at 0x80000000 */
 int xrc_mem_init(uint32_t mb);
 int xrc_kseg1_heal(uint32_t host);

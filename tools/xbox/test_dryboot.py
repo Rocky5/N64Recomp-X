@@ -98,6 +98,21 @@ def main():
             fails.append('learn.txt: not the dry boot\'s, or the frame count missing')
         if not (out / 'learn_code.bin').exists():
             fails.append('no learn_code.bin')
+        # --want: the pages asked for saved as the run ends, with RDRAM's bytes then; one the TLB does not
+        # map skipped; the run's other output unchanged
+        want = tmp / 'want.txt'
+        want.write_text('80100000 80100004\n00700000 00701000\n')
+        out3 = tmp / 'out3'
+        out3.mkdir()
+        r = subprocess.run([str(exe), str(rom), str(out3), '--entry', f'{entry:08x}', '--frames', '30',
+                            '--want', str(want)], capture_output=True, text=True, env=env)
+        got = (out3 / 'learn.txt').read_text(encoding='utf-8') if (out3 / 'learn.txt').exists() else ''
+        code = (out3 / 'learn_code.bin').read_bytes() if (out3 / 'learn_code.bin').exists() else b''
+        at = code.find(struct.pack('>II', 0x80100000, 4096))
+        if r.returncode or 'code 80100000 1000' not in got or at < 0 or code[at + 8:at + 12] != b'NRX1':
+            fails.append(f'--want: the page asked for not saved (exit {r.returncode}, record at {at})')
+        if 'code 00700000' in got:
+            fails.append('--want: an unmapped page saved')
         trap = tmp / 'trap.z64'
         trap.write_bytes(cpu_trap_rom())
         out2 = tmp / 'out2'

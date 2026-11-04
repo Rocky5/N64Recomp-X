@@ -179,7 +179,8 @@ def _slot_entered(a, seg, start, end):
     from .mips import Ins, words
     if end - 8 < start:
         return False
-    last = Ins(int.from_bytes(a.img.rom[seg.rom + (end - 8 - seg.vram):][:4], 'big'), end - 8)
+    o = seg.rom + (end - 8 - seg.vram)
+    last = Ins(int.from_bytes(a.img.rom[o:o + 4], 'big'), end - 8)
     if not ((last.is_jr and not last.is_jalr) or last.is_j or last.is_unconditional_branch):
         return False
     for i, w in enumerate(words(a.img.rom, seg.rom + (start - seg.vram), (end - 8 - start) // 4)):
@@ -197,7 +198,8 @@ def _run_on(a, seg, fs, v, limit):
         g = fs.get(v)
         if g is not None and g.start == v:
             return v
-        ins = Ins(int.from_bytes(a.img.rom[seg.rom + (v - seg.vram):][:4], 'big'), v)
+        o = seg.rom + (v - seg.vram)
+        ins = Ins(int.from_bytes(a.img.rom[o:o + 4], 'big'), v)
         if (ins.is_jr and not ins.is_jalr) or ins.is_j or ins.is_unconditional_branch or ins.is_eret:
             return v + 8
         v += 4
@@ -625,6 +627,13 @@ def recomp_hazards(a: Analysis, live, nm, replaced, lookups=None):
                         why = f'branch to {t:08X}, past its segment'
                         if seg.name.startswith('code_') and 0x80000000 <= f.start < t < 0x80800000 and t - f.start <= 0x100000:
                             want = (f.start, t + 4)   # the rest of the function, in RDRAM no capture holds
+                        elif (KUSEG_WANT and seg.name.startswith('code_') and 0x10000 <= f.start < 0x80000000
+                              and 0x10000 <= t < 0x80000000 and abs(t - f.start) <= 0x4000
+                              and not any(s.has(t) for s in a.img.segments)):
+                            # the same at KUSEG (Perfect Dark's TLB-mapped code, a page the run never ran), when
+                            # no segment holds it and it is near: a far one is a walk gone wrong, whose pages
+                            # beside GoldenEye's 0x70200000 cost that code its match with the ROM
+                            want = (min(f.start, t), max(f.end, t + 4))
                         break
             if why is None:
                 for t in _n64recomp_tables(ws, f.start):

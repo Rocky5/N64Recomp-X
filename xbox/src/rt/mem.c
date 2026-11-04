@@ -73,6 +73,20 @@ static void hw_shadow(uint8_t* p, uint32_t bytes) {
 #ifndef XRC_RDRAM_GUARD
 #define XRC_RDRAM_GUARD 4096u
 #endif
+#if defined(XRC_RDRAM_USER) && defined(XRC_KUSEG_HOLD)
+/* n64rx puts the lowest KUSEG region at host 16 MB, just above an XBE it takes to end below that. Perfect
+ * Dark's recompiled code reaches 17.6 MB: the region then lands on the image and cannot be aliased, so the
+ * interpreter ran garbage through its TLB. RDRAM's home moves up, in the alias hold's 4 MB steps, so the
+ * region clears the image; a game that fits stays where it was. -DXRC_RDRAM_USER_FIXED: as before */
+uint32_t xrc_rdram_user(void) {
+    uint32_t va = (uint32_t)(XRC_RDRAM_USER);
+#ifndef XRC_RDRAM_USER_FIXED
+    uint32_t low = va - 0x80000000u + (uint32_t)(XRC_KUSEG_HOLD);
+    if (xhw_image_end > low) va += ((xhw_image_end - low) + 0x3FFFFFu) & ~0x3FFFFFu;
+#endif
+    return va;
+}
+#endif
 int xrc_mem_init(uint32_t mb) {
     uint32_t bytes = mb << 20;
 #ifdef XRC_RDRAM_PAD_MB   /* diagnosis: RDRAM placed this many MB lower in physical memory */
@@ -97,10 +111,10 @@ int xrc_mem_init(uint32_t mb) {
      * KSEG0 is there and the high KUSEG pages below it, in user space too.
      * DIVERGES from the default layout: 4 KB pages for RDRAM, not the kernel's
      * large ones (more x86 TLB misses). Not aliased there: the default. */
-    if (xhw_alias_map((uint32_t)(XRC_RDRAM_USER), (uint32_t)(uintptr_t)p & 0x7FFFFFFFu, bytes))
-        xrc_rdram = (uint8_t*)(uintptr_t)(uint32_t)(XRC_RDRAM_USER) - 0x80000000u;
+    if (xhw_alias_map(xrc_rdram_user(), (uint32_t)(uintptr_t)p & 0x7FFFFFFFu, bytes))
+        xrc_rdram = (uint8_t*)(uintptr_t)xrc_rdram_user() - 0x80000000u;
     else
-        xhw_logf("[MEM] rdram not aliased at %08x (in use): the kernel's window", (unsigned)(XRC_RDRAM_USER));
+        xhw_logf("[MEM] rdram not aliased at %08x (in use): the kernel's window", (unsigned)xrc_rdram_user());
 #endif
     xhw_logf("[RECOMP] window: %u MB, physical %08x, rdram base %08x", (unsigned)mb,
              (unsigned)((uintptr_t)p & 0x7FFFFFFFu), (unsigned)(uintptr_t)xrc_rdram);

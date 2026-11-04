@@ -511,6 +511,47 @@ class ReadsRa(unittest.TestCase):
         self.assertFalse(emit._reads_ra([0xAFBF0014, 0x03E04025, 0x0C000100, 0x03E00008], 0x80000000))
         self.assertFalse(emit._reads_ra([0x0C000100, 0x27EDFFF8], 0x80000000))   # after a jal: its own
 
+    def test_entry_with_a_hack_hook(self):
+        """an SDK entry whose first two instructions a ROM hack replaced with a jump to its hook, which runs them
+        and jumps back: the BSS and main read as without the hook"""
+        from n64rx_lib.analyze import funcs as F
+        entry = 0x80000400
+        words = [0x08000140, 0,                                   # j 80000500; nop (over the lui/addiu of t0)
+                 0x3C090007, 0x25298780,                          # t1 = 0x68780
+                 0xAD000000, 0xAD000004, 0x21080008, 0x2129FFF8,  # the clear loop
+                 0x1520FFFB, 0,
+                 0x3C0A8000, 0x254A0460, 0x3C1D800A, 0x01400008, 0x27BD1310]   # sp, jr t2 = 80000460
+        words += [0] * (0x40 - len(words))                        # to 80000500
+        words += [0, 0x3C088005, 0x08000101, 0x25086710]          # the hook: t0 = 80056710, j 80000404
+        rom = bytes(0x1000) + b''.join(struct.pack('>I', w) for w in words) + bytes(0x100)
+        self.assertEqual(F.parse_entry(rom, entry), (0x80056710, 0x68780, 0x80000460))
+        with mock.patch.dict('os.environ', {'N64RX_ENTRY_HOOK': '0'}):
+            self.assertIsNone(F.parse_entry(rom, entry))
+
+    def test_weak_root_a_call_proves_is_a_start(self):
+        """a learnt start with no return before it (GoldenEye's sinf, which cosf falls into) stays a function
+        when the segment's own code calls it; with no call it is walked over, as an overlay's other start"""
+        from n64rx_lib.analyze import funcs as F
+        base = 0x7F000000
+        sin = base + 0x1C
+        jal_sin = (3 << 26) | ((sin >> 2) & 0x3FFFFFF)
+        code = [jal_sin, 0, 0x03E00008, 0,                     # main: calls sin
+                0x3C018005, 0x46006000, 0x46006000,            # cos: three instructions, no return
+                0x44086000, 0x03E00008, 0]                     # sin
+        def run(calls):
+            words = list(code)
+            if not calls:
+                words[0] = 0
+            data = b''.join(struct.pack('>I', w) for w in words)
+            img = F.Image(data)
+            seg = F.Segment('t', 0, base, len(data))
+            img.segments.append(seg)
+            return F.discover(img, seg, [base, base + 0x10, sin], weak=[sin])
+        self.assertIn(sin, run(True))
+        self.assertNotIn(sin, run(False))
+        with mock.patch.object(F, 'CALLED_WEAK', False):
+            self.assertNotIn(sin, run(True))
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=1)

@@ -15,6 +15,7 @@ N64RX_WITHHOLD (a test switch: comma-separated addresses) takes functions
 out of the analysis, as if the analyser had missed them, so the net and
 this loop can be shown on any game; a function the learn file names is
 never withheld."""
+import bisect
 import os
 import pathlib
 import re
@@ -344,8 +345,46 @@ def apply(a, learnt, rom_len):
                      f'{"..." if len(new) > 8 else ""}), {len(a.funcs[name])} functions now')
     _versions(a, learnt, runs, spans, notes)
     _cross_roots(a, notes)
+    _mid_entries(a, todo, notes)
     a.notes += notes
     return notes
+
+
+def _mid_entries(a, todo, notes):
+    """A learnt entry the walks took in as the middle of a function, because it looked implausible as a
+    start (Donkey Kong 64's 0x80612794 and 0x80612D1C, called through the safety net 20,000 times per 300
+    retraces: 93% of its interpreted instructions there). A recompiled copy from that entry, beside the
+    function that holds it and overlapping it, as a fall-through's body does. The holder is left whole,
+    so the entry being another overlay's start costs nothing: the copy is only reached by calling it,
+    and captured code's guard checks its bytes first. N64RX_LEARN_MID_ENTRY=0: the safety net, as before"""
+    if os.environ.get('N64RX_LEARN_MID_ENTRY', '1') == '0':
+        return
+    n = 0
+    for name, (seg, xs) in todo.items():
+        fs = a.funcs.get(name)
+        if not fs:
+            continue
+        order = sorted(fs)
+        new = {}
+        prev, a.img.focus = a.img.focus, seg
+        try:
+            for x in sorted(set(xs)):
+                if x in fs or x in new or any(x in a.funcs.get(s.name, {}) for s in a.img.segments if s.has(x)):
+                    continue
+                k = bisect.bisect_right(order, x) - 1
+                if k < 0 or not x < fs[order[k]].end:
+                    continue
+                f = F.walk(a.img, x, set(order))
+                f.how = 'entry'
+                if k + 1 < len(order) and f.end > order[k + 1]:
+                    f.end = order[k + 1]
+                new[x] = f
+        finally:
+            a.img.focus = prev
+        fs.update(new)
+        n += len(new)
+    if n:
+        notes.append(f'{n} learnt entries inside other functions given their own recompiled copies')
 
 
 # kill switch: N64RX_LEARN_STARTS=0 makes every learnt start in captured code a root (as before)
@@ -547,8 +586,11 @@ def _table_sources(a, runs, notes, starts=()):
     Kept out of a.img.segments: no overlay keys or function searches change."""
     a.table_sources = getattr(a, 'table_sources', [])
     rom = a.img.rom
+    # KUSEG too (Perfect Dark's rodata at 0x7F1Bxxxx, mapped by its TLB, 53 functions' switch tables
+    # there): N64RX_TABLE_KUSEG=0: KSEG0 only, as before
+    kuseg = os.environ.get('N64RX_TABLE_KUSEG', '1') != '0'
     for blk, data in sorted(runs.items()):
-        if not 0x80000000 <= blk < 0x80800000:
+        if not (0x80000000 <= blk < 0x80800000 or (kuseg and 0x10000 <= blk < 0x80000000)):
             continue
         over = [s for s in a.img.segments if not s.name.startswith('code_') and s.vram < blk + len(data) and blk < s.vram + s.size]
         # RDRAM no segment covers at all (Donkey Kong 64's decompressed rodata at 0x8075xxxx, its switch

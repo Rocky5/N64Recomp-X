@@ -297,8 +297,10 @@ void xrc_boot(void) {
     {   /* the learnt KUSEG span's host range (rdram + vaddr), held before the ROM's page cache and the
          * rest are placed: Perfect Dark's 0x70000000 lands at 16 MB, where something had already been
          * put by the time its TLB mapped it ("not aliased: the host range is in use") */
-        uint32_t lo = (uint32_t)(XRC_RDRAM_USER) - 0x80000000u + (uint32_t)(XRC_KUSEG_HOLD);
-        uint32_t n = (uint32_t)(XRC_KUSEG_HOLD_END) - (uint32_t)(XRC_KUSEG_HOLD);
+        uint32_t lo = xrc_rdram_user() - 0x80000000u + (uint32_t)(XRC_KUSEG_HOLD);
+        /* through RDRAM's own window above it (0x80000000 + 8 MB at most): allocations pushed up by the hold
+         * had taken that range ("rdram not aliased ... in use") once the window moved up (xrc_rdram_user) */
+        uint32_t n = 0x80800000u - (uint32_t)(XRC_KUSEG_HOLD);
         xhw_logf("[MEM] KUSEG %08x-%08x at host %08x: %s", (unsigned)(XRC_KUSEG_HOLD), (unsigned)(XRC_KUSEG_HOLD_END - 1u),
                  (unsigned)lo, xhw_alias_hold(lo, n) ? "held" : "in use already");
     }

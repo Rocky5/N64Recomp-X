@@ -80,6 +80,7 @@ def _exe(log):
     if out.exists():
         return out
     out.parent.mkdir(parents=True, exist_ok=True)
+    final, out = out, out.with_name(f'dryboot.{os.getpid()}{EXE}')   # moved into place whole: builds side by side
     if os.name == 'nt':
         eng = engines.Native()
         rel_src, rel_out = SRC.relative_to(ROOT).as_posix(), out.relative_to(ROOT).as_posix()
@@ -91,12 +92,50 @@ def _exe(log):
         with open(log, 'a', encoding='utf-8') as f:
             rc = subprocess.run([cc, '-O2', '-std=gnu11', '-o', str(out), str(SRC), '-lm'], stdout=f,
                                 stderr=subprocess.STDOUT).returncode
-    return out if rc == 0 and out.exists() else None
+    if rc != 0 or not out.exists():
+        return None
+    try:
+        os.replace(out, final)
+    except OSError:   # another build got there first (and may be running it)
+        out.unlink(missing_ok=True)
+    return final if final.exists() else None
 
 
-def run(rom, a, pack, bdir, prog, log):
+def route(code, sha1):
+    """games/routes/<code>.<sha1[:12]>.txt: the project's input script for this ROM's dry boot (button presses
+    in docs/testing.md's autopad format, with an optional `# frames N` line: no code, no addresses), or None.
+    It takes the boot past the menus into play, so the game unpacks there what a plain boot never reaches.
+    N64RX_DRYBOOT_ROUTES=0: not read; N64RX_DRYBOOT_SCRIPT wins over it"""
+    p = ROOT / 'games' / 'routes' / f'{code}.{sha1[:12]}.txt'
+    if os.environ.get('N64RX_DRYBOOT_ROUTES', '1') == '0' or os.environ.get('N64RX_DRYBOOT_SCRIPT') or not p.is_file():
+        return None
+    return p
+
+
+def _route_frames(path):
+    """a route's `# frames N`, as a string, or None"""
+    for line in pathlib.Path(path).read_text(encoding='utf-8').splitlines():
+        w = line.split()
+        if w[:2] == ['#', 'frames'] and len(w) > 2 and w[2].isdigit():
+            return w[2]
+    return None
+
+
+def wants(pack):
+    """what the analysis of this build asks of RDRAM (romonly.py's want.txt): {(lo, hi)}"""
+    p = pathlib.Path(pack.dir) / 'want.txt'
+    if os.environ.get('N64RX_DRYBOOT_WANT', '1') == '0' or not p.is_file():
+        return set()
+    return {(int(w[1], 16), int(w[2], 16)) for w in (l.split() for l in p.read_text(encoding='utf-8').splitlines())
+            if len(w) == 3}
+
+
+def run(rom, a, pack, bdir, prog, log, want=None, route=None):
     """the dry boot of rom (its image as the console runs it) with analysis a;
-    the learn file it wrote, or None (nothing learnt, or no host compiler)"""
+    the learn file it wrote, or None (nothing learnt, or no host compiler).
+    want: pages to save as it ends as well ({(lo, hi)}, wants()), for a run again
+    after the first one's analysis asked: the first one's known functions, so
+    its learn file still has all that one's. N64RX_DRYBOOT_WANT=0: no such run"""
     exe = _exe(log)
     if exe is None:
         prog.note('dry boot skipped: no C compiler for this PC (N64RX_DRYBOOT)')
@@ -107,9 +146,10 @@ def run(rom, a, pack, bdir, prog, log):
     if not rom_file.exists() or rom_file.read_bytes() != rom.data:
         rom_file.write_bytes(rom.data)
     known = d / 'known.txt'
-    known.write_text(''.join(f'{k & 0xFFFFFFFF:08x}\n' for k in sorted({k & 0xFFFFFFFF for k in a.all_funcs()})))
+    if want is None or not known.exists():
+        known.write_text(''.join(f'{k & 0xFFFFFFFF:08x}\n' for k in sorted({k & 0xFFFFFFFF for k in a.all_funcs()})))
     boot = next((s for s in a.img.segments if s.name == 'boot'), None)
-    frames = os.environ.get('N64RX_DRYBOOT_FRAMES', '1800')
+    frames = os.environ.get('N64RX_DRYBOOT_FRAMES') or (route and _route_frames(route)) or '1800'
     cmd = [str(exe), str(rom_file), str(d), '--entry', f'{a.entry:08x}',
            '--boot-size', str(pack.boot_size if pack else (boot.size if boot else 0x100000)),
            '--cic', str(rom.cic or 6102), '--tv', str(tv_of_region(rom.code)),
@@ -122,7 +162,11 @@ def run(rom, a, pack, bdir, prog, log):
         cmd += ['--exl-calls', '1']
     if os.environ.get('N64RX_DRYBOOT_TABLES', '1') == '0':   # a jr's jump table page not captured (as before)
         cmd += ['--jump-tables', '0']
-    script = os.environ.get('N64RX_DRYBOOT_SCRIPT')   # an autopad script for its input, instead of the schedule
+    if want:
+        wf = d / 'want.txt'
+        wf.write_text(''.join(f'{lo:08x} {hi:08x}\n' for lo, hi in sorted(want)))
+        cmd += ['--want', str(wf)]
+    script = os.environ.get('N64RX_DRYBOOT_SCRIPT') or (route and str(route))   # an autopad script for its input, instead of the schedule
     if script:
         cmd += ['--script', script]
     try:
