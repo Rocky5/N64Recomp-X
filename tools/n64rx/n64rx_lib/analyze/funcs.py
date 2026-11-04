@@ -27,6 +27,7 @@ WALK_LATER = os.environ.get('N64RX_J_LATER', '1') != '0'   # a far j decided aft
 J_SEEN = os.environ.get('N64RX_J_SEEN', '1') != '0'
 
 KUSEG_TABLES = os.environ.get('N64RX_KUSEG_TABLES', '1') != '0'
+TABLE_SPILL = os.environ.get('N64RX_TABLE_SPILL', '1') != '0'
 GAP_DATA = os.environ.get('N64RX_GAP_DATA', '1') != '0'
 DATA_OPS = {0x30, 0x32, 0x34, 0x36, 0x38, 0x3A, 0x3C, 0x3E}   # ll lwc2 lld ldc2 sc swc2 scd sdc2
 
@@ -307,6 +308,21 @@ def _table_linear(img, fstart, pc, addr_only=False):
     if lw is None or lw.op != 35:
         return None
     d = last_def(lw.rs, lw.pc, 32)
+    # the entry's address spilled to the stack and read back just before the jump (a big
+    # switch in a function short of registers: WWF No Mercy's match engine, 70 words apart).
+    # One unresolved jr made its whole 900-function overlay's trial fail (segments.find), so
+    # the old overlay's code ran on the new one's data. N64RX_TABLE_SPILL=0: not followed
+    if TABLE_SPILL and d is not None and d.op == 35 and d.rs == 29:
+        v = d.pc - 4
+        while v >= max(fstart, d.pc - 4 * 256):
+            w = img.word(v)
+            if w is None:
+                return None
+            s = Ins(w, v)
+            if s.op == 43 and s.rs == 29 and s.simm == d.simm:   # sw rX, same(sp)
+                d = last_def(s.rt, s.pc, 32)
+                break
+            v -= 4
     if d is None or not (d.op == 0 and d.funct in (32, 33)):
         return None
     table = None

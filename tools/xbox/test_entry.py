@@ -100,6 +100,7 @@ def main():
     check(funcs.parse_entry(rom_with([NOP] * 48), ENTRY) is None, 'no entry at all')
 
     test_names()
+    test_table_spill()
     print(f'test_entry: {"passed" if not fails else f"{fails} failed"}')
     return 1 if fails else 0
 
@@ -137,6 +138,33 @@ def test_names():
     check('osGetCount' not in N.ambiguous, 'a copy of the same shape: not ambiguous')
     ids, N = ident(count, other, unique=True)
     check(list(ids.values()).count('osGetCount') == 1, 'N64RX_NAME_UNIQUE: still one name')
+
+
+def test_table_spill():
+    """a switch's entry address spilled to the stack and read back far from where it was
+    made (N64RX_TABLE_SPILL): the table is found, its bound from the sltiu before the jump"""
+    V0, V1, t = 2, 3, ENTRY + 0x400
+    made = [lui(V1, hi(t)), addiu(V1, V1, lo(t)), (T1 << 16) | (V0 << 11) | (2 << 6),
+            (V0 << 21) | (V1 << 16) | (V0 << 11) | 0x21, sw(T1, 172, SP), sw(V0, 180, SP)]
+
+    def build(off):
+        words = made + [NOP] * 70 + [i_(35, SP, T1, 172), i_(11, T1, V0, 3), beq(V0, ZERO, 8), NOP,
+                                     i_(35, SP, T0, off), i_(35, T0, V0, 0), jr(V0), NOP]
+        words += [NOP] * ((t - ENTRY) // 4 - len(words)) + [ENTRY + 8, ENTRY + 12, ENTRY + 16]
+        img = funcs.Image(rom_with(words))
+        seg = funcs.Segment('boot', 0x1000, ENTRY, 0x1000)
+        img.segments.append(seg)
+        img.focus = seg
+        return img, ENTRY + 4 * (len(made) + 70 + 6)
+
+    img, pc = build(180)
+    check(funcs._table_linear(img, ENTRY, pc) == (t, [ENTRY + 8, ENTRY + 12, ENTRY + 16]), 'a spilled entry address: the table')
+    img, pc = build(176)
+    check(funcs._table_linear(img, ENTRY, pc) is None, 'read back from a slot nothing was spilled to: no table')
+    img, pc = build(180)
+    funcs.TABLE_SPILL = False
+    check(funcs._table_linear(img, ENTRY, pc) is None, 'N64RX_TABLE_SPILL=0: not followed')
+    funcs.TABLE_SPILL = True
 
 
 if __name__ == '__main__':
