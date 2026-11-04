@@ -192,6 +192,12 @@ uint32_t xrom_xbe_section(const uint8_t* hdr, uint32_t len, const char* name, ui
 #ifndef XHW_ROM_IN_XBE
 #define XHW_ROM_IN_XBE 1   /* 0: ignore $ROM, read a ROM beside default.xbe only */
 #endif
+/* DIVERGES: a build for ROM hacks (with n64rx build --rom-beside) takes any file with
+ * an N64 header: no size, game code or SHA-1 check; the SHA-1 is still logged. The code
+ * in the XBE stays the code of the ROM it was built from. Default 0: only that ROM. */
+#ifndef XHW_ROM_ANY
+#define XHW_ROM_ANY 0
+#endif
 
 /* PLAN.md 3.5: resident up to this many MB (0: the page cache for every
  * ROM, a test of the cache on a small one), the page cache over it */
@@ -453,6 +459,15 @@ static void rom_chips(const xrom_info* info) {
 /* the SHA-1 in s_info against the pack's: a card, or the verified line */
 static void hash_verdict(void) {
     xrom_info* info = &s_info;
+    if (XHW_ROM_ANY) {
+        xsha1_hex(info->sha1, info->sha1_hex);
+        snprintf(info->label, sizeof info->label, "%s", info->code);
+        info->verdict = XROM_OK;
+        xhw_logf("[ROM] any ROM (XHW_ROM_ANY): SHA-1 %s not checked, %s built from %s", info->sha1_hex, s_target.title,
+                 s_target.nsha1 ? s_target.sha1[0] : "(none)");
+        xhw_splash_rom(NULL, NULL, 1);
+        return;
+    }
     if (xrom_check_hash(info, &s_target) != XROM_OK) {
         xhw_logf("[ROM] SHA-1 %s", info->sha1_hex);
         if (s_inside)   /* the build checked it on the PC: the copy went wrong */
@@ -529,6 +544,10 @@ const uint8_t* xhw_rom_load_verified(const xrom_target* target, xrom_info* out) 
     xsha1_ctx sha;
 
     s_target = *target;
+    if (XHW_ROM_ANY) {   /* the checks read these as "any" */
+        s_target.size = 0;
+        s_target.code[0] = ' ';
+    }
     memset(info, 0, sizeof *info);
     s_inside = 0;
     if (!forced_rom(info->file, (int)sizeof info->file)) {
