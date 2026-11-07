@@ -1401,6 +1401,15 @@ static void ipl3_left(uint32_t entry) {
         if (x < 0x40 || y <= x || y > 0x1000 || d > 0x100u || y - x + d > 0x400u || y - x + d > (entry & 0x1FFFFFFFu))
             continue;
         memcpy(s_ram + d, s_rom + x, y - x);
+        for (j = i + 4; j < i + 0x40 && j < 0x1000; j += 4)
+            if (be32(s_rom + j) == 0x01AC6826u) {   /* the 6106's is scrambled (boot.c) */
+                uint32_t k = 0x3C421AAAu, n;
+                for (n = 0; n < y - x; n += 4) {
+                    wbe32(s_ram + d + n, be32(s_rom + x + n) ^ k);
+                    k *= 0x0260BCD5u;
+                }
+                break;
+            }
         say("[BOOT] IPL3's last part in RDRAM %03x..%03x", d, d + y - x);
         return;
     }
@@ -1498,7 +1507,7 @@ int main(int argc, char** argv) {
     fseek(f, 0, SEEK_END);
     n = ftell(f);
     fseek(f, 0, SEEK_SET);
-    if (n < 0x101000 || n > 0xFC00000) {   /* (the cartridge window: a ROM hack can pass 64 MB) */ fprintf(stderr, "dryboot: %s is not a ROM\n", rom_path); fclose(f); return 1; }
+    if (n < 0x101000 || n > 0x4000000) { fprintf(stderr, "dryboot: %s is not a ROM\n", rom_path); fclose(f); return 1; }
     s_romsize = (uint32_t)n;
     s_rom = (uint8_t*)malloc(s_romsize);
     if (!s_rom || fread(s_rom, 1, s_romsize, f) != s_romsize) { fclose(f); return 1; }
@@ -1522,7 +1531,7 @@ int main(int argc, char** argv) {
     wbe32(s_ram + 0x304, 0);
     wbe32(s_ram + 0x308, 0xB0000000u);
     wbe32(s_ram + 0x30C, 0);
-    wbe32(s_ram + 0x310, cic);
+    wbe32(s_ram + 0x310, cic == 6106 ? 0x17D8u : cic);   /* (boot.c: what the 6106's tail leaves) */
     wbe32(s_ram + 0x314, 0);
     wbe32(s_ram + 0x318, mb << 20);   /* osMemSize: the build's */
     if (boot_size > s_romsize - 0x1000) boot_size = s_romsize - 0x1000;
@@ -1530,8 +1539,12 @@ int main(int argc, char** argv) {
     s_boot_hi = s_boot_lo + boot_size;
     if (s_boot_hi > s_ramsize) s_boot_hi = s_ramsize, boot_size = s_boot_hi - s_boot_lo;
     memcpy(s_ram + s_boot_lo, s_rom + 0x1000, boot_size);
-    if (cic == 6105 && 0x2FE1C4u <= s_ramsize) memcpy(s_ram + 0x2FE1C0u, s_rom + 0x750, 4);
+    if (cic == 6105 && 0x2FE1C4u <= s_ramsize) {   /* as the runtime's boot.c: the IPL3's two words */
+        memcpy(s_ram + 0x2FE1C0u, s_rom + 0x750, 4);
+        memcpy(s_ram + 0x2FB1F4u, s_rom + 0x73C, 4);
+    }
     memcpy(s_sp, s_rom, 0x1000);   /* DMEM held the ROM's first 4 KB */
+    if (cic == 6106) wbe32(s_sp, 0xFFFFFFFFu), wbe32(s_sp + 0x1000, 0x17D8u);   /* as the runtime's mmio.c, boot.c */
 
     memset(&C, 0, sizeof C);
     C.pc = entry;

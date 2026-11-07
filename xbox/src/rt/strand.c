@@ -20,7 +20,10 @@
  * that buffer before is ended.
  * DIVERGES: a context that returns from its entry waits for good (the N64
  * would jump to the buffer's ra again).
- * Kill switch: N64RX_STRANDS=0 (n64rx: the game's own pair, recompiled). */
+ * Kill switch: N64RX_STRANDS=0 (n64rx: the game's own pair, recompiled).
+ *
+ * The same strands carry hand-written coroutines with no setjmp to name
+ * (xrc_strand_switch below, at the end of this file). */
 #include <stdio.h>
 #include <string.h>
 
@@ -29,6 +32,8 @@
 
 void* xu_self_thr(void);
 void xu_adopt_thr(void* thr);
+void xrc_interp_ra(uint8_t* rdram, recomp_context* ctx, uint32_t entry);   /* interp.c */
+recomp_func_t* xrc_try_function(uint32_t vram);   /* ovl.c */
 int xu_thr_level(void* thr);
 
 #define MAX_STRANDS 96
@@ -46,6 +51,11 @@ typedef struct Strand {
     int has_base;
     void* base_jb[5];                /* its top: dying unwinds here (not the first strand of a thread) */
     uint32_t entry, sp, v, regs[11], fregs[12];   /* a new one: where it starts */
+    /* xrc_strand_switch */
+    volatile int sw_wait;            /* parked in a stack switch: resumed by a switch to sw_sp */
+    uint32_t sw_sp, sw_top;          /* the sp its routine came in with; the sp it was started on */
+    int sw_dying;                    /* its entry returned: what it runs now never comes back to it */
+    recomp_context* volatile sw_from;   /* the registers it takes, on the parked switcher's stack */
 } Strand;
 
 typedef struct {
@@ -60,7 +70,7 @@ static Buf s_bufs[MAX_BUFS];
 static uint32_t s_tls = 0xFFFFFFFFu;
 static volatile long s_busy;
 
-static void lock(void) { while (__sync_lock_test_and_set(&s_busy, 1)) xhw_sleep_ms(0); }
+static void lock(void) { XHW_WAIT_WHILE(__sync_lock_test_and_set(&s_busy, 1)); }
 static void unlock(void) { __sync_lock_release(&s_busy); }
 
 static Strand* strand_new(void* thr) {
@@ -117,6 +127,30 @@ void** xrc_strand_jb(uint32_t buf) {
 }
 
 static const int SREGS[11] = {29, 31, 16, 17, 18, 19, 20, 21, 22, 23, 30};   /* sp, ra, s0-s7, fp: the buffer's order */
+/* Where each sits in the N64 buffer. Mario Party's libc: sp, ra, s0-s7, fp from 0, f20-f31 from 0x2C. Bomberman 64's
+ * (-DXRC_JB_SGI=1, saves.py): sp 8, ra 0xC, s0-s7 from 0x14, fp 0x34, the float pairs high word first from 0x38; its
+ * FCSR at 0x68 is not kept (DIVERGES: the threads run with one rounding mode). NHL 99's own (-DXRC_JB_WORD=1, saves.py):
+ * s0-s7 from 0, sp 0x20, fp 0x24, ra 0x28, and no floats: f20-f31 stay as they are, as they do on the N64 */
+#ifndef XRC_JB_SGI
+#define XRC_JB_SGI 0
+#endif
+#ifndef XRC_JB_WORD
+#define XRC_JB_WORD 0
+#endif
+#define JB_HAS_F (!XRC_JB_WORD)
+#define JB_S(i) ((i) < 2 ? 8 + 4 * (i) : (i) < 10 ? 0x14 + 4 * ((i) - 2) : 0x34)
+#define JB_F(i) (0x38 + 4 * ((i) & ~1) + (((i) & 1) ? 0 : 4))
+#if XRC_JB_WORD
+#undef JB_S
+#undef JB_F
+#define JB_S(i) ((i) == 0 ? 0x20 : (i) == 1 ? 0x28 : (i) < 10 ? 4 * ((i) - 2) : 0x24)
+#define JB_F(i) 0
+#elif !XRC_JB_SGI
+#undef JB_S
+#undef JB_F
+#define JB_S(i) (4 * (i))
+#define JB_F(i) (0x2C + 4 * (i))
+#endif
 
 static uint32_t greg(recomp_context* ctx, int r) { return (uint32_t)(&ctx->r0)[r]; }
 static void sreg(recomp_context* ctx, int r, uint32_t v) { (&ctx->r0)[r] = (gpr)(int32_t)v; }
@@ -133,8 +167,8 @@ void xrc_setjmp_recomp(uint8_t* rdram, recomp_context* ctx) {
     Strand* me = current();
     Buf* b;
     int i;
-    for (i = 0; i < 11; i++) MEM_W(4 * i, buf) = (int32_t)greg(ctx, SREGS[i]);
-    for (i = 0; i < 12; i++) MEM_W(0x2C + 4 * i, buf) = (int32_t)*freg(ctx, i);
+    for (i = 0; i < 11; i++) MEM_W(JB_S(i), buf) = (int32_t)greg(ctx, SREGS[i]);
+    for (i = 0; JB_HAS_F && i < 12; i++) MEM_W(JB_F(i), buf) = (int32_t)*freg(ctx, i);
     lock();
     b = find(buf, 1);
     b->owner = me, b->ra = greg(ctx, 31), b->sp = greg(ctx, 29);
@@ -160,13 +194,13 @@ void xrc_strand_resumed(uint8_t* rdram, recomp_context* ctx, uint32_t buf) {
     int i;
     if (XHW_TEST_BUILD) {   /* diagnosis: the buffer changed between the longjmp and here, or holds sp 0 */
         static unsigned s_n;
-        uint32_t now = (uint32_t)MEM_W(0, buf);
+        uint32_t now = (uint32_t)MEM_W(JB_S(0), buf);
         if (XRC_STRAND_SNAP && (now != me->resume_regs[0] || !now) && s_n++ < 8)
             xhw_logf("[STRAND] resume at buffer %08x: sp %08x at the longjmp, %08x now (ra %08x)", (unsigned)buf,
                      (unsigned)me->resume_regs[0], (unsigned)now, (unsigned)me->resume_regs[1]);
     }
-    for (i = 0; i < 11; i++) sreg(ctx, SREGS[i], XRC_STRAND_SNAP ? me->resume_regs[i] : (uint32_t)MEM_W(4 * i, buf));
-    for (i = 0; i < 12; i++) *freg(ctx, i) = XRC_STRAND_SNAP ? me->resume_fregs[i] : (uint32_t)MEM_W(0x2C + 4 * i, buf);
+    for (i = 0; i < 11; i++) sreg(ctx, SREGS[i], XRC_STRAND_SNAP ? me->resume_regs[i] : (uint32_t)MEM_W(JB_S(i), buf));
+    for (i = 0; JB_HAS_F && i < 12; i++) *freg(ctx, i) = XRC_STRAND_SNAP ? me->resume_fregs[i] : (uint32_t)MEM_W(JB_F(i), buf);
     ctx->r2 = (gpr)(int32_t)me->resume_v;
     me->resume_buf = 0;
 }
@@ -240,7 +274,7 @@ static void strand_gc(uint8_t* rdram) {
         if (!st->used || !st->has_base || !st->parked || st->die || st->resume_buf) continue;
         for (j = 0; j < MAX_BUFS && !live; j++) {
             const Buf* b = &s_bufs[j];
-            live = b->buf && b->owner == st && (uint32_t)MEM_W(0, b->buf) == b->sp && (uint32_t)MEM_W(4, b->buf) == b->ra;
+            live = b->buf && b->owner == st && (uint32_t)MEM_W(JB_S(0), b->buf) == b->sp && (uint32_t)MEM_W(JB_S(1), b->buf) == b->ra;
         }
         if (live) continue;
         for (j = 0; j < MAX_BUFS; j++)
@@ -257,7 +291,7 @@ void xrc_longjmp_recomp(uint8_t* rdram, recomp_context* ctx);
 void xrc_longjmp_recomp(uint8_t* rdram, recomp_context* ctx) {
     static unsigned s_new;
     uint32_t buf = (uint32_t)ctx->r4, v = (uint32_t)ctx->r5 ? (uint32_t)ctx->r5 : 1u;
-    uint32_t sp = (uint32_t)MEM_W(0, buf), ra = (uint32_t)MEM_W(4, buf);
+    uint32_t sp = (uint32_t)MEM_W(JB_S(0), buf), ra = (uint32_t)MEM_W(JB_S(1), buf);
     Strand* me = current();
     Strand *to, *old = NULL;
     Buf* b;
@@ -277,8 +311,8 @@ void xrc_longjmp_recomp(uint8_t* rdram, recomp_context* ctx) {
     b = find(buf, 1);
     if (b->owner && b->ra == ra && b->sp == sp) {   /* back to the setjmp that filled it */
         to = b->owner;
-        for (i = 0; i < 11; i++) to->resume_regs[i] = (uint32_t)MEM_W(4 * i, buf);
-        for (i = 0; i < 12; i++) to->resume_fregs[i] = (uint32_t)MEM_W(0x2C + 4 * i, buf);
+        for (i = 0; i < 11; i++) to->resume_regs[i] = (uint32_t)MEM_W(JB_S(i), buf);
+        for (i = 0; JB_HAS_F && i < 12; i++) to->resume_fregs[i] = (uint32_t)MEM_W(JB_F(i), buf);
         if (XHW_TEST_BUILD && !sp)
             xhw_logf("[STRAND] longjmp to %08x with sp 0 (ra %08x) matched its setjmp", (unsigned)buf, (unsigned)ra);
         to->resume_buf = buf, to->resume_v = v;
@@ -292,8 +326,8 @@ void xrc_longjmp_recomp(uint8_t* rdram, recomp_context* ctx) {
     b->owner = NULL;
     to = strand_new(me->thr);
     to->entry = ra, to->sp = sp, to->v = v;
-    for (i = 0; i < 11; i++) to->regs[i] = (uint32_t)MEM_W(4 * i, buf);
-    for (i = 0; i < 12; i++) to->fregs[i] = (uint32_t)MEM_W(0x2C + 4 * i, buf);
+    for (i = 0; i < 11; i++) to->regs[i] = (uint32_t)MEM_W(JB_S(i), buf);
+    for (i = 0; JB_HAS_F && i < 12; i++) to->fregs[i] = (uint32_t)MEM_W(JB_F(i), buf);
     unlock();
     if (s_new++ < 16) xhw_logf("[STRAND] a new context at %08x, stack %08x", (unsigned)ra, (unsigned)sp);
     if (old) {   /* the one that waited on this buffer will never be resumed */
@@ -303,4 +337,97 @@ void xrc_longjmp_recomp(uint8_t* rdram, recomp_context* ctx) {
     if (!xhw_thread_spawn(strand_main, to, xu_thr_level(me->thr), STRAND_STACK))
         xrc_fatal_vram("A coroutine's thread could not be started", ra, 0);
     park(me);
+}
+
+/* A hand-written stack switch, as the interpreter meets it (interp.c XRC_STACK_SWITCH): sp came from memory and a jump
+ * through a register follows, with every register as the routine left them. Chopper Attack's tasks yield this way: one
+ * routine saves the registers on the task's stack and the next task's come off its own; ra, for a recompiled caller, is
+ * the interpreter's sentinel, so the jump "returns" to a C frame only the stack's own host thread holds.
+ *
+ * A strand parked here with that sp is the context going back: it takes the registers and its routine returns. Otherwise
+ * it is a new context at that address, on a new strand; another parked one started on the very same sp is the task
+ * whose stack was reused, ended. A context whose entry returned goes on at its ra (the task's exit, which switches away
+ * for good) and ends at the switch.
+ * DIVERGES: none meant; only one strand of an N64 thread runs at a time, as the one CPU ran one context. */
+static void sw_main(void* p) {
+    Strand* st = (Strand*)p;
+    recomp_context ctx;
+    uint32_t ra;
+    recomp_func_t* f;
+    if (s_tls == 0xFFFFFFFFu) s_tls = xhw_tls_alloc();
+    xhw_tls_set(s_tls, st);
+    xu_adopt_thr(st->thr);
+    if (__builtin_setjmp(st->base_jb)) {
+        lock();
+        st->used = 0;
+        unlock();
+        return;
+    }
+    st->has_base = 1;
+    ctx = *st->sw_from;
+    st->sw_from = NULL;
+    ra = (uint32_t)ctx.r31;
+    f = xrc_try_function(st->entry);
+    if (f) f(xrc_rdram, &ctx);
+    else xrc_interp_ra(xrc_rdram, &ctx, st->entry);
+    st->sw_dying = 1;
+    if (ra >= 0x80000000u && (f = xrc_try_function(ra)) != NULL) f(xrc_rdram, &ctx);
+    xhw_logf("[STRAND] the context started at %08x returned (ra %08x); it waits", (unsigned)st->entry, (unsigned)ra);
+    park(st);
+}
+
+void xrc_strand_switch(uint8_t* rdram, recomp_context* ctx, uint32_t target, uint32_t my_sp) {
+    static unsigned s_n, s_new;
+    Strand* me = current();
+    Strand* to = NULL;
+    uint32_t sp = (uint32_t)ctx->r29;
+    unsigned i;
+    (void)rdram;
+    if (XHW_TEST_BUILD && ++s_n % 30000 == 0)
+        xhw_logf("[STRAND] %u stack switches (%u new contexts), last to %08x", s_n, s_new, (unsigned)sp);
+    lock();
+    for (i = 0; i < MAX_STRANDS && !to; i++) {
+        Strand* st = &s_strands[i];
+        if (st->used && st != me && st->thr == me->thr && st->sw_wait && st->sw_sp == sp) to = st;
+    }
+    if (to) {
+        to->sw_wait = 0;
+        to->sw_from = ctx;
+    } else {
+        for (i = 0; i < MAX_STRANDS; i++) {
+            Strand* st = &s_strands[i];
+            if (st->used && st != me && st->thr == me->thr && st->sw_wait && st->has_base && st->sw_top == sp) {
+                st->sw_wait = 0;
+                st->die = 1;
+                xhw_event_signal(st->ev);
+            }
+        }
+        to = strand_new(me->thr);
+        to->entry = target, to->sw_top = sp, to->sw_from = ctx;
+        if (s_new++ < 16) xhw_logf("[STRAND] a new context at %08x, stack %08x", (unsigned)target, (unsigned)sp);
+    }
+    if (!me->sw_dying) me->sw_sp = my_sp, me->sw_wait = 1;
+    unlock();
+    if (to->sw_top == sp && !to->has_base && !to->sw_wait && to->entry == target) {
+        if (!xhw_thread_spawn(sw_main, to, xu_thr_level(me->thr), STRAND_STACK))
+            xrc_fatal_vram("A coroutine's thread could not be started", target, 0);
+    } else {
+        xhw_event_signal(to->ev);
+    }
+    if (me->sw_dying) {   /* its registers (on this stack) are taken, then this stack ends */
+        XHW_WAIT_WHILE(to->sw_from);
+        __builtin_longjmp(me->base_jb, 1);
+    }
+    for (;;) {
+        me->parked = 1;
+        xhw_event_wait(me->ev, XHW_INFINITE);
+        me->parked = 0;
+        if (me->die && me->has_base) __builtin_longjmp(me->base_jb, 1);
+        if (xhw_thread_self()) xhw_thread_set_level(xhw_thread_self(), xu_thr_level(me->thr));   /* osSetThreadPri meanwhile */
+        if (me->sw_from) {
+            *ctx = *me->sw_from;
+            me->sw_from = NULL;
+            return;
+        }
+    }
 }

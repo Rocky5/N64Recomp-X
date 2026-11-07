@@ -9,6 +9,7 @@
  * (renumbered commands, MTX/MOVEMEM/MOVEWORD/GEOMETRYMODE layouts, the
  * 32-entry vertex buffer, CULLDL, BRANCH_Z, POPMTX, LOAD_UCODE), and the
  * version texts the registry reads. */
+#include "../../xbox/src/hw/nv2a_cc.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -49,8 +50,12 @@ void xgfx_output(XgfxOutput* out) { *out = s_o; }
 void xgfx_frame_begin(void) {}
 static uint32_t s_wrap_s, s_wrap_t;   /* the last draw's unit 0 wrap modes */
 static int s_fog;   /* the last draw's fog */
+static unsigned s_k5;   /* the last draw's K5 */
+static int s_sc_right;  /* the last draw's scissor */
 void xgfx_draw(const XgfxState* st, const XgfxVtx* v, uint32_t ntris) {
     s_wrap_s = st->wrap_s[0], s_wrap_t = st->wrap_t[0];
+    s_sc_right = st->scissor[2];
+    s_k5 = st->k5;
     s_fog = st->fog;
     for (uint32_t i = 0; i < ntris * 3 && s_nv < MAXV; i++) s_v[s_nv++] = v[i];
 }
@@ -331,6 +336,51 @@ static void test_tri4(void) {
     }
 }
 
+/* Perfect Dark: 12-byte vertices (s16 x, y, z; flags, colour; s16 s, t), the
+ * colour a byte offset into the table 0x07 copies; found from the lists' shape.
+ * A microcode with no version text, as its is: 0x07 is no list and no DKR here */
+#define PDV_AT 0x12000u
+#define PDC_AT 0x12100u
+static void test_pd(void) {
+    static const int xy[3][2] = {{-200, -100}, {-150, -100}, {-100, -60}};
+    GfxUcode u = uc_of("no text");
+    unsigned t, i;
+    u.family = GFX_UC_F3D;
+    for (i = 0; i < 3; i++) {
+        uint32_t a = PDV_AT + 12u * i;
+        put16(a, (uint16_t)xy[i][0]); put16(a + 2, (uint16_t)xy[i][1]); put16(a + 4, 0);
+        put8(a + 6, 0); put8(a + 7, (uint8_t)(i * 4u));
+        put16(a + 8, 0); put16(a + 10, 0);
+    }
+    for (i = 0; i < 12; i++) put8(PDC_AT + i, (uint8_t)(10u + 10u * i));
+    s_pc = DL_AT;
+    head_f3d();
+    cmd(0x07000000u | (8u << 16) | 12u, PDC_AT);                     /* three colours */
+    cmd(0x04000000u | ((3u - 1u) << 20) | (0u << 16) | 36u, PDV_AT); /* G_VTX 3 at 0, 12 bytes each */
+    cmd(0xB1000002u, 0x00000010u);                                   /* TRI4: (0 1 2) */
+    cmd(0xB8000000u, 0);
+    t = run(&u);
+    CHECK(t == 1, "pd tris %u (want 1)", t);
+    if (t == 1) {
+        CHECK(near(s_v[0].x, sx(-200)) && near(s_v[1].x, sx(-150)) && near(s_v[2].x, sx(-100)), "pd x %.1f %.1f %.1f",
+              s_v[0].x, s_v[1].x, s_v[2].x);
+        CHECK(near(s_v[2].y, sy(-60)), "pd y %.1f (want %.1f)", s_v[2].y, sy(-60));
+        CHECK(s_v[0].rgba[0] == 10 && s_v[1].rgba[0] == 50 && s_v[2].rgba[0] == 90 && s_v[2].rgba[3] == 120,
+              "pd colours %u %u %u, alpha %u", s_v[0].rgba[0], s_v[1].rgba[0], s_v[2].rgba[0], s_v[2].rgba[3]);
+    }
+    /* the load alone says it, with no table first (after a change of microcode, which forgets it) */
+    s_pc = DL_AT;
+    head_f3d();
+    cmd(0x04000000u | ((3u - 1u) << 20) | (0u << 16) | 36u, PDV_AT);
+    cmd(0xB1000002u, 0x00000010u);
+    cmd(0xB8000000u, 0);
+    f3d_set_ucode(NULL);
+    t = run(&u);
+    CHECK(t == 1, "pd by its load: tris %u (want 1)", t);
+    if (t == 1) CHECK(near(s_v[1].x, sx(-150)), "pd by its load: x %.1f", s_v[1].x);
+    f3d_set_ucode(NULL);
+}
+
 static void test_f3dex(void) {
     GfxUcode u = uc_of("RSP Gfx ucode F3DEX       fifo 1.23 Yoshitaka Yasumoto 1997 Nintendo.");
     unsigned t;
@@ -408,6 +458,18 @@ static void test_f3dex2(void) {
               "f3dex2 v0 %.1f %.1f, v2 y %.1f", s_v[0].x, s_v[0].y, s_v[2].y);
     }
 
+    /* both cull bits: back only (XGFX_CULL_BOTH) */
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xDB060018u, VTX_AT);
+    cmd(0x01000000u | (32u << 12) | (32u << 1), 0x06000000u);
+    cmd(0xD9FFFFFFu, 0x00000600u);                              /* set CULL_FRONT | CULL_BACK */
+    cmd(0x05000000u | (0u << 16) | (2u << 8) | 16u, 0);          /* TRI1 0 1 8 */
+    cmd(0x05000000u | (0u << 16) | (16u << 8) | 2u, 0);          /* TRI1 0 8 1: clockwise, culled */
+    cmd(0xDF000000u, 0);
+    t = run(&u);
+    CHECK(t == 1, "cull both tris %u (want 1: the clockwise one culled, the other drawn)", t);
+
     /* LOAD_UCODE: an F3DEX list switches to F3DEX2 by the data segment's text */
     {
         const char* txt = "RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.";
@@ -427,6 +489,144 @@ static void test_f3dex2(void) {
         CHECK(t == 1, "load_ucode: tris %u", t);
         CHECK(strstr(s_log, "[GFX] ucode RSP Gfx ucode F3DEX.NoN") && strstr(s_log, "F3DEX2"), "load_ucode log: %s", s_log);
     }
+}
+
+/* F3DEXBG, Conker's (last in main: the game stays in this mode once it ran it) */
+static void test_f3dexbg(void) {
+    GfxUcode plain = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    GfxUcode bg = uc_of("RSP Gfx ucode F3DEXBG.NoN fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    uint32_t w0, w1;
+    unsigned t;
+    CHECK(bg.family == GFX_UC_F3DEX2 && (bg.flags & GFX_UC_F_BG) && bg.vtx_max == 80, "F3DEXBG parsed: %d %u %u", bg.family, bg.flags, bg.vtx_max);
+    CHECK(!(plain.flags & GFX_UC_F_BG), "plain F3DEX2 is not");
+    /* TRI4: (0 1 8) (1 8 9) (2 3 10) (3 10 11); the third index crosses the two words */
+    w0 = 0x10000000u | (0u << 23) | (1u << 18) | ((8u >> 2) << 15) | (1u << 10) | (8u << 5) | 9u;
+    w1 = ((8u & 3u) << 30) | (2u << 25) | (3u << 20) | (10u << 15) | (3u << 10) | (10u << 5) | 11u;
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xDB060018u, VTX_AT);
+    cmd(0x01000000u | (32u << 12) | (32u << 1), 0x06000000u);
+    cmd(w0, w1);
+    cmd(0xDF000000u, 0);
+    t = run(&plain);
+    CHECK(t == 0, "TRI4 in plain F3DEX2: %u tris", t);
+    t = run(&bg);
+    CHECK(t == 4, "TRI4: %u tris", t);
+    if (t == 4) {
+        CHECK(near(s_v[0].x, sx(-200)) && near(s_v[0].y, sy(-100)) && near(s_v[2].y, sy(-60)), "TRI4 first %.1f %.1f, %.1f",
+              s_v[0].x, s_v[0].y, s_v[2].y);
+    }
+    /* a vertex past plain F3DEX2's 32, and the plain text from now on keeps the mode */
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xDB060018u, VTX_AT);
+    cmd(0x01000000u | (3u << 12) | (63u << 1), 0x06000000u);   /* 3 at 60 */
+    cmd(0x05000000u | (120u << 16) | (122u << 8) | 124u, 0);   /* TRI1 60 61 62 */
+    cmd(0xDF000000u, 0);
+    t = run(&plain);
+    CHECK(t == 1, "vertices past 32, after the game ran it: %u tris", t);
+}
+
+/* G_SETCONVERT's K5 reaches the draw, and only it sets K5; the combiner compiler reads about 1 as 1 (Conker's black polygons) */
+static void test_k5(void) {
+    GfxUcode bg = uc_of("RSP Gfx ucode F3DEXBG.NoN fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    CcProg p;
+    unsigned t;
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xDB060018u, VTX_AT);
+    cmd(0x01000000u | (3u << 12) | (3u << 1), 0x06000000u);
+    cmd(0xEC000000u, 0xFFu);        /* K5 255 */
+    cmd(0xE7000000u, 0);            /* a pipe sync after it, whose w1 is 0, leaves it */
+    cmd(0x05000000u | (0u << 16) | (2u << 8) | 4u, 0);
+    cmd(0xDF000000u, 0);
+    t = run(&bg);
+    CHECK(t == 1 && s_k5 == 255, "K5 255: %u tris, k5 %u", t, s_k5);
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xDB060018u, VTX_AT);
+    cmd(0x01000000u | (3u << 12) | (3u << 1), 0x06000000u);
+    cmd(0xEC000000u, 0x1FFu);       /* a signed 9 bits: -1 */
+    cmd(0x05000000u | (0u << 16) | (2u << 8) | 4u, 0);
+    cmd(0xDF000000u, 0);
+    t = run(&bg);
+    CHECK(t == 1 && s_k5 == 0, "K5 -1: %u tris, k5 %u", t, s_k5);
+    /* second cycle (SHADE - ENV) * K5 + PRIM */
+    cc_compile(0xFFFE8Fu, 0xF517F8FFu, 1, 0, 0, &p);
+    CHECK(p.approximated && (p.approx_why & CC_APPROX_K5), "K5 as 0 is flagged: %x", (unsigned)p.approx_why);
+    cc_compile(0xFFFE8Fu, 0xF517F8FFu, 1, 0, 1, &p);
+    CHECK(!p.approximated && p.nstages >= 1, "K5 as 1 is exact: %x, %d stages", (unsigned)p.approx_why, p.nstages);
+}
+
+/* osDpSetNextBuffer's list (Killer Instinct Gold's clear): no end command, it stops at its length, and says it had a FullSync */
+static void test_rdp_list(void) {
+    GfxUcode ex = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    uint32_t len;
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xFF10027Fu, 0x00360000u);   /* colour image */
+    cmd(0xEF300000u, 0);             /* fill mode */
+    cmd(0xF7000000u, 0x00010001u);
+    cmd(0xF69FC77Cu, 0);             /* 640 x 480 */
+    cmd(0xE9000000u, 0);
+    len = s_pc - DL_AT;
+    /* what follows is not this list's */
+    cmd(0x01000000u | (3u << 12) | (3u << 1), 0x06000000u);
+    cmd(0x05000000u | (0u << 16) | (2u << 8) | 4u, 0);
+    cmd(0xDF000000u, 0);
+    s_nv = 0;
+    f3d_set_ucode(&ex);
+    f3d_run_rdp(DL_AT, len, 1);
+    CHECK(s_nv == 6, "its fill, and nothing past its length: %u vertices", s_nv);   /* (the fill: a quad) */
+    CHECK(f3d_last_fullsync(), "its FullSync");
+    /* a texture rectangle's second word has no opcode: read as a command it would be a vertex load */
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xFF10027Fu, 0x00360000u);
+    cmd(0xE4000000u | (100u << 14) | (100u << 2), (0u << 24) | (10u << 14) | (10u << 2));
+    cmd(0x01000000u, 0x06000000u);   /* (s, t: as it happens the bytes of a vertex load) */
+    len = s_pc - DL_AT;
+    s_nv = 0;
+    f3d_set_ucode(&ex);
+    f3d_run_rdp(DL_AT, len, 1);
+    CHECK(s_nv == 6, "a raw texture rectangle: %u vertices", s_nv);
+    /* and a display list after it runs to its end as ever */
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xDB060018u, VTX_AT);
+    cmd(0x01000000u | (3u << 12) | (3u << 1), 0x06000000u);
+    cmd(0x05000000u | (0u << 16) | (2u << 8) | 4u, 0);
+    cmd(0xDF000000u, 0);
+    CHECK(run(&ex) == 1, "a display list after it");
+}
+
+/* no viewport set, on a 640-wide screen: the start-up one is not a small viewport to clip to (Power Rangers).
+ * Runs before anything sets one: s_vp_set stays once set */
+static void test_vp_unset(void) {
+    GfxUcode ex = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    float mx = 0.0f;
+    unsigned i;
+    /* a swap of a 640-wide buffer makes the screen 640 x 480 */
+    f3d_swap(0x00360000u);
+    s_pc = DL_AT;
+    cmd(0xFF10027Fu, 0x00360000u);
+    cmd(0xEF300000u, 0);
+    cmd(0xF7000000u, 0x00010001u);
+    cmd(0xF69FC77Cu, 0);             /* 640 x 480 */
+    cmd(0xDF000000u, 0);
+    s_nv = 0;
+    f3d_set_ucode(&ex);
+    f3d_run(DL_AT, 1);
+    CHECK(s_nv >= 6, "the fill: %u vertices", s_nv);
+    for (i = 0; i < s_nv; i++) if (s_v[i].x > mx) mx = s_v[i].x;
+    CHECK(mx > 600.0f && s_sc_right > 600, "reaches the right edge: x %.0f, scissor %d", mx, s_sc_right);
+    /* back to a 320-wide screen for the rest */
+    f3d_swap(0x00380000u);
+    s_pc = DL_AT;
+    cmd(0xFF10013Fu, 0x00380000u);
+    cmd(0xDF000000u, 0);
+    f3d_run(DL_AT, 1);
+    f3d_set_ucode(NULL);
 }
 
 /* CI4 and CI8 through a TLUT (MK64's textures; G_LOADTLUT) */
@@ -557,6 +757,34 @@ static void test_tile_rowhash(void) {
     /* the tile has no clamp bit and mask 0: the RDP clamps (Ocarina of Time's moon, XGFX_MASK0_CLAMP) */
     CHECK(s_wrap_s == XGFX_WRAP_CLAMP && s_wrap_t == XGFX_WRAP_CLAMP, "mask 0: wrap %u/%u (want clamp)", s_wrap_s,
           s_wrap_t);
+}
+
+/* with the perspective divide off a triangle's coordinates come out at half (XGFX_TP_NONE_HALF: South Park: Chef's Luv Shack) */
+static float tp_s0(const GfxUcode* u, uint32_t persp) {
+    unsigned i;
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xDB060018u, VTX_AT);
+    cmd(0x01000000u | (32u << 12) | (32u << 1), 0x06000000u);
+    cmd(0xD7000002u, 0x80008000u);                                     /* G_TEXTURE on */
+    cmd(0xFD000000u | (4u << 21) | (1u << 19) | (8u - 1u), TEXI_AT);
+    cmd(0xF5000000u | (4u << 21) | (1u << 19) | (1u << 9), 7u << 24);
+    cmd(0xF4000000u, (7u << 24) | (28u << 12) | 28u);
+    cmd(0xF5000000u | (4u << 21) | (1u << 19) | (1u << 9), 0);
+    cmd(0xF2000000u, (28u << 12) | 28u);
+    cmd(0xFC121824u, 0xFF33FFFFu);                                     /* a combiner that reads the texel */
+    cmd(0xE3000C00u, persp);                                           /* G_TEXTPERSP */
+    for (i = 0; i < 3; i++) cmd(0x02000000u | (0x14u << 16) | ((i == 2 ? 8u : i) * 2u), (4u << 5) << 16 | (4u << 5));
+    cmd(0x05000000u | (0u << 16) | (2u << 8) | 16u, 0);                /* TRI1 0 1 8 */
+    cmd(0xDF000000u, 0);
+    run(u);
+    return s_v[0].s0;
+}
+static void test_tp_none(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    float on = tp_s0(&u, 0x00080000u), off = tp_s0(&u, 0);
+    CHECK(on > 0.1f, "tp: s0 %.3f with the divide on", on);
+    CHECK(off > on * 0.49f && off < on * 0.51f, "tp: s0 %.3f with the divide off, %.3f on (want half)", off, on);
 }
 
 /* a clamped axis with a mask clamps at the tile's extent: a tile wider than
@@ -1124,10 +1352,13 @@ static void test_zclear_infer(void) {
 int main(void) {
     test_ci();
     setup_data();
+    test_vp_unset();
     test_parse();
     test_decoders();
     test_fast3d();
     test_tri4();
+    test_pd();
+    test_fast3d();   /* nothing left over */
     test_f3dex();
     test_f3dex2();
     test_fast3d();   /* and Fast3D again after the others: nothing left over */
@@ -1140,6 +1371,7 @@ int main(void) {
     test_probe_dpsync();
     test_readback();
     test_tile_rowhash();
+    test_tp_none();
     test_clamp_extent();
     test_tex_recheck();
     test_rdp_tri();
@@ -1155,6 +1387,9 @@ int main(void) {
     test_vi_origin();
     test_zclear_infer();
     test_fast3d();   /* and Fast3D once more after the guards' lists */
+    test_f3dexbg();
+    test_k5();
+    test_rdp_list();
     if (s_fail) printf("test_f3dex: %d failed\n", s_fail);
     return s_fail ? 1 : 0;
 }

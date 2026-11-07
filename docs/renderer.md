@@ -70,9 +70,13 @@ CULLDL ends the list when every vertex in the range is beyond the same
 plane (the outcodes, which carry hor+'s wider extent); BRANCH_Z branches
 when the vertex's screen z (`z/w * vscale.z + vtrans.z`, 16.16) is at most
 the value; MODIFYVTX sets RGBA, ST (already scaled), the screen XY (back
-through the viewport at the vertex's w) or the screen Z. F3DLX/F3DLP and
-the .NoN/.Rej variants differ from their parent in clipping and precision
-only: the same commands. L3DEX (lines) draws nothing.
+through the viewport at the vertex's w) or the screen Z. With the perspective
+divide off (`G_TP_NONE`) a triangle's texture coordinates are halved
+(`XGFX_TP_NONE_HALF`, 2026-11-06: South Park: Chef's Luv Shack's pictures).
+With both cull bits set only the back is culled (`XGFX_CULL_BOTH`, 2026-11-06:
+Mortal Kombat 4's picture is drawn so, on F3DLX.Rej). F3DLX/F3DLP and the
+.NoN/.Rej variants differ from their parent in clipping and precision only:
+the same commands. L3DEX (lines) draws nothing.
 
 S2DEX: its backgrounds are drawn (`XGFX_S2DEX_BG`, 2026-10-18): G_BG_COPY
 and G_BG_1CYC (uObjBg / uObjScaleBg) stream the image, which may be bigger
@@ -109,7 +113,8 @@ each 16-byte group (`XGFX_DESWIZZLE32`, 2026-10-17: Smash Bros.'s
 character portraits and names were striped with the 16-bit rule; the
 maintainer's "blurry textures" on the console).
 
-Rare's Fast3D (GoldenEye, Perfect Dark: `RSP SW Version: 2.0G`) has
+Rare's Fast3D (GoldenEye: `RSP SW Version: 2.0G`; Perfect Dark's, with no
+version text, as well) has
 `G_TRI4` at 0xB1, unused in Nintendo's Fast3D: four triangles of 4-bit
 indices, x and y nibbles in w1, z in w0, a triangle of three 0s skipped
 (`XGFX_TRI4`, host test `tri4`); without it GoldenEye drew one model
@@ -118,7 +123,17 @@ text) has 0x07, reserved in Nintendo's Fast3D: `07 nn llll` + an address
 runs n commands from memory and returns (`XGFX_RARE_DLINMEM`); its
 texture rectangles' tile setup lives there.
 
-Its 3D is not read yet (open; read from a dump of its name-entry screen,
+Perfect Dark's microcode has no version text and its own geometry
+(`XGFX_PD`, host test `test_pd`): `G_VTX` loads 12-byte vertices (s16 x, y,
+z; u8 flags, colour; s16 s, t), so its length is 12n and not Fast3D's 16n,
+and the colour is a byte offset into a table `0x07` copied first (`07
+(bytes - 4) bytes` + its address, 4 bytes each: RGBA, or a normal and alpha
+when lit). Either shape turns it on; neither can be a JFG or DKR command
+(their lengths are 10n + 8 and 18n + 8; JFG's 0x07 has bytes = 8n). Before
+this it was read as JFG's "run commands from memory", so its colour tables
+ran as display lists. Its other commands are Fast3D's and `G_TRI4`.
+
+Jet Force Gemini's 3D is not read yet (open; read from a dump of its name-entry screen,
 `build-host/dumps/jfg-name.log`, with `bench_dl.py`): 0x05 (70,000 a
 minute, unhandled) draws triangles from memory, 16 bytes each (flag,
 three vertex indices, then s,t per vertex in 10.5), the count in the low
@@ -212,11 +227,21 @@ Added 2026-10-18:
   it (`XGFX_TLUT_OFFSET`): GoldenEye keeps each palette right after its
   texels (`gDPLoadTLUT07`), and its CI textures had taken their own texels
   as colours (the Dam's green blocks, speckled props, the purple sky);
+- K5: a game can set it with `G_SETCONVERT` as a constant for its combiner modes (Conker, 255). No register holds it, so about 1 reads as 1 and anything else as 0 (`XGFX_K5_ONE`).
+- RDP lists: `osDpSetNextBuffer` hands the RDP a list of its own commands with no RSP task (Killer Instinct Gold's clears). They are drawn (`f3d_run_rdp`, `XRC_DP_LIST`), a raw triangle's and
+  a texture rectangle's words included; a list that does not read as RDP commands only gives its DP done.
 - raw RDP triangles: Fast3D sends a G_RDPHALF_1 + G_RDPHALF_CONT pair to
   the RDP as one 64-bit word, and GoldenEye draws its cloud layer as RDP
   triangle commands built on the CPU (`sky.c`); their coefficients are
   drawn as the edge walker's two trapezoids (`XGFX_RDP_TRI`, host test
   `rdp_tri`).
+
+F3DEXBG, Conker's Bad Fur Day (`XGFX_BG`, host test `test_f3dexbg`; behaviour read from GLideN64, nothing
+copied): an F3DEX2 with 80 vertices, 0x10-0x1F drawing four triangles of 5-bit indices, a vertex's colour always
+its colour, its normal in a table `G_MOVEMEM` 14 names (two bytes per buffer index) plus its flag's low byte, and
+lights 48 bytes apart with a position and a constant attenuation: `vtx_lit_bg`. The microcode it loads later says
+plain F3DEX, so once a game has run F3DEXBG it stays in this mode. Seen in xemu only, a replayed frame and a run;
+the lights have not been judged against the real game.
 
 Widescreen (generic hor+, the 4:3 box), the screen-fade and BACK-menu held
 frame, the title fit and the scissor rules are below the GBI: the same for

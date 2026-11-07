@@ -36,6 +36,8 @@ KSEG_PROBE = os.environ.get('N64RX_KSEG_PROBE', '1') != '0'
 # libultra names (libultra is linked as one block; a game's own copy of a leaf
 # sits in its code). 0, the default: the first fit, as before
 NAME_UNIQUE = os.environ.get('N64RX_NAME_UNIQUE', '0') != '0'
+# kill switch: N64RX_DEBUG_ERROR=0 leaves a debug libultra's __osError to run (it writes to the development board)
+DEBUG_ERROR = os.environ.get('N64RX_DEBUG_ERROR', '1') != '0'
 # kill switch: N64RX_NAME_BITS=0 drops the state-bit tests the probe pass asked for (osViBlack's 0x20)
 NAME_BITS = os.environ.get('N64RX_NAME_BITS', '1') != '0'
 
@@ -240,7 +242,7 @@ def _anchors(N):
         # everything from its arguments, osUnmapTLB(index) only the index,
         # osUnmapTLBAll loops over every entry, osMapTLBRdb maps a fixed one
         if 'tlbwi' in ft.special and 'tlbp' not in ft.special and not ft.calls:
-            if ft.args_used >= {0, 1, 2, 3}:
+            if ft.args_used >= {0, 1, 2, 3} and (not TLB_INDEX or ('mt', 0) in ft.cop0):
                 N.fit(a, 'osMapTLB', 'tlbwi of an entry made from its arguments')
             elif ft.args_used == {0}:
                 N.fit(a, 'osUnmapTLB', 'tlbwi of an invalid entry at the index in arg0')
@@ -353,9 +355,11 @@ def _structure(N):
     for a, ft in f.items():
         if a in N.name:
             continue
-        # OSMesgQueue init: six stores at arg0 +0..+20, nothing else
-        if ft.leaf and ft.args_used >= {0, 1, 2} and all(N.arg_w(a, 0, o) for o in (0, 4, 8, 12, 16, 20)) and \
-                not ft.hw and not ft.cop0 and ft.size <= 0x40:
+        # OSMesgQueue init: six stores at arg0 +0..+20, nothing else (a debug build: and its checks)
+        err = N.a_('__osError')
+        if (ft.leaf or (err and set(ft.calls) == {err})) and ft.args_used >= {0, 1, 2} and \
+                all(N.arg_w(a, 0, o) for o in (0, 4, 8, 12, 16, 20)) and not ft.hw and not ft.cop0 and \
+                ft.size <= (0xC0 if err else 0x40):
             N.fit(a, 'osCreateMesgQueue', 'stores the six fields of an OSMesgQueue at arg0')
         # IDO's long helpers that never divide: shifts and multiplies on register pairs (64-bit, leaf, tiny)
     if di and ri:
@@ -391,7 +395,9 @@ def _structure(N):
             continue
         for c in f[a].calls:
             fc = f.get(c)
-            if fc and c not in N.name and ('64' in fc.special or fc.fcr) and ('mf', 12) in fc.cop0:
+            # (not __osError's stub, when the walk ran on from it into the code after: Mischief Makers)
+            if fc and c not in N.name and ('64' in fc.special or fc.fcr) and ('mf', 12) in fc.cop0 and \
+                    not (DEBUG_ERROR and _error_stub(N.img, c)):
                 N.one([c], '__osEnqueueAndYield', 'saves the running thread\'s context (Status, sd, FPU csr)')
     eay = N.a_('__osEnqueueAndYield')
     st = N.a_('osStartThread')
@@ -486,9 +492,10 @@ def _structure(N):
     # reset is already pending (osSendMesg, a little longer: Ridge Racer 64)
     if di and ri:
         sm = N.a_('osSendMesg')
-        ok = {di, ri} | ({sm} if sm else set())
+        err = N.a_('__osError')   # a debug build: its check, and it is longer
+        ok = {di, ri} | ({sm} if sm else set()) | ({err} if err else set())
         cands = [a for a, ft in f.items() if a not in N.name and {di, ri} <= set(ft.calls) <= ok and
-                 ft.args_used >= {0, 1, 2} and ft.size <= 0xC0 and not ft.gptr]
+                 ft.args_used >= {0, 1, 2} and ft.size <= (0x120 if err else 0xC0) and not ft.gptr]
         vim = N.a_('osCreateViManager')
         if vim:
             cands = [c for c in cands if c in f[vim].calls]
@@ -636,6 +643,14 @@ def _io(N):
         cands = [a for a, ft in f.items() if a not in N.name and sid in ft.calls and st_ in ft.calls and
                  ctq in ft.calls]
         N.one(cands, 'osContInit', 'waits with a timer, then SI DMAs to find the controllers')
+    # A libultra built with GCC (NBA Courtside's) has no shape the SI rules read. Its osContInit still times half a second from boot,
+    # and it divides the clock rate with a libgcc whose 64-bit words lie the other way: the wait comes out years long in the
+    # recompiled code, so it must go to the runtime. N64RX_CONT_INIT_TIME=0: no such name
+    if st_ and ctq and not N.a_('osContInit') and os.environ.get('N64RX_CONT_INIT_TIME', '1') != '0':
+        gt = N.a_('osGetTime')
+        if gt:
+            cands = [a for a, ft in f.items() if a not in N.name and gt in ft.calls and st_ in ft.calls and ctq in ft.calls]
+            N.one(cands, 'osContInit', 'osGetTime, then a timer wait on a queue of its own')
     if sid and sga and sra:
         si_users = [a for a, ft in f.items() if a not in N.name and sga in ft.calls and sra in ft.calls]
         for a in si_users:
@@ -654,7 +669,11 @@ def _io(N):
             ft = f[a]
             # (mq, address, buffer): __osContRamRead/Write take a channel too (arg 3 used)
             if sid in ft.calls and ft.args_used >= {0, 1, 2} and 3 not in ft.args_used:
-                if any(k[0] == 2 and 'w' in v for k, v in ft.arg.items()):
+                # (N64RX_EEPROM_READ=0: through arg2's own register only. Most keep it in a saved one: the bytes go out through
+                # that, after the last DMA, 16 games in the library, and their read was named as the write and wrote their saves.
+                # A write with its packing inlined stores bytes too, before the DMA: AKI's wrestling games)
+                if any(k[0] == 2 and 'w' in v for k, v in ft.arg.items()) or (
+                        os.environ.get('N64RX_EEPROM_READ', '1') != '0' and any(p > ft.call_last[sid] for p in ft.ptr_bytes)):
                     N.fit(a, 'osEepromRead', 'an EEPROM block read into *arg2')
                 else:
                     N.fit(a, 'osEepromWrite', 'an EEPROM block written from arg2')
@@ -696,6 +715,13 @@ def _io(N):
                  any(g in bufs or abs(g - b) < 0x100 for g in ft.globals_ for b in bufs)]
         if len(cands) > 1 and pack:   # the one that reads the buffer the pack routine fills
             cands = [a for a in cands if set(f[a].globals_) & pack] or cands
+        # still several, with captured code in the analysis (Conker: another routine near that buffer, and the game
+        # read a buffer nothing fills, its pads dead): libultra's two sit in one object file, this one just after.
+        # N64RX_GETREAD_NEAR=0: no name then, as before
+        if len(cands) > 1 and os.environ.get('N64RX_GETREAD_NEAR', '1') != '0':
+            near = [a for a in cands if 0 < (a & 0xFFFFFFFF) - (srd & 0xFFFFFFFF) < 0x400]
+            if near:
+                cands = [min(near)]
         N.one(cands, 'osContGetReadData', 'copies the SI buffer into OSContPad records at arg0')
     # osPiReadIo: access, raw read, release
     rri = N.a_('osPiRawReadIo')
@@ -759,11 +785,18 @@ def _sp_init(N):
 TLB_WRITE = {('mt', 0), ('mt', 2), ('mt', 3), ('mt', 10)}
 
 
+# osMapTLB takes the index in its first argument. Factor 5's boot has a helper of its own, four arguments (PageMask,
+# EntryHi, EntryLo0, EntryLo1) and the index in Index already: named osMapTLB, the runtime's took them as (index, pm,
+# vaddr, even), the game's code at 0x40000000 was never mapped, and Indiana Jones and Battle for Naboo crashed at their
+# first jump there. N64RX_TLB_INDEX=0: as before
+TLB_INDEX = os.environ.get('N64RX_TLB_INDEX', '1') != '0'
+
+
 def _tlb(N):
     for a, ft in N.f.items():
         if a in N.name or 'tlbwi' not in ft.special or not TLB_WRITE <= ft.cop0:
             continue
-        if {0, 1, 2, 3} <= ft.args_used and ('mt', 5) in ft.cop0:
+        if {0, 1, 2, 3} <= ft.args_used and ('mt', 5) in ft.cop0 and (not TLB_INDEX or ('mt', 0) in ft.cop0):
             N.fit(a, 'osMapTLB', 'PageMask, EntryHi, EntryLo0/1 from its arguments, tlbwi')
         elif ft.args_used == {0}:
             N.fit(a, 'osUnmapTLB', 'tlbwi of an invalid entry at the index in arg0')
@@ -777,7 +810,53 @@ def _tlb(N):
         N.one(cands, 'osYieldThread', '__osDisableInt, __osEnqueueAndYield, __osRestoreInt, no arguments')
 
 
-RULES = (_anchors, _hardware, _structure, _vi, _io, _sp_init, _tlb)
+def _error_stub(img, a):
+    """the function at a loads a pointer from a global and jumps to it, with no frame and no call, up to its jr ra
+    (read from the start: the handler after it has no caller in the code, so a walk can run on into it)"""
+    loaded, jumps = set(), 0
+    for pc in range(a, a + 0x50, 4):
+        w = img.word(pc)
+        if w is None:
+            return False
+        i = Ins(w, pc)
+        if i.is_jal or i.is_jalr or (i.op == 9 and i.rs == i.rt == 29):
+            return False
+        if i.is_jr:
+            if i.rs == 31:
+                return jumps > 0
+            if i.rs not in loaded:
+                return False
+            jumps += 1
+        elif i.op == 35:
+            loaded.add(i.rt)
+    return False
+
+
+def _debug_error(N):
+    """libultra built with its checks (NFL Blitz 2001, Puzzle League, ITF 2000): a check that fails calls
+    __osError(code, nargs, ...), which only jumps through a handler pointer. The handler writes to the
+    development board at 0xC0000000 or 0xB1FFxxxx, and the checks read state the runtime does not keep"""
+    if not DEBUG_ERROR:
+        return
+    cands = set()
+    for nm in ('osRecvMesg', 'osSendMesg', 'osJamMesg', 'osSetThreadPri', 'osStartThread', 'osCreateThread'):
+        a = N.a_(nm)
+        for c in (N.f[a].calls if a else ()):
+            fc = N.f.get(c)
+            if fc and c not in N.name and _error_stub(N.img, c):
+                cands.add(c)
+    N.one(cands, '__osError', "libultra's checks call it: a stub that jumps through a pointer read from a global")
+    # __osRdbSend(buf, size, type): packs bytes for the development board, its port at 0xC0000000, interrupts off.
+    # A debug build's printf comes through here (Puzzle League's thread at frame 495). __osSyncPutChars(type, len,
+    # buf) has the same shape and the same port (Super Mario 64 has that one, under this name): the stub fits both
+    di, ri = N.a_('__osDisableInt'), N.a_('__osRestoreInt')
+    if di and ri:
+        N.one([a for a, ft in N.f.items() if a not in N.name and {di, ri} <= set(ft.calls) and 0xC000 << 16 in ft.consts
+               and ft.args_used >= {0, 1, 2}],
+              '__osRdbSend', 'writes the development board port at 0xC0000000 with interrupts off, from its three arguments')
+
+
+RULES = (_anchors, _hardware, _structure, _vi, _io, _sp_init, _tlb, _debug_error)
 
 
 def identify(img, funcs):

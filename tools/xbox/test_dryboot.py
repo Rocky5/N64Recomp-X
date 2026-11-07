@@ -55,6 +55,24 @@ def cpu_trap_rom():
     return bytes(head) + b''.join(struct.pack('>I', w & 0xFFFFFFFF) for w in code) + bytes(0x100000)
 
 
+def scrambled_tail_rom(plain):
+    """an IPL3 whose copy to low RDRAM unscrambles (the 6106's: xor with a key, the key times 0x0260BCD5), and a program
+    that spins"""
+    head = bytearray(0x1000)
+    head[0:4] = b'\x80\x37\x12\x40'
+    head[8:12] = struct.pack('>I', 0x80000400)
+    x = 0x4F0
+    words = [(0x484, _i(9, 8, 8, x)), (0x488, _i(9, 11, 11, x + 4 * len(plain))), (0x498, 0x3C09A000), (0x4C4, 0x01AC6826)]
+    for at, w in words:
+        head[at:at + 4] = struct.pack('>I', w)
+    k = 0x3C421AAA
+    for i, w in enumerate(plain):
+        head[x + 4 * i:x + 4 * i + 4] = struct.pack('>I', w ^ k)
+        k = (k * 0x0260BCD5) & 0xFFFFFFFF
+    spin = [(2 << 26) | ((0x80000400 >> 2) & 0x3FFFFFF), 0]
+    return bytes(head) + b''.join(struct.pack('>I', w) for w in spin) + bytes(0x100000)
+
+
 def main():
     fails = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -113,6 +131,17 @@ def main():
             fails.append(f'--want: the page asked for not saved (exit {r.returncode}, record at {at})')
         if 'code 00700000' in got:
             fails.append('--want: an unmapped page saved')
+        tail = tmp / 'tail.z64'
+        plain = [0x24081234, 0x3C0BB000, 0x8D690008, 0x240B17D8]
+        tail.write_bytes(scrambled_tail_rom(plain))
+        out4 = tmp / 'out4'
+        out4.mkdir()
+        dump4 = tmp / 'tail.bin'
+        r = subprocess.run([str(exe), str(tail), str(out4), '--entry', '80000400', '--frames', '1', '--cic', '6106',
+                            '--dump', '80000000', '16', str(dump4)], capture_output=True, text=True, env=env)
+        got4 = dump4.read_bytes() if dump4.exists() else b''
+        if got4[:16] != b''.join(struct.pack('>I', w) for w in plain):
+            fails.append(f'the 6106 tail not unscrambled: {got4[:16].hex()} (exit {r.returncode})')
         trap = tmp / 'trap.z64'
         trap.write_bytes(cpu_trap_rom())
         out2 = tmp / 'out2'

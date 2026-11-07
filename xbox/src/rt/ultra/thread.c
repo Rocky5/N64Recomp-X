@@ -84,6 +84,7 @@ typedef struct {
     volatile uint32_t wait;     /* what it sleeps on (a queue address, |1 for "full"), 0 when running */
     uint32_t entry, arg, sp;
     int ints_off;               /* __osDisableInt / cop0 status IE clear: holds one lock level */
+    int mask_boost;             /* osSetIntMask(OS_IM_NONE) in force on this thread: above every game thread (XRC_INTMASK_BOOST) */
     int mask_off;               /* osSetIntMask(OS_IM_NONE): 1 took that level, 2 found it taken */
     volatile int stopped;       /* in osStopThread, until an osStartThread */
     volatile int fresh;         /* osCreateThread again on this OSThread: start over at the entry */
@@ -94,6 +95,9 @@ typedef struct {
     void* jb[5];                /* thread_body's restart point (__builtin_setjmp) */
     recomp_context* ctx;        /* thread_body's: its sp for interp.c's exception code */
     volatile unsigned sleeps;   /* times it went to sleep (xu_send's yield) */
+    unsigned wait_seq;          /* wake_first: FIFO among equals */
+    int woken;                  /* wake_first: signalled, and not back here yet */
+    int in_send;                /* inside osSendMesg, past the message (sp.c XRC_RCP_SENDER_US) */
     uint32_t gp;                /* its creator's gp (XRC_THREAD_GP) */
     int fr;                     /* it runs with Status.FR (recomp.h XRC_FR) */
     void* starter;              /* the Thr that started it (XRC_START_DEFER) */
@@ -101,6 +105,7 @@ typedef struct {
     int rs;                     /* XRC_RUN_TOKEN: RS_NONE, RS_READY (runnable), RS_BLOCKED (on an N64 object) */
     unsigned seq;               /* its place among the ready threads of its priority (FIFO) */
     xhw_event* tev;             /* the run token handed to it */
+    int raised, raised_from;    /* it raised its own priority, from this one (task_gate) */
 } Thr;
 enum { RS_NONE, RS_READY, RS_BLOCKED };
 static Thr s_thr[MAX_THREADS];
@@ -228,6 +233,35 @@ static void wake_all(uint32_t key) {
     for (i = 0; i < s_nthr; i++)
         if (s_thr[i].wait == key) make_ready(&s_thr[i]), xhw_event_signal(s_thr[i].ev), n++;
     if (n) resched();
+}
+
+static int pri_of(const Thr* d);
+
+/* A message goes to one waiter, the highest priority, first come among equals, and the others stay blocked, as libultra's queue does.
+ * All of them woken to race for it, at one kernel level the lower could win: Wipeout 64's pad thread (N64 priority 8) took the SI
+ * done its main thread (10) waited for in the rumble pak's probe, and main never ran again. -DXRC_WAKE_ONE=0: all of them */
+#ifndef XRC_WAKE_ONE
+#define XRC_WAKE_ONE 1
+#endif
+static unsigned s_wait_seq;
+static void wake_first(uint32_t key) {
+    Thr* best = NULL;
+    int i;
+    if (!XRC_WAKE_ONE) {
+        wake_all(key);
+        return;
+    }
+    for (i = 0; i < s_nthr; i++) {
+        Thr* d = &s_thr[i];
+        if (d->wait != key || d->woken) continue;
+        if (!best || pri_of(d) > pri_of(best) || (pri_of(d) == pri_of(best) && (int)(d->wait_seq - best->wait_seq) < 0)) best = d;
+    }
+    if (best) {
+        best->woken = 1;
+        make_ready(best);
+        xhw_event_signal(best->ev);
+        resched();
+    }
 }
 
 /* under the lock: sleep until woken; every level of the lock is let go
@@ -384,8 +418,14 @@ static void sleep_on(Thr* me, uint32_t key) {
      * SP done right after starting the task): back to the caller's check,
      * unless a thread that blocked there first gets it (nnsched's audio
      * thread, waiting for the graphics task it yielded) */
-    if (xu_rcp_flush(me) && !waiter_first(me, key)) return;
+    {
+        int out = xu_rcp_flush(me);
+        out += xu_rcp_dp_wait(me, key);
+        if (out && !waiter_first(me, key)) return;
+    }
     me->wait = key;
+    me->wait_seq = s_wait_seq++;
+    me->woken = 0;
     me->sleeps++;
     running_next(me);
     make_blocked(me);   /* the run token to the next */
@@ -446,14 +486,19 @@ static void stop_wait(Thr* me, int held) {
  * (100) starts its graphics thread (40), then makes the message queues; the
  * graphics thread, run beside it, sent its first DMA's message into a
  * queue that was then made again, and waited on it for good.
- * -DXRC_START_DEFER=1 to use it; 0 (the default for now): the new thread
- * runs at once, as before. A lower kernel level is not enough either: a
- * host block in the starter (a log line, the lock) lets any lower level run,
- * and with XRC_RANK_LEVELS (every priority its own level) Star Fox 64's
- * graphics, timer and serial threads all slept on queues main then made
- * again. -DXRC_START_DEFER=2: the wait whatever the levels */
+ * A lower kernel level is not enough either: a host block in the starter
+ * (a log line, the lock) lets any lower level run, and with XRC_RANK_LEVELS
+ * (every priority its own level) Star Fox 64's graphics, timer and serial
+ * threads all slept on queues main then made again. So the wait is whatever
+ * the levels (2, by default since 2026-11-06: Knockout Kings 2000's thread
+ * sent its first DMA's message the same way).
+ * -DXRC_START_DEFER=1: only when the levels are the same; 0: the new thread
+ * runs at once */
 #ifndef XRC_START_DEFER
-#define XRC_START_DEFER 0   /* off until tested on more games (Star Fox 64: xemu) */
+#define XRC_START_DEFER 2
+#endif
+#ifndef XRC_START_DEFER_US
+#define XRC_START_DEFER_US 200000u
 #endif
 static void start_defer(Thr* d) {
     Thr* s = (Thr*)d->starter;
@@ -464,7 +509,7 @@ static void start_defer(Thr* d) {
     t0 = xhw_time_us();
     /* or it lowers its priority below this one's (an idle thread that drops to 0 and spins) */
     while (s->sleeps == d->starter_sleeps && !s->wait && !s->stopped && !s->dead && pri_of(s) > pri_of(d) &&
-           xhw_time_us() - t0 < 200000u)
+           xhw_time_us() - t0 < XRC_START_DEFER_US)
         xhw_yield();
 }
 
@@ -486,6 +531,7 @@ static void thread_body(void* p) {
     recomp_context ctx;
     if (s_tls == 0xFFFFFFFFu) s_tls = xhw_tls_alloc();
     xhw_tls_set(s_tls, d);
+    d->kt = xhw_thread_self();   /* (its starter may not run again before this thread needs it) */
     start_defer(d);
     if (XRC_THREAD_RESUME && __builtin_setjmp(d->jb)) {   /* created again (stop_wait) */
         d = (Thr*)xhw_tls_get(s_tls);
@@ -564,11 +610,22 @@ ULTRA(osCreateThread) {
     xu_unlock();
 }
 
+/* osCreateThread over a thread blocked on a queue, then osStartThread: on the N64 it runs from its entry at once if
+ * it is the highest. Here it stayed blocked until a message woke it, and only then started over: NuSystem's task
+ * manager (nuGfxInit a second time; Knife Edge, Batman Beyond) made its queue again over the message that
+ * had woken it, the game's count of tasks under way never came down, and its main thread spun on it for good.
+ * A lower level is not enough to keep the starter back: the thread's first host block (its log line) lets the
+ * starter run, start a task and have its done sent before the queue is made. The starter waits for the thread to
+ * block first, as for a shared level below. -DXRC_RESTART_BLOCKED=0: as before */
+#ifndef XRC_RESTART_BLOCKED
+#define XRC_RESTART_BLOCKED 1
+#endif
+
 ULTRA(osStartThread) {
     uint32_t t = ARG(0);
     Thr* d = find(t);
     Thr* me = self();
-    int pri;
+    int pri, restarted = 0;
     (void)rdram;
     if (!d) xrc_fatal_vram("osStartThread: unknown thread", t, 0);
     TRACE("[OS] trace: start %08x (kt %d stopped %d wait %x fresh %d) by %08x", (unsigned)t, d->kt != 0, d->stopped,
@@ -582,6 +639,9 @@ ULTRA(osStartThread) {
         xu_lock();
         token_join(d);
         xu_unlock();
+        /* the boot code's first start is a dispatch it never comes back from, and it can hold the lock (interrupts off). A thread
+         * above it that spins would keep it from its park with the lock held, and the VI thread waiting for that: Wave Race 64 */
+        if (me->t == 0 && !me->entry) xhw_thread_set_level(xhw_thread_self(), 14);
         d->kt = xhw_thread_spawn(thread_body, d, xu_level_of(pri), HOST_STACK);
         if (!d->kt) xrc_fatal_vram("osStartThread: no kernel thread", t, 0);
         s_started++;
@@ -600,9 +660,12 @@ ULTRA(osStartThread) {
          * osStartThread (All-Star Baseball 2000's pager, beside the flag it
          * leaves set) makes it runnable, as libultra's does */
         wr16(t + TH_STATE, OS_STATE_RUNNABLE);
-    } else if (d->halted) {   /* stopped by another thread, started again before it reached its block */
+    } else if (d->halted || (XRC_RESTART_BLOCKED && XRC_THREAD_RESUME && d->fresh && d->wait)) {
+        /* stopped by another thread, started again before it reached its block; or created again over its block */
         wr16(t + TH_STATE, OS_STATE_RUNNABLE);
         xu_lock();
+        restarted = !d->halted;
+        if (restarted) d->wait = 0;   /* what the wait below looks for: its next block */
         d->halted = 0;
         make_ready(d);
         resched();
@@ -619,7 +682,7 @@ ULTRA(osStartThread) {
     /* at most 200 ms: a started thread that waits by polling (a pause, an
      * osYieldThread loop) sets neither, and the starter never returned (5b.6) */
     if (XRC_THREAD_RESUME && me->t && (int32_t)rd32(t + TH_PRIORITY) > (int32_t)rd32(me->t + TH_PRIORITY) &&
-        xu_level_of((int32_t)rd32(t + TH_PRIORITY)) == xu_level_of((int32_t)rd32(me->t + TH_PRIORITY))) {
+        (restarted || xu_level_of((int32_t)rd32(t + TH_PRIORITY)) == xu_level_of((int32_t)rd32(me->t + TH_PRIORITY)))) {
         uint64_t t0 = xhw_time_us();
         while (!d->stopped && !d->wait && xhw_time_us() - t0 < 200000u) xhw_yield();
     }
@@ -774,22 +837,83 @@ static void rank_update(int extra) {
     }
     for (i = 0; i < s_nthr; i++) {
         Thr* d = &s_thr[i];
-        if (d->t && d->kt && !d->dead && !d->ints_off) xhw_thread_set_level(d->kt, xu_level_of(pri_of(d)));
+        if (d->t && d->kt && !d->dead && !d->ints_off && !d->mask_boost) xhw_thread_set_level(d->kt, xu_level_of(pri_of(d)));
     }
 }
 
 #ifndef XRC_PRI_LOCKED
 #define XRC_PRI_LOCKED 1
 #endif
+#ifndef XRC_LOWER_UNLOCKED   /* -DXRC_LOWER_UNLOCKED=0: a thread lowers itself under the lock, as before */
+#define XRC_LOWER_UNLOCKED 1
+#endif
 #ifndef XRC_INTS_BOOST
 #define XRC_INTS_BOOST 1
 #endif
+/* A thread can raise itself above the scheduler, start a task and record it
+ * in the scheduler's state before it lowers itself again (Perfect Dark's
+ * sched_submit_task, from its main and audio threads). On the N64 nothing got
+ * between, and the start took no time. Here the start runs the whole task, on
+ * the Xbox's one CPU, and whenever it waits on the GPU a lower thread runs: the
+ * scheduler, on a retrace, saw the RSP idle and started a second task beside
+ * it, and the second SP done found no task to finish (xemu: a write near NULL
+ * at frame 369). So a raised thread's task runs at its next runtime call
+ * (sp.c: xu_sp_held), by when it has recorded it. And a thread about to raise
+ * itself past another that can run (the scheduler in a host wait, or in its own
+ * task, which runs in its start as ever) waits for that one to block, or it
+ * would see the RSP idle too: on the N64 the higher thread was running and this
+ * one was not. It looks again once raised, for a thread that woke meanwhile
+ * (xemu: the same write at frame 2299 without this). Other threads keep the
+ * GPU's waits (a game's logic beside its scheduler's task). Bounded (a higher
+ * thread that polls never blocks; a task can be held 15 s by a screenshot's serial dump), so a mistake here costs time and no
+ * deadlock. -DXRC_TASK_GATE=0: as before */
+#ifndef XRC_TASK_GATE
+#define XRC_TASK_GATE 1
+#endif
+void* xu_task_thr(void);      /* sp.c */
+void xu_sp_held(void* me);    /* sp.c */
+static int gate_runnable(const Thr* me, int from, int to) {
+    int i;
+    for (i = 0; i < s_nthr; i++) {
+        const Thr* d = &s_thr[i];
+        int p;
+        if (d == me || !d->t || !d->kt || d->dead || d->wait || d->stopped) continue;
+        p = pri_of(d);
+        if (p > from && p <= to) return 1;
+    }
+    return 0;
+}
+static void task_gate(const Thr* me, int from, int to) {
+    unsigned ms;
+    if (!XRC_TASK_GATE || me->ints_off) return;
+    for (ms = 0; ms < 30000; ms++) {
+        const Thr* o = (const Thr*)xu_task_thr();
+        if (!(o && o != me && pri_of(o) > from) && (ms >= 20 || !gate_runnable(me, from, to))) return;
+        xhw_sleep_ms(1);
+    }
+}
+int xu_thr_raised(void* thr);
+int xu_thr_raised(void* thr) { return XRC_TASK_GATE && thr && ((const Thr*)thr)->raised; }
+
 ULTRA(osSetThreadPri) {
     uint32_t t = ARG(0);
     int pri = (int)(int32_t)ARG(1);
     Thr* d = t ? find(t) : self();
+    int gate_from = -1, lower_self, pri_old;
     (void)rdram;
     if (!d) return;
+    pri_old = pri_of(d);
+    if (d == tls_thr()) {
+        xu_sp_held(d);   /* still raised */
+        gate_from = pri_of(d);
+        if (pri > gate_from) {
+            task_gate(d, gate_from, pri);
+            if (!d->raised) d->raised = 1, d->raised_from = gate_from;
+        } else {
+            if (d->raised && pri <= d->raised_from) d->raised = 0;
+            gate_from = -1;
+        }
+    }
     /* under the lock (rank_update reads every record), and a thread holding
      * interrupts off stays at 14 until ints_on puts it at its new level: it
      * dropped from 14 to 8 inside its critical section, Kirby 64's deadlock
@@ -798,10 +922,18 @@ ULTRA(osSetThreadPri) {
     if (XRC_PRI_LOCKED) xu_lock();
     if (d->t) wr32(d->t + TH_PRIORITY, (uint32_t)pri);
     rank_update(0);
-    if (d->kt && !(XRC_PRI_LOCKED && XRC_INTS_BOOST && d->ints_off)) xhw_thread_set_level(d->kt, xu_level_of(pri));
+    /* A thread lowering itself lets the lock go first. Lowered under it, it could be preempted there for good:
+     * a polling thread above it (Brunswick's main loop, waiting for a counter its retrace thread keeps) never
+     * blocks, its idle thread at level 2 never ran again, and the VI thread waited for the lock: retrace stopped
+     * at 10 or so, a stall at boot that took its timing from everything else that ran. */
+    lower_self = XRC_LOWER_UNLOCKED && XRC_PRI_LOCKED && d == tls_thr() && d->kt && !d->ints_off && !d->mask_boost && s_depth == 1 &&
+                 xu_level_of(pri) < xu_level_of(pri_old);
+    if (d->kt && !lower_self && !d->mask_boost && !(XRC_PRI_LOCKED && XRC_INTS_BOOST && d->ints_off)) xhw_thread_set_level(d->kt, xu_level_of(pri));
     resched();   /* a lowered holder or a raised ready thread: the token moves */
     if (XRC_PRI_LOCKED) xu_unlock();
+    if (lower_self) xhw_thread_set_level(d->kt, xu_level_of(pri));
     token_yield(tls_thr());
+    if (gate_from >= 0) task_gate(d, gate_from, pri);
 }
 
 ULTRA(osGetThreadPri) {
@@ -876,11 +1008,31 @@ void xu_pause_unlocked(uint32_t ms) {
 }
 
 /* ---- message queues ---- */
+/* A queue made again over a thread asleep on it: on the N64 the list of sleepers is overwritten, and that thread never hears
+ * of it again. Here sleepers are found by the queue's address, so it went on waking and took the messages of whoever waits
+ * there now: Fighter's Destiny 2's pad thread (100) took the SI done its main thread (10) was waiting for, and nothing moved.
+ * Only one of a higher priority than the maker: one lower could not have got there first on the N64, and is there by the
+ * host's order (Star Fox 64's boot race), so it goes on being woken. -DXRC_QUEUE_ORPHAN=0: all woken, as before */
+#ifndef XRC_QUEUE_ORPHAN
+#define XRC_QUEUE_ORPHAN 1
+#endif
+#define WAIT_ORPHAN 0xFFFFFFFEu
 ULTRA(osCreateMesgQueue) {
     uint32_t mq = ARG(0);
     static unsigned s_again;
     int i;
     (void)rdram;
+    if (XRC_QUEUE_ORPHAN) {
+        int p = pri_of(self());
+        xu_lock();
+        for (i = 0; i < s_nthr; i++)
+            if (s_thr[i].t && !s_thr[i].dead && s_thr[i].wait && s_thr[i].wait != 1u && (s_thr[i].wait & ~1u) == mq && pri_of(&s_thr[i]) > p) {
+                xhw_logf("[OS] queue %08x made again by priority %d: N64 thread %08x (%d) asleep on it never hears of it again", (unsigned)mq, p,
+                         (unsigned)s_thr[i].t, pri_of(&s_thr[i]));
+                s_thr[i].wait = WAIT_ORPHAN;
+            }
+        xu_unlock();
+    }
     /* a queue made again over messages or a sleeper: a thread used it before
      * its maker got there (the boot race of threads run beside their starter) */
     if ((int32_t)rd32(mq + MQ_VALIDCOUNT) > 0 && (int32_t)rd32(mq + MQ_VALIDCOUNT) <= (int32_t)rd32(mq + MQ_MSGCOUNT) &&
@@ -948,6 +1100,37 @@ static int watched_queue(uint32_t mq) {
         ;
 }
 #endif
+/* sp.c: a game thread on a level above this one's is runnable */
+int xu_thr_above_runs(void* thr) {
+    const Thr* t = (const Thr*)thr;
+    int i, lv = xu_level_of(pri_of(t));
+    for (i = 0; i < s_nthr; i++) {
+        const Thr* d = &s_thr[i];
+        if (d != t && d->t && !d->dead && !d->stopped && !d->wait && xu_level_of(pri_of(d)) > lv) return 1;
+    }
+    return 0;
+}
+
+/* -DXRC_SEND_MARK=0 with -DXRC_RCP_SENDER_US=0: no marks, no lock on the way out */
+#ifndef XRC_SEND_MARK
+#define XRC_SEND_MARK 1
+#endif
+/* a game thread still inside its osSendMesg, preempted by what it woke: under the lock */
+int xu_thr_in_send(void) {
+    int i;
+    for (i = 0; i < s_nthr; i++)
+        if (s_thr[i].in_send && s_thr[i].t && !s_thr[i].dead && !s_thr[i].stopped) return 1;
+    return 0;
+}
+
+/* sp.c: the lowest thread to send since it last asked. Under the lock */
+static Thr* s_low_sender;
+void* xu_thr_low_sender(void) {
+    Thr* t = s_low_sender;
+    s_low_sender = NULL;
+    return t;
+}
+
 int xu_send(uint32_t mq, uint32_t msg, int block, int jam) {
     Thr* me = block ? self() : NULL;
     int32_t count, valid, first;
@@ -985,10 +1168,30 @@ int xu_send(uint32_t mq, uint32_t msg, int block, int jam) {
         wr32(rd32(mq + MQ_MSG) + 4 * (uint32_t)((first + valid) % count), msg);
     }
     wr32(mq + MQ_VALIDCOUNT, (uint32_t)(valid + 1));
-    wake_all(mq);
-    xu_unlock();
-    if (XRC_RUN_TOKEN) token_yield(tls_thr());   /* a game thread that woke a higher one: it runs first */
-    else send_yield(mq);
+#ifdef XRC_SP_RING_Q
+    {
+        void xu_sp_ring_note(int w, uint32_t a, uint32_t b);
+        if (mq == (uint32_t)(XRC_SP_RING_Q) || mq == (uint32_t)(XRC_SP_RING_Q2))
+            xu_sp_ring_note(mq == (uint32_t)(XRC_SP_RING_Q) ? 'M' : 'J', msg, rd32(XRC_DIAG_WATCH));
+    }
+#endif
+    {
+        Thr* sender = XRC_SEND_MARK ? tls_thr() : NULL;
+        if (sender) {   /* sp.c XRC_RCP_SENDER_US */
+            sender->in_send = 1;
+            if (!s_low_sender || xu_level_of(pri_of(sender)) < xu_level_of(pri_of(s_low_sender))) s_low_sender = sender;
+        }
+        wake_first(mq);
+        xu_unlock();
+        if (XRC_RUN_TOKEN) token_yield(tls_thr());   /* a game thread that woke a higher one: it runs first */
+        else send_yield(mq);
+        if (sender) {
+            xu_lock();
+            sender->in_send = 0;
+            if (!xu_thr_in_send()) xu_rcp_senders_out(sender);
+            xu_unlock();
+        }
+    }
     return 0;
 }
 
@@ -1008,6 +1211,7 @@ ULTRA(osRecvMesg) {
     Thr* me = block ? self() : NULL;
     int32_t valid, first, count;
     (void)rdram;
+    xu_sp_held(me ? me : tls_thr());
 #ifdef XRC_WATCH_RECV
     void xrc_trace_dump(void);   /* trace.c */
     if (mq == (uint32_t)(XRC_WATCH_RECV) && block && !rd32(mq + MQ_VALIDCOUNT)) {   /* diagnosis: who waits there */
@@ -1024,6 +1228,7 @@ ULTRA(osRecvMesg) {
         }
     }
 #endif
+    if (block && !rd32(mq + MQ_VALIDCOUNT)) xrc_gfx_swap_block();   /* ../gfx.c: a present the swap left for now */
     xu_lock();
     if (block && rd32(mq + MQ_VALIDCOUNT)) xu_rcp_flush_recv(me);   /* sp.c XRC_RCP_RECV (off: nothing) */
     while ((valid = (int32_t)rd32(mq + MQ_VALIDCOUNT)) == 0) {
@@ -1053,7 +1258,8 @@ ULTRA(osRecvMesg) {
                      (int)(valid - 1), XRC_WATCH_PEEK ? (unsigned)rd32((uint32_t)(XRC_WATCH_PEEK)) : 0u, xu_retrace());
     }
 #endif
-    wake_all(mq | 1);
+    wake_first(mq | 1);
+    if (valid > 1) wake_first(mq);   /* (messages left, and a waiter a send did not reach: one taken by a thread that never blocked) */
     xu_unlock();
     token_yield(tls_thr());
     RET(0);
@@ -1108,6 +1314,14 @@ int xu_event_room(int e) {
 }
 
 int xu_event_same(int a, int b) { return s_events[a].mq && s_events[a].mq == s_events[b].mq; }
+/* a thread is blocked, or about to be, reading that event's queue */
+int xu_event_waited(int e) {
+    int i;
+    for (i = 0; i < s_nthr; i++)
+        if (s_events[e].mq && s_thr[i].wait == s_events[e].mq) return 1;
+    return 0;
+}
+int xu_event_is(int e, uint32_t mq) { return s_events[e].mq && s_events[e].mq == mq; }
 
 /* the crash report's tail (trace.c): the crashing N64 thread's registers as
  * its context last held them (the generated code keeps them there) */
@@ -1291,11 +1505,12 @@ static int ints_off(Thr* me) {
 static void ints_on(Thr* me) {
     if (!me->ints_off) return;
     me->ints_off = 0;
+    if (XRC_LOWER_UNLOCKED) xu_unlock();   /* first: lowered with the lock in hand, it could be preempted there for good */
     if (XRC_INTS_BOOST && me->kt && me->t) {
-        xhw_thread_set_level(me->kt, xu_level_of((int)rd32(me->t + TH_PRIORITY)));
+        xhw_thread_set_level(me->kt, me->mask_boost ? 14 : xu_level_of((int)rd32(me->t + TH_PRIORITY)));
         if (s_perf > 0) xhw_perf_add(XHW_PERF_INTS, 0);
     }
-    xu_unlock();
+    if (!XRC_LOWER_UNLOCKED) xu_unlock();
     if (s_pend) token_yield(me);   /* a switch that waited for interrupts on */
 }
 
@@ -1317,11 +1532,19 @@ void cop0_status_write(recomp_context* ctx, gpr value) {
     else ints_off(me);
 }
 
-gpr cop0_status_read(recomp_context* ctx) {
-    return (gpr)(int32_t)((ctx->status_reg & ~1u) | (self()->ints_off ? 0u : 1u));
-}
-
 static uint32_t s_int_mask = 0x003FFF01u;   /* OS_IM_ALL */
+
+/* Status has the interrupt mask in its bits 8-15, which a context with none of its own takes from osSetIntMask's.
+ * Rare's games poll IM4, cleared at a pre-NMI (Banjo-Tooie: the bit read clear from the first frame, and its scheduler
+ * took the reset button as pressed: it stopped its pad thread holding its lock). -DXRC_STATUS_IM=0: 0 there, as before */
+#ifndef XRC_STATUS_IM
+#define XRC_STATUS_IM 1
+#endif
+gpr cop0_status_read(recomp_context* ctx) {
+    uint32_t sr = ctx->status_reg & ~1u;
+    if (XRC_STATUS_IM && !(sr & 0xFF00u)) sr |= s_int_mask & 0xFF00u;
+    return (gpr)(int32_t)(sr | (self()->ints_off ? 0u : 1u));
+}
 
 /* osSetIntMask(mask): a mask that lets no interrupt through (OS_IM_NONE:
  * libaudio's alEvtqPostEvent and alEvtqNextEvent around their list
@@ -1331,6 +1554,14 @@ static uint32_t s_int_mask = 0x003FFF01u;   /* OS_IM_ALL */
  * (strand.c) under such a mask, a parked strand kept the lock and the game
  * stopped at its second frame; All-Star Baseball 2000's freeze, the reason
  * it was tried, was its audio thread starved of AI events (ai.c). */
+/* What such a section needs of the lock is that no game thread runs meanwhile, and the level gives that (XRC_INTS_BOOST
+ * says why 14) with nothing to keep across a coroutine switch: a strand that parks under the mask just leaves it, and
+ * the one it went to runs at its level as it would have. BattleTanx's main thread was preempted inside one, and its
+ * audio thread walked a list of voices for good: no frame, no audio task. -DXRC_INTMASK_BOOST=0: the thread keeps its
+ * level, as before */
+#ifndef XRC_INTMASK_BOOST
+#define XRC_INTMASK_BOOST 1
+#endif
 #ifndef XRC_INTMASK_LOCK
 #define XRC_INTMASK_LOCK 0
 #endif
@@ -1338,6 +1569,18 @@ ULTRA(osSetIntMask) {
     uint32_t old = s_int_mask, m = ARG(0);
     (void)rdram;
     s_int_mask = m;
+    if (XRC_INTMASK_BOOST) {
+        Thr* me = self();
+        int none = (m & 0x003FFF00u) == 0;
+        xhw_thread* host = xhw_thread_self();
+        if (none && !me->mask_boost && me->t) {
+            me->mask_boost = 1;
+            if (host && !me->ints_off) xhw_thread_set_level(host, 14);
+        } else if (!none && me->mask_boost) {
+            me->mask_boost = 0;
+            if (host && !me->ints_off) xhw_thread_set_level(host, xu_level_of((int)rd32(me->t + TH_PRIORITY)));
+        }
+    }
     if (XRC_INTMASK_LOCK) {
         Thr* me = self();
         int none = (m & 0x003FFF00u) == 0;
@@ -1364,6 +1607,31 @@ void xrc_trace_thread(void* thread, unsigned n);   /* trace.c */
 void xu_stall_report(const char* why) {
     int i;
     xhw_logf("[OS] stall: %s (retrace %u)", why, xu_retrace());
+    xhw_logf("[OS] stall:   VI framebuffer %08x, next %08x", (unsigned)xu_vi_framebuffer(), (unsigned)xu_vi_framebuffer_next());
+#ifdef XRC_STALL_PEEK   /* diagnosis: a word of the game's that it spins on */
+    xhw_logf("[OS] stall:   word %08x is %08x", (unsigned)(XRC_STALL_PEEK), (unsigned)rd32(XRC_STALL_PEEK));
+#endif
+#ifdef XRC_SP_RING
+    {
+        void xu_sp_ring_dump(void);
+        static int s_once;
+        if (!s_once++) xu_sp_ring_dump();
+    }
+#endif
+#ifdef XRC_STALL_PEEKS   /* diagnosis: a list of them */
+    {
+        static const uint32_t s_peek[] = { XRC_STALL_PEEKS };
+        unsigned k;
+        for (k = 0; k < sizeof s_peek / sizeof s_peek[0]; k++)
+            xhw_logf("[OS] stall:   word %08x is %08x", (unsigned)s_peek[k], (unsigned)rd32(s_peek[k]));
+    }
+#endif
+#ifdef XRC_STALL_PEEK2
+    xhw_logf("[OS] stall:   word %08x is %08x", (unsigned)(XRC_STALL_PEEK2), (unsigned)rd32(XRC_STALL_PEEK2));
+#endif
+#ifdef XRC_STALL_PEEK3
+    xhw_logf("[OS] stall:   word %08x is %08x", (unsigned)(XRC_STALL_PEEK3), (unsigned)rd32(XRC_STALL_PEEK3));
+#endif
     if (XRC_RUN_TOKEN)
         xhw_logf("[OS] stall:   run token with thread %d, %u hand-offs, %u taken while the holder ran%s",
                  xu_token_holder(), s_handoffs, s_late, s_pend ? ", a switch waits for interrupts on" : "");
@@ -1371,6 +1639,11 @@ void xu_stall_report(const char* why) {
     for (i = 0; i < s_nthr; i++) {
         uint32_t w = s_thr[i].wait, q = w & ~1u;
         if (!s_thr[i].t && !w) continue;
+        if (w == WAIT_ORPHAN) {
+            xhw_logf("[OS] stall:   thread %d (pri %d) waits on a queue made again over it", s_thr[i].t ? (int)(int32_t)rd32(s_thr[i].t + TH_ID) : -1,
+                     s_thr[i].t ? (int)(int32_t)rd32(s_thr[i].t + TH_PRIORITY) : -1);
+            continue;
+        }
         xhw_logf("[OS] stall:   thread %d (pri %d) %s %08x (%u of %u)%s%s", s_thr[i].t ? (int)(int32_t)rd32(s_thr[i].t + TH_ID) : -1,
                  s_thr[i].t ? (int)(int32_t)rd32(s_thr[i].t + TH_PRIORITY) : -1,
                  !w ? "runs, or waits outside a queue" : (w & 1) ? "waits for room in" : "waits for a message in",
@@ -1380,6 +1653,11 @@ void xu_stall_report(const char* why) {
             uint32_t pc = xrc_interp_last_pc(s_thr[i].kt);
             xhw_logf("[OS] stall:     last interpreted pc %08x, ra %08x, sp %08x", (unsigned)pc,
                      s_thr[i].ctx ? (unsigned)s_thr[i].ctx->r31 : 0u, s_thr[i].ctx ? (unsigned)s_thr[i].ctx->r29 : 0u);
+        }
+        if (s_thr[i].ctx) {   /* a blocked thread's callee-saved registers say which of its waits it is in */
+            const recomp_context* c = s_thr[i].ctx;
+            xhw_logf("[OS] stall:     s0 %08x s1 %08x s2 %08x s3 %08x s4 %08x s5 %08x s6 %08x s7 %08x", (unsigned)c->r16, (unsigned)c->r17,
+                     (unsigned)c->r18, (unsigned)c->r19, (unsigned)c->r20, (unsigned)c->r21, (unsigned)c->r22, (unsigned)c->r23);
         }
         if (s_thr[i].kt) xrc_trace_thread(s_thr[i].kt, 16);   /* a trace build: its own last functions */
     }

@@ -57,6 +57,15 @@ ULTRA(osGetMemSize) {
 /* __osSetFpcCsr(value): the FPU control word, the old one back; only the
  * rounding mode means anything here (MXCSR and the x87 together) */
 static uint32_t s_fcsr = 0x01000800u;
+/* DIVERGES: a libultra built with its checks reports what fails to a development board. Nothing is there on a
+ * retail console, and what they check (the VI manager's state, __osRunningThread) is not kept here for libultra's own
+ * code, so a failure says nothing about the game. Logged, and on. */
+ULTRA(xrc_osError) {
+    static unsigned s_n;
+    (void)rdram;
+    if (s_n++ < 8) xhw_logf("[OS] libultra's check %d reports an error (a debug build): ignored", (int)(int16_t)ARG(0));
+}
+
 ULTRA(__osSetFpcCsr) {
     uint32_t old = s_fcsr;
     (void)rdram;

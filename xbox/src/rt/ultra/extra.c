@@ -135,7 +135,7 @@ ULTRA(__osInitialize_msp) { (void)rdram; (void)ctx; }
 ULTRA(__checkHardware_isv) { (void)rdram; RET(0); }
 ULTRA(__checkHardware_kmc) { (void)rdram; RET(0); }
 ULTRA(__checkHardware_msp) { (void)rdram; RET(0); }
-ULTRA(__osRdbSend) { (void)rdram; RET(0); }
+ULTRA(__osRdbSend) { (void)rdram; RET(ARG(1)); }   /* no board: all of it sent (a printf loops until it is) */
 ULTRA(is_proutSyncPrintf) { (void)rdram; RET(0); }
 
 /* ---- the Rumble Pak (OSPfs: queue +4, channel +8) ---- */

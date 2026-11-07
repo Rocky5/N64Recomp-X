@@ -23,6 +23,10 @@ XBAL = os.environ.get('N64RX_XBAL', '1') != '0'
 # function's body, or code no segment holds) is called through the runtime's lookup instead of
 # interpreting its caller. N64RX_LOOKUP_JAL=0: the caller interpreted, as before
 LOOKUP_JAL = os.environ.get('N64RX_LOOKUP_JAL', '1') != '0'
+# A jal from outside to a function of an overlay another shares the address of: whichever is loaded when it runs. With one
+# function at that address the recompiler bound the call to it, whatever RDRAM held (Fighter's Destiny's boot code ran
+# one overlay's function with another's loaded, and wrote through a ROM offset). N64RX_OVL_LOOKUP=0: bound, as before
+OVL_LOOKUP = os.environ.get('N64RX_OVL_LOOKUP', '1') != '0'
 # captured code's jump tables in KUSEG pages, and its callees in pages, no capture holds: asked for
 # (N64RX_KUSEG_WANT=0: not)
 KUSEG_WANT = os.environ.get('N64RX_KUSEG_WANT', '1') != '0'
@@ -591,6 +595,11 @@ def recomp_hazards(a: Analysis, live, nm, replaced, lookups=None):
             why, want = None, None
             for i, w in enumerate(ws):
                 ins = Ins(w, f.start + 4 * i)
+                if (OVL_LOOKUP and LOOKUP_JAL and lookups is not None and ins.is_jal and ins.target in starts and
+                        ins.target not in a.funcs.get(seg.name, {}) and
+                        any(s.name in ovl and s.has(ins.target) for s in a.img.segments)):
+                    lookups.add(ins.target)
+                    continue
                 if ins.is_jal and not seg.has(ins.target) and ins.target not in starts:
                     if LOOKUP_JAL and lookups is not None:
                         lookups.add(ins.target)   # the runtime finds it, or its safety net runs it and learns it
@@ -646,7 +655,10 @@ def recomp_hazards(a: Analysis, live, nm, replaced, lookups=None):
                         if seg.name.startswith('code_') and 0x80000000 <= lo and hi <= 0x80800000 and hi - lo <= 0x100000:
                             want = (lo, hi)
                         elif f.start < 0x80000000 and 0x80000000 <= t < 0x80800000:
-                            want = (t & ~0xFFF, (t + 4 + 0xFFF) & ~0xFFF)   # TLB-mapped code, its table in KSEG0: that page
+                            # TLB-mapped code, its table in KSEG0: that page and the next. A table's length is not known here, and the
+                            # recompiler stops at the end of what it can read: South Park's printf table crossed a page, its
+                            # 'd' fell past the switch ("Jump table out of range")
+                            want = (t & ~0xFFF, (t & ~0xFFF) + 0x2000)
                         elif (KUSEG_WANT and seg.name.startswith('code_') and 0x10000 <= t < 0x80000000
                               and f.start < 0x80000000 and abs(t - f.start) <= 0x100000):
                             # code captured at KUSEG with its table in KUSEG too (All-Star Baseball 2000's game,

@@ -154,6 +154,16 @@ static int try_fixup(const EXCEPTION_RECORD* er) {
     for (i = 0; i < 8 && slot < 0; i++)
         if (InterlockedCompareExchange((LONG*)&s_fixup_owner[i], (LONG)me, 0) == 0) slot = i;
     if (slot < 0) return 0;
+#if defined(XHW_TEST_BUILD) && XHW_TEST_BUILD
+    {   /* diagnosis: the code behind a fault the runtime resolves */
+        static unsigned s_logged;
+        if (s_logged < 16) {
+            s_logged++;
+            xhw_logf("[FIXUP] %s %08x at eip %08x", er->ExceptionInformation[0] ? "write" : "read",
+                     (unsigned)er->ExceptionInformation[1], (unsigned)(uintptr_t)er->ExceptionAddress);
+        }
+    }
+#endif
     ok = s_fixup((uint32_t)er->ExceptionInformation[1], er->ExceptionInformation[0] != 0);
     s_fixup_owner[slot] = NULL;
     /* a fault "fixed" without the page changing comes straight back: a store

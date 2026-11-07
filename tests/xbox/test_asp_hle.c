@@ -968,6 +968,17 @@ static void test_identify(void)
     CHECK(asp_hle_identify(d, n, &u) == ASP_ABI_NEAD && u.flags == ASP_NEAD_SHORT && u.entries == 24, "nead, 24");
     n = data_head(d, 0, 16, 0xFE7Fu);
     CHECK(asp_hle_identify(d, n, &u) == ASP_ABI_NAUDIO && u.present == 0xFE7Fu, "n_aspMain");
+    {   /* Rare's: two overlay records, the 16 opcodes in IMEM, then the masks */
+        static const uint8_t masks[8] = {0xF0, 0x00, 0x0F, 0x00, 0x00, 0xF0, 0x00, 0x0F};
+        unsigned k;
+        memset(d, 0, sizeof d);
+        d[0] = 0x04, d[6] = 0x10, d[7] = 0x80;   /* address, length, IMEM 0x1080 */
+        d[8] = 0x04, d[14] = 0x11, d[15] = 0x00;
+        for (k = 0; k < 16; k++) d[0x10 + 2 * k] = 0x12, d[0x11 + 2 * k] = (uint8_t)(2 * k);
+        memcpy(d + 0x30, masks, 8);
+        CHECK(asp_hle_identify(d, 0x80, &u) == ASP_ABI_NAUDIO && u.flags == ASP_NAUDIO_RARE && u.entries == 16, "n_aspMain, Rare's: %x %x",
+              (unsigned)u.abi, (unsigned)u.flags);
+    }
     n = data_head(d, 1, 20, 0xFFFFF);
     CHECK(asp_hle_identify(d, n, &u) == ASP_ABI_UNKNOWN, "20 entries: unknown");
     memset(d, 0x5A, sizeof d);
@@ -1215,6 +1226,75 @@ static void test_nead_filter(void)
 /* n_aspMain: fixed buffers relative to N_MAIN 0x4F0, 0x170 bytes (184 samples) a call */
 #define NA_MAIN 0x4F0u
 #define NA_CNT 184
+static void test_naudio_rare(void)
+{
+    /* Rare's opcode 0: each of a buffer's 184 samples x c, saturated, x b / 65536; the rest of DMEM untouched.
+     * Its other opcodes are n_aspMain's; 14 (its filter) and 7, 8 (MP3) change nothing here */
+    int i;
+    reset(), use_ucode(ASP_ABI_NAUDIO, ASP_NAUDIO_RARE, 0xFFFFu);
+    for (i = 0; i < 2048; i++) dm16()[i] = (int16_t)(i * 3 - 3000);
+    C(0u << 24 | 0x4E0u, 0x8000u << 16 | 3u);
+    C(14u << 24, 0x12345678u), run();
+    for (i = 0; i < 2048; i++) {
+        int32_t s = (int16_t)(i * 3 - 3000), x = s * 3;
+        int in = i >= (int)((NA_MAIN + 0x4E0) >> 1) && i < (int)((NA_MAIN + 0x4E0) >> 1) + NA_CNT;
+        if (x > 32767) x = 32767;
+        if (x < -32768) x = -32768;
+        CHECK(dm16()[i] == (in ? (int16_t)((x * 0x8000) >> 16) : (int16_t)s), "Rare's gain: lane %d is %d", i, dm16()[i]);
+    }
+}
+
+/* Rare's MP3 pair: 18 slots of 32 subbands in, 576 samples out, as ISO 11172-3's synthesis written
+ * out slowly here; a made-up window with the real one's shape (its bytes are not in this tree) */
+static double mp3_d(unsigned i)
+{
+    double h = 0.5 - 0.5 * cos(2.0 * 3.14159265358979 * i / 512.0);
+    return (i % 512 ? h * 32000.0 : 0.0) * ((i / 64) & 1 ? -1.0 : 1.0);
+}
+
+static void test_naudio_mp3(void)
+{
+    static uint8_t rows[17][32];
+    static double v[16][64], d[512];
+    static int16_t buf[4 + 576], got[576];
+    unsigned i, j, k, frame, head = 0;
+    double pi = 3.14159265358979;
+    for (i = 0; i < 17; i++)
+        for (j = 0; j < 16; j++) {
+            int16_t x = (int16_t)floor(mp3_d(i + 32 * j) + 0.5);
+            rows[i][2 * j] = (uint8_t)((uint16_t)x >> 8), rows[i][2 * j + 1] = (uint8_t)x;
+        }
+    for (i = 0; i < 512; i++) d[i] = i % 32 > 16 ? -floor(mp3_d(512 - i) + 0.5) : floor(mp3_d(i) + 0.5);
+    reset(), use_ucode(ASP_ABI_NAUDIO, ASP_NAUDIO_RARE, 0xFFFFu);
+    asp_hle_set_mp3_window_be((const uint8_t(*)[32])rows);
+    for (frame = 0; frame < 3; frame++) {
+        memset(buf, 0, sizeof buf);
+        buf[0] = 0, buf[1] = 0x4000;   /* a gain of 1/4 */
+        for (i = 0; i < 576; i++) buf[4 + i] = (int16_t)(rnd_range(-3000, 3000) * (i % 32 < 4));
+        ram_put16(0x20000, buf, 4 + 576);
+        C(8u << 24, 0x30000), C(7u << 24 | 0x1E, 0x20000), run();
+        for (k = 0; k < 18; k++) {
+            head = (head - 1u) & 15u;
+            for (i = 0; i < 64; i++) {
+                double s = 0;
+                for (j = 0; j < 32; j++) s += cos((16.0 + i) * (2.0 * j + 1.0) * pi / 64.0) * buf[4 + 32 * k + j];
+                v[head][i] = s;
+            }
+            for (j = 0; j < 32; j++) {
+                double s = 0;
+                unsigned kk;
+                for (kk = 0; kk < 16; kk++) s += v[(head + kk) & 15u][kk & 1u ? 32 + j : j] * d[j + 32 * kk];
+                got[32 * k + j] = (int16_t)floor(s / 32768.0 / 4.0 + 0.5);
+            }
+        }
+        for (i = 0; i < 576; i++) {
+            int e = ram16(0x20000 + 2 * i) - got[i];
+            if (e < -2 || e > 2) break;
+        }
+        CHECK(i == 576, "MP3 frame %u sample %u: %d, want %d", frame, i, ram16(0x20000 + 2 * (i & 511)), got[i & 511]);
+    }
+}
+
 static void test_naudio(void)
 {
     static int16_t want[2048];
@@ -1448,6 +1528,8 @@ int main(int argc, char** argv)
     test_nead_adpcm_resample();
     test_nead_filter();
     test_naudio();
+    test_naudio_rare();
+    test_naudio_mp3();
     test_abi2_workload();
     printf("%s: %d checks, %d failed\n", g_fail ? "FAIL" : "ok", g_checks, g_fail);
     return g_fail ? 1 : 0;

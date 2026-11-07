@@ -16,6 +16,9 @@ from .mips import Ins, SP, RA
 # code linked in KUSEG (Acclaim's games run at 0x00100000 through a TLB entry, Mario Tennis's modules at
 # 0x10000000): its globals sit in the same 16 MB as the code, not at 0x80000000 (N64RX_KUSEG_GLOBALS=0: off)
 KUSEG_GLOBALS = os.environ.get('N64RX_KUSEG_GLOBALS', '1') != '0'
+# a libultra built by GCC without optimisation (NFL Blitz 2001, Puzzle League, ITF 2000): `move $fp, $sp`, then every
+# argument goes through a stack slot addressed off $fp. A copy of $sp is $sp to the tracker (N64RX_FP_FRAME=0: off)
+FP_FRAME = os.environ.get('N64RX_FP_FRAME', '1') != '0'
 
 HW_BLOCKS = {0x0404: 'SP', 0x0410: 'DP', 0x0430: 'MI', 0x0440: 'VI', 0x0450: 'AI', 0x0460: 'PI', 0x0470: 'RI',
              0x0480: 'SI', 0x1FC0: 'PIF'}
@@ -47,6 +50,8 @@ class Feat:
     shifts64: set = field(default_factory=set)  # 'dsllv' 'dsrlv' 'dsrav'
     branches: int = 0
     cvt_l: set = field(default_factory=set)     # COP1 conversions from a 64-bit integer: 's' | 'd'
+    ptr_bytes: list = field(default_factory=list)  # where it stores bytes through a pointer: not the stack, a global or an argument register
+    call_last: dict = field(default_factory=dict)  # callee -> the last place it is called from
 
     @property
     def leaf(self):
@@ -83,7 +88,7 @@ def _mark(d, k, rw):
 
 def features(img, f):
     ft = Feat(f.start, f.end - f.start)
-    ku = f.start & 0xFF000000 if KUSEG_GLOBALS and f.start < 0x80000000 else None
+    ku = f.start & 0xFF000000 if KUSEG_GLOBALS and (f.start < 0x80000000 or f.start >= 0xC0000000) else None
 
     def ram(a):
         return 0x80000000 <= a < 0x80800000 or ku is not None and ku <= a < ku + 0x01000000 and a >= 0x10000
@@ -96,6 +101,7 @@ def features(img, f):
     argof = {4: 0, 5: 1, 6: 2, 7: 3}   # reg -> incoming argument number
     slot = {}                      # sp offset -> ('arg', n) | ('const', v)
     written = set()
+    frames = {SP}                  # registers that hold the stack pointer
     pc = f.start
     while pc < f.end:
         w = img.word(pc)
@@ -149,12 +155,15 @@ def features(img, f):
             ft.special.add('64')
         if i.is_jal:
             ft.calls.append(i.target)
+            ft.call_last[i.target] = pc
         if i.op in (15, 13, 9) and (i.op != 9 or i.rs == 0):
             ft.consts.add(i.imm << 16 if i.op == 15 else i.imm)
         # memory
         if i.is_load or i.is_store:
             rw = 'w' if i.is_store else 'r'
-            if i.rs == SP:
+            if i.op == 40 and i.rs not in frames and i.rs not in const and i.rs not in argof:
+                ft.ptr_bytes.append(pc)
+            if i.rs in frames:
                 if i.is_store and i.op == 43:
                     if i.rt in argof:
                         slot[i.simm] = ('arg', argof[i.rt])
@@ -199,7 +208,7 @@ def features(img, f):
                 v, a = const.get(i.rs), argof.get(i.rs)
             elif i.op == 35 and i.rs in const and ram((const[i.rs] + i.simm) & 0xFFFFFFFF):
                 gl = (const[i.rs] + i.simm) & 0xFFFFFFFF   # lw d, global: a pointer read from a global
-            elif i.op == 35 and i.rs == SP and i.simm in slot:    # lw d, n(sp): a saved argument
+            elif i.op == 35 and i.rs in frames and i.simm in slot:    # lw d, n(sp): a saved argument
                 kind, val = slot[i.simm]
                 if kind == 'arg':
                     a = val
@@ -214,6 +223,10 @@ def features(img, f):
             const.pop(d, None)
             argof.pop(d, None)
             gload.pop(d, None)
+            if d != SP:
+                frames.discard(d)
+                if FP_FRAME and i.op == 0 and i.funct in (33, 37) and i.rt == 0 and i.rs in frames:
+                    frames.add(d)
             if gaddr is not None:
                 gload[d] = gaddr
             if v is not None:

@@ -533,12 +533,29 @@ crash (Dual Heroes at retrace ~540 in both; Turok, NHL 99, WWF No Mercy,
 Bio F.R.E.A.K.S. deeper than before), or a loading-screen stall run again.
 Left: 20 present nothing, 23 crash on a KUSEG access near NULL, 4 fatal.
 
+**s18 and s19 (2026-11-04/05; 60 s boots, one xemu, four builds beside it).** All 246 build; **197**, then **202**
+present. A run this short ends before some boots do: All-Star Baseball 2000 and 2001 and Top Gear Rally 2 played in s16's
+120 s and show one or two frames here, and play when run alone. `sweep_diff.py` lists such games now (under half their
+frames per retrace); read that list before calling a game lost. Named from behaviour in these rounds: `$fp` as `$sp`
+for a libultra built without optimisation, `__osError` and `__osRdbSend` (`__osSyncPutChars` has its shape and takes its
+name; the stub fits both), and `osMapTLB` only where the routine writes Index (Factor 5's four-argument helper does not).
+What a game's own `__osException` does with a syscall is read from its code at run time (`hooks.c`). Left, in s19: 18
+present nothing, 20 crash, 6 stop on a fatal card; `docs/handoff.md` has what is known of each that was looked at.
+
+**More rules from the crash list (2026-11-05, xemu).** Routines that leave their stack go to the interpreter (sp loaded from memory through
+another register, or stored by a routine that never returns), and the runtime's strands take the switch (`_stack_switchers`, `N64RX_STACK_SWITCH`):
+28 games in the library have the shape. So do routines that put a label of their own in `ra` and loop with `jr ra` (`_ra_labels`,
+`N64RX_RA_LABEL`; `lui ra` alone is a compiler's scratch register, in 68 games). A `jal` from outside to an overlay's function goes through the lookup,
+even with one function at that address (`N64RX_OVL_LOOKUP`). A learnt TLB segment no longer doubles a segment with the same ROM at the same addresses
+(`N64RX_TLB_TWIN`). Copies of libultra at another window on the same memory go to the runtime too, by bytes and by the rules run on each window (`_alias_twins`,
+`N64RX_CODE_TWINS`), and code at KSEG2/3 has its globals in its own 16 MB (`KUSEG_GLOBALS`). With several fits, `osContGetReadData` is the one just after
+`osContStartReadData` (`N64RX_GETREAD_NEAR`). Switches a single ROM needs live in `games/runtime/`.
+
+`osEepromRead` is the fit that stores bytes through a pointer after its last SI DMA (`N64RX_EEPROM_READ`: 16 games had it named as the write). A libultra built with GCC has no shape the SI rules read: its
+`osContInit` is known by `osGetTime`, `osSetTimer` and `osCreateMesgQueue` (`N64RX_CONT_INIT_TIME`). A live call target whose bytes do not decode goes to the interpreter (`N64RX_BAD_INTERP`).
+
 ## Known gaps
 
-- **ROM hacks that hook code** (WWF No Mercy Plus V3, `docs/handoff.md`): an entry hook and
-  the code it copies are read, but a retail function that jumps into the hack's code and back
-  lands mid-function, the walks fail on the patched overlays, and calls from those overlays into
-  the hack's code are found only at run time. It crashes before its first frame.
 - **One bad walk fails a whole overlay** (`segments.find`: `not any(f.bad ...)`, even for a load a
   ROM table describes with its text range). WWF WrestleMania 2000 loses its match overlay this way
   (ROM 0xD2720: several unresolved `jr`s, data walked as code) and would run the menu overlay's code

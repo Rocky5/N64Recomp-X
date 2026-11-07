@@ -59,6 +59,9 @@
 #ifndef ASP_HLE_NAUDIO
 #define ASP_HLE_NAUDIO 1    /* 0: n_aspMain reads as unknown (silent) */
 #endif
+#ifndef ASP_HLE_RARE
+#define ASP_HLE_RARE 1
+#endif
 
 /* ---- registry ------------------------------------------------------------- */
 
@@ -76,6 +79,21 @@ uint32_t asp_hle_identify(const uint8_t* d, uint32_t n, asp_ucode_t* u)
     if (m + 8 > n || m > 0x60) return u->abi = ASP_ABI_UNKNOWN;
     /* the 16-byte constants block (0001 0002 ffff ...) or the table first */
     base = (be16(d) == 0 && be16(d + 2) == 1) ? 0x10 : 0;
+#if ASP_HLE_RARE
+    /* Rare's n_aspMain (Perfect Dark): two overlay records first (address, length, the IMEM address it
+     * loads at), then 16 opcodes, all in IMEM. Read as a table from +0 it was 24 entries of nothing
+     * known, and the game had no sound. -DASP_HLE_RARE=0: unknown, as before */
+    if (!base && m == 0x30) {
+        for (i = 0; i < 16 && (be16(d + 0x10 + 2 * i) & 0xF000u) == 0x1000u; i++) {}
+        if (i == 16 && (be16(d + 6) & 0xF000u) == 0x1000u && (be16(d + 14) & 0xF000u) == 0x1000u) {
+            u->entries = 16;
+            u->flags = ASP_NAUDIO_RARE;
+            noop = 0xFFFFFFFFu;
+            for (i = 0; i < 16; i++) u->present |= 1u << i;
+            return u->abi = ASP_HLE_NAUDIO ? ASP_ABI_NAUDIO : ASP_ABI_UNKNOWN;
+        }
+    }
+#endif
     u->entries = (m - base) / 2;
     noop = be16(d + base);
     for (i = 0; i < u->entries && i < 32; i++)
@@ -342,6 +360,93 @@ static void exec_nead(uint32_t w0, uint32_t w1)
     }
 }
 
+/* ---- Rare's MP3 pair ----------------------------------------------------------- */
+
+/* Perfect Dark decodes MP3 on the CPU as far as the subband samples and leaves the
+ * synthesis to the RSP: 8 names a channel's state, 7 a buffer of two gain words and
+ * 576 s16s (18 slots of 32 subbands), which comes back as 576 samples from the
+ * buffer's start. This is MPEG-1's polyphase synthesis as ISO 11172-3 gives it, on its
+ * own state in floats: the microcode's FIFO and fixed-point DCT are its way of doing
+ * the same, so samples may differ by rounding. The window comes from the microcode's
+ * data at run time (audio.c), in its units (peak 0x7FFF = 1.0, 1/1.145 of ISO's D).
+ * The output is that sum x the first gain word, s15.16. Checked in a throwaway script
+ * against ISO analysis around the window: a tone comes back at 87 dB. */
+#define MP3_CHANNELS 2
+static float s_mp3_d[512];
+static float s_mp3_m[33][32];   /* cos((16 + i)(2k + 1) pi / 64): i 0..16, then 33..48 */
+static int s_mp3_ready;
+static uint32_t s_mp3_addr;
+static struct {
+    uint32_t addr;
+    unsigned head;
+    float v[16][64];
+} s_mp3[MP3_CHANNELS];
+
+void asp_hle_set_mp3_window_be(const uint8_t rows_be[17][32])
+{
+    float c[128];
+    double x = 1.0, y = 0.0;
+    unsigned i, j, k;
+    for (i = 0; i < 17; i++)
+        for (j = 0; j < 16; j++)
+            s_mp3_d[i + 32 * j] = (float)(int16_t)(rows_be[i][2 * j] << 8 | rows_be[i][2 * j + 1]);
+    for (i = 1; i < 512; i++)   /* the prototype behind the window is symmetric; its sign flips every 64 */
+        if (i % 32 > 16) s_mp3_d[i] = -s_mp3_d[512 - i];
+    for (i = 0; i < 128; i++) {   /* cos(n pi / 64) by rotation: no libm in this triple's hot path */
+        double nx = x * 0.99879545620517241 - y * 0.049067674327418015;
+        c[i] = (float)x;
+        y = y * 0.99879545620517241 + x * 0.049067674327418015;
+        x = nx;
+    }
+    for (i = 0; i < 33; i++)
+        for (k = 0; k < 32; k++) s_mp3_m[i][k] = c[((i <= 16 ? 16 + i : 16 + 33 + i - 17) * (2 * k + 1)) & 127];
+    memset(s_mp3, 0, sizeof s_mp3);
+    s_mp3_ready = 1;
+}
+
+static void cmd_mp3(uint32_t a)
+{
+    static int16_t b[4 + 576];
+    unsigned ch, slot, i, j, kk;
+    float gain;
+    if (!s_mp3_ready || !s_mp3_addr || (a & 7)) return;
+    for (ch = 0; ch < MP3_CHANNELS && s_mp3[ch].addr && s_mp3[ch].addr != s_mp3_addr; ch++) {}
+    if (ch == MP3_CHANNELS) return;
+    s_mp3[ch].addr = s_mp3_addr;
+    rd_load(a, b, sizeof b);
+    gain = (float)(int32_t)((uint32_t)(uint16_t)b[0] << 16 | (uint16_t)b[1]) / (32768.0f * 65536.0f);
+    {   /* the log: the first of them, and that it ran */
+        static int s_seen;
+        if (!s_seen) {
+            void xhw_logf(const char* fmt, ...);
+            s_seen = 1;
+            xhw_logf("[AUDIO] MP3 plays: channel state %08x, buffer %08x, gains %04x%04x %04x%04x", (unsigned)s_mp3_addr, (unsigned)a,
+                     (unsigned)(uint16_t)b[0], (unsigned)(uint16_t)b[1], (unsigned)(uint16_t)b[2], (unsigned)(uint16_t)b[3]);
+        }
+    }
+    for (slot = 0; slot < 18; slot++) {
+        const int16_t* s = b + 4 + 32 * slot;
+        float* v;
+        s_mp3[ch].head = (s_mp3[ch].head - 1u) & 15u;
+        v = s_mp3[ch].v[s_mp3[ch].head];
+        for (i = 0; i < 33; i++) {
+            float sum = 0.0f;
+            const float* m = s_mp3_m[i];
+            for (j = 0; j < 32; j++) sum += m[j] * (float)s[j];
+            v[i <= 16 ? i : i + 16] = sum;
+        }
+        for (i = 17; i <= 32; i++) v[i] = -v[32 - i];
+        for (i = 49; i < 64; i++) v[i] = v[96 - i];
+        for (j = 0; j < 32; j++) {
+            float sum = 0.0f;
+            for (kk = 0; kk < 16; kk++) sum += s_mp3[ch].v[(s_mp3[ch].head + kk) & 15u][kk & 1u ? 32 + j : j] * s_mp3_d[j + 32 * kk];
+            sum *= gain;
+            b[32 * slot + j] = sat16((int32_t)(sum < 0.0f ? sum - 0.5f : sum + 0.5f));
+        }
+    }
+    rd_store(a, b, 2 * 576);
+}
+
 /* ---- n_aspMain ----------------------------------------------------------------- */
 
 #define N_MAIN 0x4F0u
@@ -393,13 +498,24 @@ static void exec_naudio(uint32_t w0, uint32_t w1)
 {
     uint32_t op = w0 >> 24, flags = (w0 >> 16) & 0xFF;
     s_cur_op = op;
+    if ((s_uc.flags & ASP_NAUDIO_RARE) && (op == 7 || op == 8)) {
+        s_stats.cmds[op]++;
+        if (op == 8) s_mp3_addr = w1 & 0xFFFFFFu;
+        else cmd_mp3(w1 & 0xFFFFFFu);
+        return;
+    }
     if (op >= 16 || op == 7 || op == 8) {
         s_stats.cmds[32]++;
         return;
     }
     s_stats.cmds[op]++;
     switch (op) {
-    case 0:   /* SPNOOP */
+    case 0:   /* SPNOOP; Rare's: a buffer's 184 samples, x (w1's low half), saturated, x (high half) / 65536 */
+        if (s_uc.flags & ASP_NAUDIO_RARE) {
+            uint32_t k, at = (N_MAIN + (w0 & 0xFFFF)) >> 1;
+            int32_t a = (int16_t)w1, b = (int32_t)(w1 >> 16);
+            for (k = 0; k < N_COUNT / 2; k++) DS(at + k) = (int16_t)((sat16(DS(at + k) * a) * b) >> 16);
+        }
         break;
     case 1:   /* ADPCM: state in w0; w1 = flags 4 | count 12 | in 4 | out 12 */
         cmd_adpcm(w1 >> 28, N_MAIN + ((w1 >> 12) & 0xF), N_MAIN + (w1 & 0xFFF), (w1 >> 16) & 0xFFF, w0 & 0xFFFFFFu, 0);
@@ -442,6 +558,7 @@ static void exec_naudio(uint32_t w0, uint32_t w1)
         cmd_interleave(N_MAIN, N_DRY_L, N_DRY_R, N_COUNT);
         break;
     case 14:  /* the low half of the right rate (n_aspMain jumps into SETVOL here) */
+        if (s_uc.flags & ASP_NAUDIO_RARE) break;   /* DIVERGES: Rare's low-pass filter on a bus is not run */
         T.rate[1] = (int32_t)(((uint32_t)T.rate[1] & 0xFFFF0000u) | (w1 & 0xFFFF));
         break;
     case 15:  /* SETLOOP */

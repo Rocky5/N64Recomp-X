@@ -4,7 +4,7 @@ One entry per milestone: what was verified, how, and where ("xemu" results
 are emulator-only; timing, audio, memory and HDD latency are judged on the
 console).
 
-## Where things stand (2026-11-04)
+## Where things stand (2026-11-05)
 
 Each game's tier is in `docs/compat.md` (Gold fully playable with no
 major issues, Silver playable with issues, Experimental the rest; only a console run promotes); a console
@@ -47,8 +47,8 @@ ships: Banjo-Kazooie's crashed.
    DK64, Turok 2), and a route that works.
 1. DK64's pacing: no faster than the N64's RDP would let it (60 -> 30 fps),
    the DK Rap's sync, the glitch at DK Island.
-2. Perfect Dark's crash at frame 369 (a write near NULL); Turok 2's hand-written
-   `0029E3B0` (1.2 million interpreted instructions per 300 retraces).
+2. Turok 2's hand-written `0029E3B0` (1.2 million interpreted instructions per
+   300 retraces). Perfect Dark on a console: it plays in xemu now (the last entry).
 3. Mario Tennis's black model copies (an offscreen image over 128 wide?),
    the aspect, the ball, the replay.
 4. Pokémon Snap's tutorial: the detector's focus flickers on red, so
@@ -62,7 +62,6 @@ ships: Banjo-Kazooie's crashed.
 8. Banjo-Kazooie's shadows, fog and jigsaw; GoldenEye's road markings;
    Castlevania's textures; Mario Kart 64's map TV.
 9. A library sweep with the training defaults (none since these changes).
-10. ROM hacks that hook code: WWF No Mercy Plus V3 (the last entry).
 
 **What exists** (each piece with host tests and a kill switch; the entries
 below say how each was verified): the ROM inside the XBE and its page cache;
@@ -3215,7 +3214,7 @@ working tree on 64afa6f, `build-host/hwbuild32.sh`, `deploy-set32.sh red|gold`
 
 Set 33 (`hwbuild33.sh`, `deploy-set33.sh`) is set 32 plus this, in set 32's folders and title IDs: `v33-nm` badfcfaa4498, `v33-zel` 4c4edfa52c77. On gold (set 32's logs in `C:/xemu/hw/gold/`, and the first boot.log in `C:/xemu/hw/logsgold-32-nm/`); not on red (FTP down; red runs 480i, set 32 is enough there). Check on gold: `[VIDEO] scanout set back` in boot.log and a clean 720p picture.
 
-**A build for ROM hacks** (2026-11-04, the maintainer's request): `-DXHW_ROM_ANY=1` with `--rom-beside`, title ID 4E52D024, in `out-hack/` (xbe a09472ff3475): no size, game code or SHA-1 check, the SHA-1 logged. xemu: boots and presents with the plain ROM and with one changed in size (34 MB), game code and SHA-1. Not run on a console, no real hack tried, no match reached. The XBE's code is the retail ROM's, so a hack that changes code does not take effect. With `v33-nm`, the ROM and a readme in `Downloads/WWF-No-Mercy-Xbox.zip` on the maintainer's PC (private: it holds the ROM).
+**A build for ROM hacks** (2026-11-04): `-DXHW_ROM_ANY` built and later removed, with all ROM hack support (the last entry).
 
 ## 2026-11-04: the build's training catches up with the learn logs (xemu; no console)
 
@@ -3254,7 +3253,7 @@ Measured from the ROM alone. "Before" is the dry boot's first analysis, what shi
 |---|---|---|---|---|
 | GoldenEye | 123 | 33 | 34 | 1.1 million with the want rounds alone, ~50-68 thousand now; the Dam right, 1 boot, no crash, no safety-net calls |
 | Turok 2 | 62 | 9 | 66 | 1.24 million, unchanged: one hand-written routine, `0029E3B0` |
-| Perfect Dark | 122 | 40 | 101 | ~11 thousand; was a fatal stop at boot, now 115 frames, then a crash at frame 369 (write near NULL, 0x91400004) |
+| Perfect Dark | 122 | 40 | 101 | ~11 thousand; was a fatal stop at boot, then 115 frames and a crash at frame 369 (fixed: the next entry but one) |
 | All-Star Baseball 2000 | 38 | 30 | 80 | ~79 thousand |
 | Mario Tennis | 120 | 116 | 131 | ~100 thousand |
 | Banjo-Kazooie | 21 | 20 | 24 | from under 100 to ~186 thousand by scene; 18 functions through the safety net |
@@ -3264,7 +3263,7 @@ Run in xemu, ROM-only test builds, 90-120 s: those seven plus Castlevania LoD, a
 end Super Mario 64 and retail WWF No Mercy: one boot each, no crash but Perfect Dark's. `[MEM]` free in play 7.7-27 MB (test builds).
 GoldenEye's test build: `[MEM] boot               free 52196 KB of 65536 KB (image 11628 KB, virt 11824 KB, pool 20 KB)`; `[CLOCK] cpu 733 MHz (TSC against the ACPI timer, 3375000 Hz); nxdk's guess 733 MHz`. Frame rates not compared: xemu is
 not hardware, and no console has run these. Host: `test_dryboot.py`, `test_n64rx.py`
-(`--want`, the weak start, the entry hook), `test_romcache.py`.
+(`--want`, the weak start), `test_romcache.py`.
 
 Tried and dropped:
 - **Raising a TLB miss for a wanted page the TLB does not map.** Across 28 games 2 pages
@@ -3276,15 +3275,384 @@ Tried and dropped:
   stays (`games/routes/`, `dryboot.route`, `N64RX_DRYBOOT_ROUTES`), no route ships. A
   route needs a rule for which versions to keep before it helps.
 
-**ROM hacks: WWF No Mercy Plus V3 does not run yet** (`NEDE`, 68,203,420 bytes, the
-maintainer's). 97% of its pages differ from retail, so the earlier `XHW_ROM_ANY` build
-(retail code, hack beside it) cannot run it; it has to be built from its own ROM. Done
-for that: the entry hook read (`funcs._entry_hook`, `N64RX_ENTRY_HOOK`), its
-copy to 0x80400FE0 made a segment (`funcs.hook_copies`), its Expansion Pak check read
-(`romonly._wants_8mb`), ROMs past 64 MB in the page cache (`XROMC_MAX_CHUNKS` 2048) and
-the dry boot. Result in xemu: boots, loads, no frame presented, crash at frame ~48 in
-the match overlay's range (`write of address 027f7864`, a pointer of 0xFFFF8864). Two
-of retail's overlays at 0x80107C60 are not found, and the hack jumps from retail
-functions into its own code and back mid-function (47 functions interpreted; 34 found
-in its 0x9F020 bytes). Next: `docs/analyzer.md`'s known gaps. The zip on the
-maintainer's PC (private, it holds the ROM) is labelled as not working.
+**ROM hack support is dropped** (the maintainer, 2026-11-04). WWF No Mercy Plus V3 (`NEDE`, 68 MB) was tried first: built from its own ROM it crashed before its first frame in xemu, because it jumps from retail functions into its own code and back mid-function and two overlays were lost. What had been added for it (entry hooks, ROMs past 64 MB, `XHW_ROM_ANY`) is out of the tree; `git log` has it (c611518, 9795f1b).
+
+**Perfect Dark plays (2026-11-04, xemu slot 13 and 15, ROM alone).** Fatal at boot this
+morning; now its logos, title, menus, a mission's intro scene and the Carrington Institute
+walking at 31 fps (test build, 350 s, no crash). Four things stood in the way, none of
+them specific to its ROM except its command shapes:
+
+- **Its geometry** (`XGFX_PD`, `test_f3dex.py` `test_pd`): 12-byte vertices and a colour
+  table at 0x07 (`docs/renderer.md`). Read as JFG's "commands from memory", its colour
+  tables ran as display lists: raw RDP words, garbage, no picture.
+- **Two tasks at once** (`XRC_TASK_GATE`): the crash at frame 369. Its main and audio
+  threads raise themselves above the scheduler, start a task and record it in the
+  scheduler's state (`sched_submit_task`). Here the start runs the whole task, and a lower
+  thread runs whenever it waits on the GPU: the scheduler saw the RSP idle and started
+  another; the second SP done found no task (a write near NULL). Logged now as `[SP] task
+  ... started ... while thread ...'s runs`. Two windows: a raised thread's task now runs at
+  its next runtime call (it has recorded it by then), and a thread about to raise itself
+  waits for a higher one that can run. Other threads keep the GPU's waits: nothing changes
+  for a game that does not raise its own priority. A screenshot's serial dump holds a task
+  10-15 s, which passed the first 1 s bound on that wait and brought the crash back in one
+  run: the bound is 30 s now. The run token (`XRC_RUN_TOKEN`) would
+  cover this too; it is still off until a console set.
+- **A shared frame** (`XRC_INTERP_INLINE`, `test_interp.py` `t_inline`): the hang at its
+  title, a jump to 0xFD10013F. Hand-written `0x70018680` (a 0x800-byte frame) calls
+  `0x70019634`, whose error path takes the caller's epilogue. Each ran as its own
+  interpreter run, so only the inner one ended; the outer popped the frame again and
+  returned to what lay past the stack's top, a display list. A call between routines the
+  runtime interprets now stays in the run (`xrc_interp_rows`, `GEN_VERSION` 16). Found with
+  `XRC_INTERP_TRACE_FROM`; test builds now log the trace, the last pc and the stack at the
+  first TLB miss.
+- **Its audio microcode** (`ASP_HLE_RARE`, `test_asp_hle.py`): n_audio's ABI with the table
+  behind two overlay records, so it read as unknown and played silence. Opcode 0 is a gain.
+  Its MP3 pair is MPEG-1's polyphase synthesis (`asp_abis.inc`), with the window read from
+  the microcode's data at run time; a throwaway script ran ISO analysis around that window
+  and got a tone back at 87 dB, and the host test compares against the formula written out.
+  No run has reached a scene that plays MP3 yet (`[AUDIO] MP3 plays` in the log says when one
+  does): untested in the game. Its low-pass filter (14) is not run: `DIVERGES`.
+
+`[MEM]` free in play 5.6-6.3 MB in this test build (image 17.6 MB), `[MEM] after nv2a free
+17636 KB of 65536 KB (image 17584 KB, virt 20776 KB, pool 24 KB)`; `[CLOCK] cpu 733 MHz (TSC
+against the ACPI timer, 3375000 Hz)`. xemu only: no console has run it, and nobody has
+listened to it. Free memory is the first thing to watch on red. Host: `test_f3dex`,
+`test_interp`, `test_asp_hle`. Others re-run with these changes (xemu, 70-105 s, no crash,
+no `[SP] task` line): Super Mario 64, GoldenEye, Banjo-Kazooie, Diddy Kong Racing,
+Donkey Kong 64.
+
+The decomp (`n64decomp/perfect_dark`) was read for all of this, in a scratch folder, as the
+answer key; nothing of it is in this tree. Its `src/rsp/asp.s` lists the audio microcode.
+
+## 2026-11-05: what stopped games at their second frame, and the record's own blind spot (xemu; no console)
+
+Sweeps s18 and s19, then each game that presents little read by what its threads wait on. All xemu; nothing here has
+been on a console, and every frame count is from a test build.
+
+**s18 and s19** (`--run 60`, 4 builds beside one xemu): all 246 build, **197** present in s18 and **202** in s19 (s16:
+192, in 120 s). s19 against s18: ITF 2000, Bomberman 64: The Second Attack!, South Park, Mission: Impossible, Brunswick
+Bowling, Puzzle League gained; Perfect Dark lost once (a crash in its long boot, frame 2981; the tree after it runs 2398
+frames in 105 s under two sweeps' load, no crash).
+
+**The record's blind spot.** `sweep_diff.py` counted two frames as presenting, so a game that played and now stopped at
+its second frame showed nowhere. It now lists those under half their frames per retrace. Of what it listed, rerun alone,
+no code had moved: All-Star Baseball 2000 and 2001 and Top Gear Rally 2 (2205 frames in 55 s) need more than s18's 60 s
+window under load to pass their boot, and FIFA 99 is slow game code. Duke Nukem 64 ran at 40 fps under s18's load and
+the same XBE at 5.7 fps alone; not explained, and not this work. DK64's crash (a global in its overlay's data read NULL
+in `func_80026C9C`) came in two load runs and in no alone run: not explained either.
+
+**Fixed, each with a switch (`docs/testing.md`):**
+
+- **A thread created again over its own block** (`XRC_RESTART_BLOCKED`). `osCreateThread` then `osStartThread` over a
+  thread blocked on a queue left it blocked until a message woke it, and only then did it start over: NuSystem's second
+  `nuGfxInit` made its task manager's queue again over the message that had woken it, the count of tasks under way never
+  came down, and the main thread spun on it. The start now wakes it, and the starter waits for it to block even when the
+  thread's level is above its own, because the thread's first host block (its log line) let the lower starter run and
+  finish a task first. Knife Edge 2 -> 1279 frames in 30 s, Batman Beyond 2 -> 1082 in 20 s. `test_thread` scenario 8,
+  32-bit builds only (`__builtin_longjmp` to `thread_body` loses its frame on 64-bit Windows; by hand with MSYS2's
+  mingw32 gcc, and it fails with the switch off). `test_thread` itself had not linked for a while: its stubs are back.
+- **The DP done when the SP done cannot go** (`XRC_RCP_DP_WAIT`). The room rule keeps a done event until its queue has
+  room, for a reader. Mischief Makers starts more tasks than it reads SP dones of, with a queue of one, and waits on the
+  DP done's own queue; on the N64 the extra SP dones are dropped. A thread about to block there now drops them. The
+  same place posts the DP done when a graphics task showed no FullSync, as with a microcode we do not read, since nobody
+  waits on that queue for anything else: Dark Rift 2 -> 1773 frames in 30 s, **all of them black**: its own microcode
+  draws off screen and we read it as Rare's. Blast Corps, whose scheduler asserts on a stray DP done, takes its events
+  on one queue and is not this case (1007 frames).
+- **Debug libultra** (`N64RX_FP_FRAME`, `N64RX_DEBUG_ERROR`). A libultra built without optimisation addresses its
+  arguments off `$fp`, and one with its checks calls `__osError`: both are named now, the error logged and ignored. Puzzle
+  League, ITF 2000: from a crash at frame 0 to 1617 and 2359 frames in 35 s (not looked at). Mischief Makers: also its `__osError` no longer read as
+  `__osEnqueueAndYield`; with the above, 1800 frames in 30 s, its file select right. NFL Blitz 2001 boots further, to its
+  own `break` at 0x80017980.
+- **A store to cartridge ROM**: not fixed in the runtime, on purpose. A Bug's Life and Toy Story 2 pass their wave table
+  in the cartridge to Software Creations' music library as the default effects bank too. `MusFxBankInitialize` relocates
+  a bank in place, with its count the word at +0: there, "N64 ", 1.3 billion. On the N64 the stores go nowhere and the
+  loop's next read returns the word just stored, because the PI bus holds it: negative, and the loop ends after one
+  pass. A runtime that dropped the stores (written and tested) ran the loop off the cartridge. `games/patches` leaves a
+  bank in the cartridge alone: 1013 and 1183 frames in 30 s, their first screens right. N64 hardware behaviour read from
+  the code, not measured.
+- **A blocked boot of the low-priority kind** (`XRC_LOWER_UNLOCKED`). A thread lowering itself holding the runtime lock
+  could be preempted there for good by a thread that polls, with the VI thread waiting for the lock: Brunswick Bowling.
+- **An interpreted routine's tail call** left the whole run (Bomberman 64: The Second Attack!, a regression from
+  `XRC_INTERP_INLINE`); `test_interp` covers it. South Park's jump table crossed the page the dry boot captured
+  (`emit.py`: the next page too).
+- **Factor 5's boot** (`N64RX_TLB_INDEX`). Its helper writes the TLB from four arguments with the index set before it,
+  and was named `osMapTLB`, whose first argument is the index: the code at 0x40000000 was never mapped. Indiana Jones and
+  Battle for Naboo no longer crash at their first jump there; they run their threads and stop before any graphics task
+  (Indy's main entry returns, all its threads then wait; Naboo a NULL write at 135 s). In the library check (246 ROMs)
+  only those two games' names changed.
+
+**Bomberman 64** (`N64RX_JB_SGI`). Hudson's game objects switch stacks with setjmp/longjmp, as in Mario Party, whose
+coroutines the runtime has (`strand.c`), but with SGI's buffer: recompiled, a longjmp came back to its caller with the
+setjmp's registers, and the game wrote its display list through a NULL. The analyser takes that shape too and tells the
+runtime the layout: 0 -> 980 frames in 20 s, its title and 3D scenes (1018 triangles a frame). Kirby 64 has the same pair
+and takes the same path; it never runs a new context here, and plays as before (1446 frames in 30 s, 4618 triangles).
+
+**Banjo-Tooie, three layers down, not playing.** Its boot word: the 6105 chip's second word, "not known" in `boot.c` for
+months, is the IPL3's word at ROM 0x73C, as the game's compare says (`XRC_CIC_WORD2`). Its overlay calls: each stub is
+`syscall <overlay>` with `addi t0, <index>` after it; `__osException` has a case of its own that sets t0 to the stub and
+erets to the linker, which loads the overlay, rewrites the stub to `j target` and jumps back to t0. The runtime reads that
+case from the game's code (`XRC_SYSCALL_CASE`), comes back from such a syscall to an interpreted caller
+(`test_interp`), and calls the recompiled target of a stub (`XRC_STUB_CALL`). Status: Rare polls IM4, reset's mask, and
+it read clear (`XRC_STATUS_IM`). It then crashes reading from `ra`: the linker's return path swaps return addresses for
+trampolines in the overlay's header, which a recompiled `jal` and `jr ra` never run. That is design work. The syscall
+route through the game's fault thread was tried first and is wrong: that thread is its crash screen.
+
+**Tried and dropped:** `XRC_RECV_PRI` (Wipeout: no effect); running Excitebike 64's entry from RDRAM (its loader has its
+own libultra, switching threads by eret; no retrace); a `[THR]` report (`[OS] stall` says it already).
+
+**Parked:** Derby Stallion (a `break` at 0x801D42E0, not the gate or the inline); Madden 64 (main polls in a compressed
+boot); Cruis'n USA (main in the safety net at 0x8003F130); Wipeout; Mario no Photopie (reads past RDRAM, a SmartMedia
+cartridge).
+
+Tests: `test_thread`, `test_interp`, `test_f3dex`, `test_asp_hle`, `test_n64rx`, `test_dryboot`, `test_compat`,
+`test_leak_check` pass. xemu after the last of these, a test build each, no crash: Ocarina of Time, Master Quest, Donkey
+Kong 64, Jet Force Gemini, Paper Mario, Diddy Kong Racing, Banjo-Kazooie, Kirby 64, Pokémon Snap, Mario Party, Mario Party
+2, Super Mario 64, Mario Tennis, GoldenEye, Mario Kart 64, Super Smash Bros. `[MEM] after nv2a free 23960 KB of 65536 KB (image 8904 KB, virt 18568 KB, pool 20 KB)` and `[CLOCK] cpu
+733 MHz (TSC against the ACPI timer, 3375000 Hz)` (Knife Edge). Nothing here has run on a console.
+
+A test tag in `build-host/gameshot.sh` takes every `<tag>-learn*.log` it finds: `bk`'s nineteen old logs made a crash
+that the ROM-only build does not have. Use a fresh tag to judge the ROM-only path.
+
+### The same day: what the crash list still had (xemu; no console)
+
+Frames in a test build, a run of 20-40 s beside other builds. Pictures looked at where it says so.
+
+| game | before (s19) | now | what it was |
+|---|---|---|---|
+| Chopper Attack | crash, 0 frames | 1462 at 60 s, in a mission: helicopter, HUD, targets right | hand-written coroutines |
+| Mortal Kombat Trilogy | crash, 0 | 1297; its controller notice right | the same |
+| Mortal Kombat Mythologies | no frames | 1191 (one shot black, not looked into) | the same |
+| Tom Clancy's Rainbow Six | no frames | 1320; its title menu right | the same |
+| Jeremy McGrath Supercross 2000 | crash, 5 | 1578 (a shot shows one 3D object on black: not known to be right) | the same |
+| War Gods | crash, 0 | 600; its title right | a stray store past RDRAM |
+| Mystical Ninja | crash at 1532 | 2580, no crash | a jump table's case taken for a function |
+| I.S.S. 98 | crash at 1711 | 1422 at 35 s, no crash in that run | the same (not proven: it may crash later) |
+| Fighter's Destiny | crash at 74 | 500 in 15 s, no crash | a call bound to the wrong overlay |
+| BattleTanx | 4 | 904 | `osSetIntMask` sections not honoured |
+| Dual Heroes | crash at 68 | 780, no crash | a stray store past RDRAM |
+| Robotron 64 | fatal at 93 | 1660, no crash | (not looked into: gone in this tree) |
+| Conker's Bad Fur Day | crash, 0 | from the ROM alone: title, its New Game menu by the pad, the opening cutscene (1267 frames at 170 s, about 8 fps) | below |
+| Gauntlet Legends | crash, 0 | 4, its game loop running; no picture yet | below |
+
+- **Hand-written stack switches** (`XRC_STACK_SWITCH`, `N64RX_STACK_SWITCH`, `strand.c`, `test_strand`). Chopper Attack's
+  objects are coroutines with their own yield: save the registers on this stack, load sp from the next task, jump. In C
+  that cannot work: the context left behind is host stack frames. The analyser now sends routines that load sp from
+  memory, or store it and never return, to the interpreter; there a jump through a register after such a load is a
+  switch. A strand parked with that sp takes the registers and its routine returns; otherwise it is a new context on a
+  host thread of its own, as `setjmp`/`longjmp` have had for Mario Party. A scan of the library for this shape found 28
+  games; the ones above were failing because of it.
+- **A jump table landing on another overlay's function** (`XRC_TAIL_GUARD`, `guard.c`). The interpreter took any jump through
+  a register to an address with a function as a tail call. In interpreted overlay code the case of a table can be the very
+  address where another captured version of that overlay has a function; the case ran as a function and came back with
+  the caller's registers not restored (Mystical Ninja). Now only if the function is what RDRAM holds.
+- **A call bound to one overlay** (`N64RX_OVL_LOOKUP`, `emit.py`). With one function at an address the recompiler binds a
+  `jal` to it, even from outside an overlay sharing that address with others: Fighter's Destiny ran that function with a
+  different overlay loaded, and wrote through a ROM offset. Such calls go through the lookup.
+- **Past the end of RDRAM** (`XRC_RDRAM_GAP`, `mmio.c`). War Gods stores through a pointer shifted twice, 0x80FBCC98. On the
+  N64 that goes nowhere; here a blank page goes behind it. DIVERGES: a later load finds that store.
+- **`osSetIntMask(OS_IM_NONE)` is honoured** (`XRC_INTMASK_BOOST`). libaudio's lists rely on it. `XRC_INTMASK_LOCK` did this
+  with the lock and broke Mario Party's coroutines, so it was left off and nothing protected those sections: BattleTanx's
+  audio thread walked a corrupted voice list for good. A thread under that mask now runs at level 14, holding nothing, so a
+  coroutine switch under it costs nothing.
+- **The SI takes time** (`XRC_SI_US`, 2 ms). The done event of `osContStartReadData` came at once, so a pad thread that reads
+  again as soon as it can never slept. Body Harvest's sits one priority above its main thread, which never ran with the
+  run token. With this it plays with the token (996 frames) and without it (1063).
+- **A queue made again over a sleeper** (`XRC_QUEUE_ORPHAN`, `test_thread` scenario 9). On the N64 that thread never hears of the queue again. Here
+  sleepers are found by the queue's address, so it went on waking, and Fighter's Destiny 2's pad thread took the SI done its main thread was
+  waiting for. Only a sleeper of higher priority than the maker: a lower one is only there by the host's order. FD2 then gets to its first frame, and with
+  the run token it presents 545 frames in 15 s. Without the token it stops after its first frame, main waiting on its scheduler (0x800BA1DC).
+- **Paged code stayed interpreted** (`XRC_GUARD_PAGED`). A captured function is checked against RDRAM by hash. Every entry leaving the TLB had its
+  functions checked again, and with the page not mapped the check failed, so the function ran in the interpreter, whose fetches took misses of their own, until the
+  page next changed. Now only a mapping checks, the check takes the page through the game's own miss code as a fetch would, and it looks a page up once, not once a
+  word. Conker, the same scenario side by side beside two sweeps: misses through its exception code from 41 to about 4 a retrace, 2025 frames at 200 s against 1384.
+  It still changes a TLB entry 1000 times a second in its cutscene and runs that at 2-3 fps here. Beside it, no crash: GoldenEye (2125 frames in 50 s), All-Star Baseball
+  2000 (1110 in 60 s), Mario Tennis, Shadow Man, Perfect Dark (1262 in 65 s). It departs from the N64 (`DIVERGES` in `guard.c`): a verified function runs with its page out,
+  where the N64 would fault it back in, so other code loaded there with no mapping in between would not be seen. s24 and s25 were built before this: s26 will carry it.
+- **Runtime switches per ROM** (`games/runtime/`, `N64RX_GAME_RUNTIME`, `games/README.md`). The token stays off by default, and a game that only works with it can now say so.
+  First: Fighter's Destiny 2, which reaches its Opus logo from a plain build (634 frames in 25 s; nothing past the logo looked at). s25 will say which others.
+- **The dry boot** writes the 6105 chip's second word too, as the runtime does.
+- **A wait on another thread's flag** (`XHW_WAIT_WHILE`, `XHW_WAIT_SLEEP`). Eleven places spun on `Sleep(0)`, which only gives
+  the CPU to the waiter's own level. Conker's level 10 thread waited so for the TLB refill its level 8 main thread was in:
+  each waited for good. A few yields now, then 1 ms. Any game whose threads meet in the refill, the cartridge window, strands
+  or the ROM's page swap could have hung this way.
+- **Conker** (`N64RX_TLB_TWIN`). Learnt pages made a second segment over its boot code, the same ROM at the same addresses, and
+  so a copy of libultra under other names: the game's own `osRecvMesg` ran on the runtime's threads. Now only what lies past
+  the boot segment. With the wait above it pages its code in through its own exception code and starts all its threads.
+  `func_150A3A70` is hand-tuned: it puts its own label in ra and loops with `jr ra`, a C return when recompiled, and read NULL + 4;
+  routines that build a label of their own in ra are interpreted now (`N64RX_RA_LABEL`; `lui ra` alone means nothing, 68 games use ra
+  as a scratch register). Its microcode is its own too (`XGFX_BG`, `docs/renderer.md`): read as plain F3DEX2 its frames were
+  spikes; now its title and menu draw, textures and all. Still wrong: grey shapes by the weasels on the title, and black polygons around
+  Conker's mouth in the cutscene (neither looked into). About one boot in three stopped at 200 or so frames, every thread waiting: on a
+  scene change the main loop leaves on the "job finished" that brings its count of jobs to 0, and host speed could leave that count one low
+  from the first frame (it read -1). A patch keeps it honest (`games/patches/NFUE.4cbadd3c4e07.c`): 10 boots of 10 then pass. Its pads were dead:
+  `osContStartReadData` was the runtime's and `osContGetReadData` the game's, reading a buffer nothing filled, because with captured code in the
+  analysis more than one routine fit that rule, and none was named (`N64RX_GETREAD_NEAR`). Nobody has played past the opening cutscene. It is slow,
+  8 fps in xemu: its pager took 11016 misses through its exception code in 301 retraces, interpreted.
+- **Gauntlet Legends** (`N64RX_CODE_TWINS`, `N64RX_KUSEG_GLOBALS`). It runs at 0xE0000000, its TLB's window on physical 0, and the
+  capture holds its code there and through KSEG0. The rules named the KSEG0 copy, so its own `osSetThreadPri` ran on the runtime's
+  threads. Copies with the same bytes go to the runtime's too, and each window of captured code gets the rules on its own
+  (they follow calls by address). Its VI functions never fit because a global at 0xE00A7924 was not a global to the rules. It
+  now runs its threads and game loop; four frames so far.
+
+**The run token.** A sweep of the first 71 games with it, before the fixes above, gained BattleTanx, Global Assault, Rampage 2,
+FIFA 99 and South Park: Chef's Luv Shack and lost Body Harvest, both Clay Fighters, Armorines, part of Worms and Duke Nukem.
+Run again alone, Rampage 2 and South Park play without it (the sweep's short window), Body Harvest is fixed, and the Clay
+Fighter failure is its own assert ("Got RSP finish signal, but no RSP task was supposed to be running"): not looked into
+further. It works without the token. Global Assault plays at 29.9 fps with `XRC_RANK_LEVELS=1` alone, but the first 106 games of s22
+(defaults) and s23 (with it) came out even, 89 presenting each: it gains Global Assault and GT 64 and loses Armorines, Ready 2 Rumble and Golden Nugget. It
+stays off. The two were stopped there, the tree having moved on. **s24 (defaults) and s25 (the run token) are running on the whole tree.** The default
+stays as it is until a console says otherwise.
+
+**Corrected:** Dark Rift's frames are not all black, as the entry above said from its first seconds: its intro text draws
+right. Its first microcode is Fast3D 2.0D and a replayed frame draws the Kronos logo. A second one, with no version text and
+4 KB of IMEM, takes a struct of pointers (a viewport, a colour image, object lists), not a display list: read as one it sends
+07 and turns on Rare's DKR path. Whatever it draws is not drawn. Not fixed.
+
+**Under load:** Chopper Attack can stop at its first frame when xemu runs beside a full sweep and builds. Its boot fell 8
+retraces behind, its retrace queue filled, its dispatch thread blocked, and its main thread spun on a flag that thread
+serves (a reading of the threads, not proven). The same XBE plays with the machine quieter. Worth a look on a console.
+
+**A disk that filled up.** The sweeps and test builds filled C: at about 17:00 (89 MB free), and XBEs stopped linking with "Unexpected write
+error". `build-s20` and `build-s21`, the two stopped sweeps' builds, went (80 GB); their results stay in `build-host/sweep`. A full sweep's
+build folder is about 40 GB, and the `build-t-*`, `out-*` test folders are worth a clean-up: they number over 700.
+
+**Parked:** Mortal Kombat 4 (a jump to 0x1000); Rugrats: Scavenger Hunt (executes vertices at 0x80230000 at frame ~1000, through a
+pointer not found yet); Sim City 2000 (a pointer read from data, 0x22229000, after one frame); Disney's Tarzan (16 frames);
+Fighter's Destiny 2 (no frames); FIFA 99 (slow; `func_80058AD4` under the guard).
+
+Tests: `test_interp`, `test_n64rx`, `test_strand`, `test_thread`, `test_dryboot` pass. xemu after these, a test build each, no
+crash: Super Mario 64, Ocarina of Time, Mario Kart 64, Banjo-Kazooie, Mario Party, Paper Mario, Perfect Dark, Mario Tennis, Diddy Kong
+Racing, Donkey Kong 64, GoldenEye, Super Smash Bros., Kirby 64, Pokémon Snap, Jet Force Gemini, Castlevania: Legacy of Darkness.
+`[MEM] after nv2a free 18320 KB of 65536 KB (image 10124 KB, virt 24204 KB, pool 20 KB)` and `[CLOCK] cpu 734 MHz (TSC against the
+ACPI timer, 3375000 Hz)` (Mario Kart 64). Nothing here has run on a console: the SI's timing and
+the level boost in particular want one.
+
+### That night: three more of the no-frame list (xemu; no console)
+
+Taken from s19's list of games with no frames while s24 and s25 ran. Each was read from its own scheduler.
+
+| game | was | now | what it was |
+|---|---|---|---|
+| Killer Instinct Gold | 0 frames | attract, title, character select, a match (Jago against Orchid) by pad | `osDpSetNextBuffer` ignored |
+| Snowboard Kids | 0 to 39 frames, a different number each run | "PUSH START BUTTON" over its 3D title (692 frames in 20 s) | the present inside the swap |
+| Big Mountain 2000 | 1 frame | 507 frames in 15 s (not looked at) | `osEepromRead` named as the write |
+| Conker's Bad Fur Day | black polygons around his eyes and mouth | drawn right | K5 read as 0 |
+| Star Wars Episode I Racer | 1 frame | LucasArts logo, title menu, Select Player | the first swap current at once, and its EEPROM write misnamed |
+| Wipeout 64 | 0 to 3 frames | its attract race at 30 fps (black for about a minute before, 1800 frames with only a clear: not looked into) | every waiter woken for one message; a raw SI done posted at once |
+| Kobe Bryant's NBA Courtside | 0 frames, no retrace | Left Field's 3D logo, 307 frames in 25 s | its GCC-built `osContInit`; call targets its unpacking overwrites |
+| Power Rangers: Lightspeed Rescue | 0 frames | main menu and Quest menu by pad, full screen | a false call target cut `osSendMesg`; the start-up viewport clipped its 640-wide picture |
+
+- **`osDpSetNextBuffer` did nothing** (`XRC_DP_LIST`, `sp.c`, `gfx.c`, `f3d_run_rdp`). Killer Instinct Gold writes some RDP lists itself and hands them straight to the RDP, starting
+  with a clear of the screen. Nothing drew them and no DP done came, so its scheduler waited for ever and the game looped with no task. A list of plain RDP commands now goes
+  through the interpreter and stops at its length, raw triangles and texture rectangles included, and a FullSync gives its DP done; a list that does not read as RDP commands (what a
+  microcode writing to RDRAM leaves) gives only the done. Its character select shows the portraits on black: it may be right, not checked against the game.
+- **A present inside `osViSwapBuffer`** (`XRC_SWAP_AT_BLOCK`, `gfx.c`). A present waits for the frame on screen to go, up to a vblank; on the N64 a swap writes a register. So the
+  thread that swapped slept where the game has it running, and lower threads ran. Snowboard Kids' main thread reuses a frame's second task as soon as it has built two more; its graphics
+  thread (N64 priority 100) wakes first on the N64 and reads that task in time. Here it slept in the swap, main overwrote the task, the thread then read the buffer just swapped
+  and waited for ever for it to leave the screen. The ring of task starts, swaps and sends showed the order; `XRC_PRESENT_ON_SWAP=0` proved it (1044 frames). The present now waits for
+  the first thing that can tell: a thread about to block, the next task, a CPU read of a frame, the next retrace. This moves every game's present by a little: ten games checked, no
+  crash and frames as before (Super Mario 64 787 in 30 s, GoldenEye 1318 in 25 s, Banjo-Kazooie 665 in 25 s, Pokémon Snap, Mario Tennis, Ocarina of Time 840 in 35 s, Mario Kart 64 725 in 30 s, Diddy Kong Racing 982 in
+  30 s, Super Smash Bros. 1656 in 25 s, Donkey Kong 64 1052 in 30 s). `test_gfx_swap` covers when it runs, on and off. Wants a console: a present's timing on red is not xemu's.
+- **The EEPROM read named as the write** (`N64RX_EEPROM_READ`, `libultra.py`, `features.py`). The rule looked for writes through arg2's own register, and most builds keep arg2 in a
+  saved one. In 16 games of the library the read was named `osEepromWrite` and the long read `osEepromLongWrite`: a game reading its save overwrote it, and the real write, left
+  recompiled, waited on a timer queue `osContInit` makes on the N64 and ours does not. The rule now looks for byte stores through a pointer after the last SI DMA; before it they are a write's
+  packing (AKI's wrestling games), and checked against the analyser's names for those.
+- **K5** (`XGFX_K5_ONE`, `nv2a.c`, `nv2a_cc.c`, `f3d_interp.c`). Conker sets K5 to 255 with `G_SETCONVERT` and uses `(SHADE - ENV) * K5 + PRIM`, K5 as a constant 1. The combiner read
+  K5 as 0, so those polygons came out black. A K5 of about 1 now reads as 1; any other still reads as 0. A Bug's Life has two modes reading K5, not looked at.
+
+- **The first swap** (`XRC_VI_SWAP_NOW`, `vi.c`). `osViSwapBuffer` made the first buffer current at once. Star Wars Episode I Racer swaps, then waits while the current buffer is the one it will
+  draw next: for ever. It now shows at the next retrace, as any other swap and as on the N64. xemu itself exited a few seconds into three Racer runs, with no report; later runs of the same code ran on: not
+  understood.
+- **One waiter per message** (`XRC_WAKE_ONE`, `thread.c`). A send woke every thread waiting on the queue to race for the message. Libultra hands it to the highest priority, first come among equals, and the others stay
+  blocked. Priorities 8 and 10 share a kernel level, so Wipeout 64's pad thread could take the SI done its main thread waited for, and main never ran again. `test_thread` scenario 10.
+
+- **A raw SI DMA's done, posted at once** (`si.c`, `time.c`). It reached a thread already waiting on the queue before the caller got there: in some runs Wipeout's pad thread took the done of main's
+  rumble pak probe, and main waited for ever. `__osSiRawStartDma` and `osContStartQuery` now post after `XRC_SI_US`, as `osContStartReadData` does.
+- **A libultra built with GCC** (`N64RX_CONT_INIT_TIME`, `libultra.py`). NBA Courtside's has no shape the SI rules read. Its `osContInit`, recompiled, waited on a timer of about 21 million years, and the
+  game never started its VI manager. It divides the clock rate with a libgcc whose 64-bit words lie the other way (a simulation of the VR4300 on its bytes agrees); on the N64 the game's own `osInitialize` has already
+  put the rate in that order, so the division gives no wait. Ours is the runtime's, which leaves the rate alone. A function that calls `osGetTime`, `osSetTimer` and `osCreateMesgQueue` is named `osContInit` when no
+  other is. A reading of the code, not measured. The dry boot runs the real code and passes.
+- **A call target that does not decode** (`N64RX_BAD_INTERP`, `romonly.py`). NBA Courtside unpacks code over part of its boot image, and calls it: recompiled from the ROM's bytes, `func_80001F10` was two instructions
+  of picture data, then a return, with a register trashed. Live functions whose walk ends at an invalid instruction now go to the interpreter, which reads RDRAM. 77 games of the library have some such function (1031 in all, not all live).
+
+- **A call target at a delay slot** (`N64RX_DELAY_SLOT`, `funcs.py`). A walk over a table found a `jal` aimed at a branch's delay slot in `osSendMesg`; the real function was cut there, went unnamed, and with it `osSetEventMesg`:
+  no message or event reached anyone in Power Rangers. No compiler calls a delay slot. This came after s26 and s27 were started: not in them.
+- **The start-up viewport** (`XGFX_VP_UNSET`, `f3d_interp.c`). A game that only draws rectangles sets no viewport. On a 640-wide screen the start-up 320x240 one read as a small viewport to clip to, and Power Rangers' picture was
+  cut to its top-left quarter. Also after s26 and s27 were started.
+- **F-1 Pole Position 64** presents with the run token (843 frames in 25 s; a reading: its command thread, priority 120, drains its queue at start, and at one kernel level with main in a host wait, main's first request went in
+  before that). Not changed: s27 will say which games want `games/runtime/`.
+
+The stall report now gives the VI's current and next framebuffer and each thread's saved registers, which tell one wait from another. `XRC_STALL_PEEKS=<list>` and `XRC_DIAG_SWAP` are
+new diagnosis switches.
+
+**Corrected on the way:** a Killer Instinct Gold run seemed to draw 273 frames: it shared slot 11 with a regression batch and read Mario Tennis's serial log. Never two runs on a slot.
+
+**Parked, each with what was read:** Excitebike 64: the ROM's first stage is a loader with a small libultra of its own, which unpacks the game over its own addresses and starts again at the entry. The dry boot goes through it (195 graphics tasks); here the
+recompiled entry is the second stage's, its RDRAM still the first's, and the guard's interpreter runs off into data at 0x800B0AE0. An idea, not tried: the dry boot's RDRAM at the second start, put in the XBE, and start there. 1080 Snowboarding: a
+kernel of its own at 0x8010xxxx, switching threads by eret; no VI manager, so no retrace. World Driver Championship: Boss's microcode, no version text; read as a display list, garbage. Madden 2000, Cruis'n World, Top Gear Hyper-Bike: their threads run and no task starts (the next section has what each was).
+
+Fifteen games after the one-waiter change, no crash: Super Mario 64 (804 in 35 s), GoldenEye (1435 in 30 s), Banjo-Kazooie (963 in 35 s), Pokémon Snap (1410 in 35 s), Mario Tennis, Mario Party (817 in 25 s),
+Paper Mario (865 in 25 s), Ocarina of Time (824 in 35 s), Mario Kart 64 (798 in 35 s), Diddy Kong Racing (1035 in 30 s), Super Smash Bros. (1166 in 20 s), Donkey Kong 64 (1123 in 30 s), Perfect Dark (881 in 25 s), Kirby 64 (1095
+in 25 s), Jet Force Gemini (524 in 30 s). These counts are beside two sweeps. s24 and s25 were stopped at 107 games (89 and 92 presenting), the tree having moved on: **s26 (defaults) and s27 (the run token) run on this
+tree**, and judge all of this.
+
+Tests: `test_thread` (scenario 10), `test_strand`, `test_interp`, `test_f3dex` (K5, an RDP list), `test_gfx_swap` (new), `test_asp_hle`, `test_n64rx`, `test_dryboot`, `test_compat`, `test_leak_check`, `rom_leak_check` pass.
+Nothing here has run on a console: the present's timing and the wake order most want it.
+
+### The morning after: done events, the boot chip's scrambled tail (2026-11-06; xemu; no console)
+
+While sweeps s26 and s27 ran, the games they and s19 still showed stuck. Frames are from short test builds in xemu with both sweeps running beside them, so the counts only say "it moves".
+
+| Game | Before | Now | Cause |
+|---|---|---|---|
+| Hydro Thunder | 21 frames, then nothing | Eurocom logo, title, attract race | its main thread sets "the RCP is busy" after the send; the done came first and the flag stayed |
+| S.C.A.R.S. | 5 frames | 946 frames in 25 s (no picture looked at) | it never reads its first DP done, and the next SP dones waited for room behind it |
+| Madden 2000 | 2 frames | title and pad screen, 613 frames in 25 s | nothing reads its SP done's queue, and the DP done waited behind it; then its VI Y scale of 0.8 |
+| Madden Football 64 | 2 to 4 frames | 787 frames in 25 s (no picture looked at) | the same |
+| Cruis'n World | 0 frames | its rumble pak prompt, 954 frames in 30 s | the 6106 chip's scrambled IPL3 tail: its copy protection |
+| Batman Beyond, Knife Edge | 2 frames | 1098 in 20 s, 781 in 25 s (no picture looked at) | not read: one of the changes here or the night before |
+| Mortal Kombat 4 | crash at address 0, then a menu with no backdrop and attract text over black, and a hang in about one run in three | its menu whole, its attract scene (Raiden, his mountains, the caption); six runs with no hang | three causes below |
+| South Park: Chef's Luv Shack | its 2D smeared into flat blocks | Acclaim's logo, its mountains, Chef and his dancers, all clean; 3535 frames in 85 s | texture coordinates with the perspective divide off, below |
+| Bust-A-Move 2 | 1 frame in s28, 4738 in s26 | 2200 frames in 45 s | a rule of the night before, below |
+| Knockout Kings 2000, Star Fox 64 (E) | no retrace; 0 frames | its save prompt, 1056 frames in 45 s; its space intro, 610 frames in 50 s | `XRC_START_DEFER=2`, below |
+| Top Gear Hyper-Bike | 0 frames | 1096 frames in 45 s, no run token | `XHW_SPAWN_LEVEL`, below |
+| Mischief Makers, Rainbow Six | no frames in s19 | Mischief Makers's title, 1540 frames in 25 s; Saffire's logo, 1172 in 25 s | the night before's; only seen now |
+
+- **A graphics task's done, before the thread it preempted ran** (`XRC_RCP_SENDER_US`, `sp.c`, `thread.c`). A task here is over when its start returns. Hydro Thunder's main thread sends the task, the scheduler preempts it and starts the task, and main then sets a word that the scheduler clears at the done. It was set after the done, and stayed; the scheduler took the next audio task for one to yield to and waited for ever. Mortal Kombat 4 is the same in another shape: main sends the task and swaps its frame index a few instructions later, and its handler clears the flag of the index before the current one. A retrace in those instructions ran the whole list, on the CPU, above main; the handler cleared the wrong flag, and main spun for ever on the right one. Its ring and four words showed that: the task's start and its done both before the swap, one flag still 1. On the N64 main goes on while the RCP works. So a graphics task's done now waits 2 ms from the task's end, while a game thread is preempted inside its `osSendMesg`, 2 ms from when the task's sender comes out, and while a thread above the sender is runnable, two retraces at most in all. The sender is the lowest thread to send since the last graphics task. On the way: ending the wait when the sender blocks stopped Hydro Thunder at 21 and then 115 frames, and came out; 500 us from the send was still stuck after 208 frames. Hydro Thunder: 477 frames in 40 s. Mortal Kombat 4: no hang in six runs of up to 3058 retraces, where two of five hung. A window, not a proof, and the wait is a cost: it has not been measured on a console.
+- **A full queue's done, dropped as the N64 drops it** (`XRC_RCP_DP_WAIT`, `sp.c`). The room rule holds a done while its queue is full, for a reader on its way. S.C.A.R.S. and Madden have queues no one is reading: a thread about to block on the SP done's queue with the DP done's full loses its oldest task's DP done, and a thread on the DP done's queue with the SP done's full gets its DP done past it, whoever started the task, at the retrace if it is already asleep.
+- **The 6106's IPL3 tail is scrambled** (`XRC_IPL3_6106`, `boot.c`, `mmio.c`, `dryboot.c`). Its copy to low RDRAM xors each word with a key that it multiplies by `0x0260BCD5`. We copied the ROM's bytes as they stand. Cruis'n World checks seven words the boot leaves (four of that memory, IMEM, DMEM, `osCicId`) and four of the ROM, and stops for ever in `beq zero, zero, -1` if any is wrong. The key's start, `0x3C421AAA`, comes out of all four of the words it checks, and of the tail's first word in F-Zero X, Yoshi's Story and Cruis'n World. The tail also leaves `0x17D8` in IMEM, and the game looks for the same in `osCicId`: for this chip we now leave that, not 6106. Why `osCicId` holds it on a real console was not read; the game's check is the evidence.
+- **`osViSetYScale`** (`XRC_VI_YSCALE`, `vi.c`). It was ignored. Madden 2000's 0.8 stretches 384 rows over the screen, and its picture filled the top of 480.
+- **A word-only setjmp** (`N64RX_JB_WORD`, `romonly.py`, `saves.py`, `strand.c`). NHL 99's keeps s0-s7, sp, fp, ra and no floats. Recompiled, it kept ra 0, and its longjmp went to address 0. At least three ROMs in the library hold the pair (NHL 99's is compressed; a scan of the ROMs as they stand finds two more).
+- **Both cull bits** (`XGFX_CULL_BOTH`, `f3d_interp.c`). Mortal Kombat 4 sets `G_CULL_BOTH` for its backdrops and for its 3D: all 172 of its menu's backdrop tiles, a clean grid. We culled them all, as the manuals say. As GLideN64 reads it (read for behaviour), both means back only: its menu and attract scene now draw. The microcode's own test (F3DLX.Rej 1.23) was not read: the picture is the evidence.
+- **An exit from deep down** (`XRC_SP_ESCAPE`, `N64RX_SP_ESCAPE`, `interp.c`, `romonly.py`). Mortal Kombat 4's objects keep sp and ra through a register (`0x801D0B9C`) and a later routine loads them (`0x801D0BDC`), every frame: a setjmp in other clothes. A recompiled `jal` sets no ra, so it kept 0, and the exit went to address 0. The analyser now marks a routine that stores sp and ra through the same register, both run in the interpreter, and the exit puts the host stack back at the run that saved them.
+- **A call into a delay slot, refused too eagerly** (`N64RX_DELAY_SLOT`, `funcs.py`). The rule from the night before kept a word in a table from cutting Power Rangers' `osSendMesg`, by refusing any `jal` target right after a word that reads as a branch. Such a word can be padding before a leaf aligned to 16 (Ready 2 Rumble's `__osDisableInt`), or data before a prologue (Bust-A-Move 2's random seeds), and the function went, with all it alone called: Bust-A-Move 2 lost 10 functions and stopped at 1 frame, where s26 had 4738. Such a target is now weak: a function whose walk runs past it takes it in, and otherwise it stands. Power Rangers keeps its fix. s28 and s29 were stopped at about 100 games for this, with their results kept.
+- **Texture coordinates with the perspective divide off** (`XGFX_TP_NONE_HALF`, `f3d_interp.c`). South Park: Chef's Luv Shack draws its 2D by writing screen XY and ST straight into vertices, with `G_TP_NONE`. Its 64x64 pictures come with ST 0..127 over 66 pixels: clamped at 63, they smeared. Rendered from its dumped RAM, the pictures are whole 64x64 images, and half is 1:1. First taken for `gSPTexture`'s scale, also 0.5 there: that put panels in Mario Tennis's sky, seen in the regression grid, whose ST under the same scale are right as they stand, with the divide on. GLideN64 halves under `G_TP_NONE` too (read for behaviour); the RDP's arithmetic was not read.
+- **A thread that starts after its starter sleeps, by default** (`XRC_START_DEFER=2`, `thread.c`, `docs/decisions.md`). Its switch has been there since Star Fox 64.
+- **A new thread's level, set before it can run** (`XHW_SPAWN_LEVEL`, `xhw_sys.c`). It took its level itself on its first instruction, and until then stood at the kernel's default, 8. Top Gear Hyper-Bike's main spins on a counter that a thread of N64 priority 127 adds to; with two threads spinning on level 10 that thread stayed ready at 8 and never ran. It may explain some of what the run token helped. Not a game's fact: the same on a console. With it, the boot code stands above the thread it starts until it parks (level 14): it can hold the lock at its first `osStartThread`, a dispatch it never comes back from on the N64, and Wave Race 64's first thread spun above it with the lock held and the VI thread waiting (retrace 2, then nothing; the regression run caught it). A new thread also notes its own host thread, its starter maybe not running again first.
+- **The loading screen's lock** (`xhw_splash.c`). `Sleep(0)` gives way only to this priority and above, and the screen's thread stands above the boot thread: taken while the boot thread held the lock, it spun for ever. A boot stopped at the ROM's read, in about one run in twenty beside the sweeps. `Sleep(1)` lets it run; `xhw_pad_lock` got the same treatment on general grounds. Neither has been seen to fail on a console, and no count of runs since proves the first gone.
+- **Mortal Kombat 4's exit, narrowed** (`XRC_SP_ESCAPE`). First marked on any `sw sp` through another register, it took Chopper Attack's thread switcher for one: no task at all, where s28 had 2791 frames. Both sp and ra through one register now mark it; Chopper Attack's keeps ra on its stack. 1224 frames in 55 s, and Mortal Kombat 4 is still right.
+- **`timer_up`** (`time.c`). `osSetTimer` started the timer thread without the lock, and another thread could find it marked up with its event not made: Gauntlet Legends crashed in `xhw_event_signal(NULL)`.
+
+**Parked, each with what was read:**
+- NHL 99: past its longjmp now, and into its demo match, it crashes writing through a game object with no pointer at +0x30 (`func_800E515C`). The function's bytes match its hash. Not read further.
+- Gauntlet Legends: its list ends in a branch to itself, `de010000` to its own address, and the CPU replaces it with a no-op as it writes more: the RSP spins there while the task runs. A task that stopped there, returned, and was taken on by a thread of its own, once the word changed, was built and tried: nothing wrote the word for 2 s, the game's threads all waiting, with thread 6 waiting for a done. It stayed at 3 frames and was taken out again.
+- Pokémon Stadium: 20 frames, then its main thread waits on a queue (`0x8008171C`) nothing posts to, in an overlay. A learning round does not help.
+- Battle for Naboo: its allocator (`func_40006BC8`) returned NULL, and its audio microcode is unknown.
+- Indiana Jones: no retrace under load: to rerun alone (Knockout Kings 2000's was the start order, above).
+- Banjo-Tooie (E): no graphics task, here or in the dry boot (886 audio tasks), and in one run a crash reading near ra's sentinel. Rare's own DLLs: stubs built at run time from a template at `0x8008C1F8` (`jal` the function, then `jal 0x8008C210`, the word after holding the return address), which `func_8008C210` reads through ra. It was named a reader of ra, with no call in recompiled code to hook. How the stubs should run was not worked out.
+- Mario no Photopie, Fire Electric Pen (both J): 5 and 0 frames, not read; the first wants its card adapter.
+- Jeremy McGrath Supercross 2000: 3440 and 3554 frames in s24 and s25, 3 in s26, and now a crash at 4 frames: a write near address 0 in `func_0026F7D0`, one of the three stacks it switches to itself. Two more routines have been interpreted since s25 (38, was 36) and two more provided (24, was 22); which, and whether they are the cause, was not found.
+
+Sixteen games after the done rules, no crash, 15 to 20 s each: Super Mario 64, GoldenEye, Banjo-Kazooie, Mario Party, Donkey Kong 64, Pokemon Snap, Super Smash Bros., Wave Race 64, Mario Tennis, Paper Mario, Mario Kart 64, Ocarina of Time, Perfect Dark, Kirby 64, Jet Force Gemini, Pilotwings 64. Yoshi's Story runs after the 6106 change (730 frames in 20 s).
+
+s26 and s27 were started before these changes, and s28 to s31 were stopped as each next fix came. **s32 judges all of this, defaults only**; what stays stuck gets the run token one game at a time, not a second sweep.
+
+s32 was stopped at 176 of 246 runs when the machine was shut down (2026-11-06; xemu only, 90 s each, with regression runs on the same machine; a second run with `--tag s32` resumes it). All 246 built. Of the 176 run, 168 presented frames and 162 ended without a crash or fatal. Six presented, then stopped: NHL 99 (3044 frames), Fighter Destiny 2 (1115), GT64 (793), Paper Mario (2427), Beast Wars (2101), Derby Stallion 64 (9). Eight presented nothing: Banjo-Tooie (E), NFL Blitz, NFL Blitz 2001, NIRJ, Indiana Jones, Mortal Kombat Trilogy, Excitebike 64, Battle for Naboo. None of the six was read yet. Paper Mario's crash is new against the short run above, so look there first.
+
+Not done in this stretch: the `CLAUDE.md` status, `analyzer.md` for the word-only setjmp and stack-escape rules, `games/runtime/` files from s32, and the choice on `XRC_RANK_LEVELS` (default 0; Pokemon Stadium 20 to 619 frames with it, its regression not reviewed).
+
+`[MEM]` boot: 65536 KB, free 49016 KB (image 14796 KB). `[CLOCK]` cpu 733 MHz against the ACPI timer. Both from one xemu run only; nothing in this stretch ran on a console.
+
+`test_time` and `test_mmio` had been failing since the changes of the nights before (link errors: stubs they lacked), because the tests rerun then were a chosen few. They are fixed. Every `tools/xbox/test_*.py` was run this time.
+
+`[MEM] after nv2a free 13580 KB of 65536 KB (image 14792 KB, virt 28936 KB, pool 24 KB)` and `[CLOCK] cpu 733 MHz (TSC against the ACPI timer, 3375000 Hz)` (Madden 2000, xemu). Nothing here has run on a console: the task's timing and the protection's words most want it.

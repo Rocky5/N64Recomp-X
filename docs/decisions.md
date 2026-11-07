@@ -1316,7 +1316,7 @@ Driver Championship crashed on the host's #DE. The macros also divide in
 32 bits where N64Recomp divided in 64 (a libgcc call on the P3).
 `-DXRC_DIV_VR4300=0`: the old expressions.
 
-## A thread started by a higher priority on its level waits (2026-10-19, `ultra/thread.c`, `XRC_START_DEFER`, off)
+## A thread started by a higher priority on its level waits (2026-10-19, `ultra/thread.c`, `XRC_START_DEFER`; on, whatever the levels, since 2026-11-06)
 
 Star Fox 64 (US 1.1, `NFXE`) starts its graphics thread (40) from its
 main thread (100), both on level 10, then makes the message queues; the
@@ -1339,6 +1339,13 @@ that thread sleeps, whatever their levels. With both, Star Fox 64 plays its
 intro past the scene change where the fixed map's lag overflowed
 `sNewAudioTasks[]` (xemu: 1716 frames at 105 s, no stall; the old build
 stopped at 135).
+
+2026-11-06: `XRC_START_DEFER=2` is the default. Knockout Kings 2000's thread
+(priority 60, started by 127) sent its first DMA's message into a queue its
+starter then made: no retrace at all, and 1056 frames in 45 s with the wait.
+Star Fox 64 (E) went from 0 frames to 610 in 50 s, without the run token.
+21 games of the regression set ran beside it with no crash and their pictures
+right (xemu only). It waits 200 ms at most at each start.
 
 ## A learnt start is used only where the bytes can start one, in every segment (2026-10-19, `learn.py`, `N64RX_LEARN_STARTS_ALL`)
 
@@ -1561,6 +1568,13 @@ left of RDRAM: 0 bad addresses. The regression set's 13 games had none
 before or after. The first four bad addresses are now logged with their
 command (`[AUDIO] bad address ...`). Kill switch `-DXRC_ASP_SPAN_END=0`.
 
+## A ROM can ask for a runtime switch (2026-11-05, `games/runtime/`, `saves.game_runtime`)
+
+The run token stays off by default until a console set, but some games do not work without it (Fighter's Destiny 2). A file named for the ROM
+turns on a runtime switch for that ROM only, so a broken game can work from a plain build, in keeping with "the first build is the best build", and
+no other game changes. It takes only `XRC_`, `XGFX_` and `XHW_` switches; anything else stops the build. A new default for all games still goes in
+the code and needs its own evidence. Rank levels (`XRC_RANK_LEVELS`) were swept against the defaults over the first 106 games: even, 89 presenting each, so they stay off.
+
 ## The run token: libultra's one-thread-at-a-time, off until a console set (2026-10-22, `ultra/thread.c`, `XRC_RUN_TOKEN`)
 
 `docs/roadmap.md` B1. Every thread switch the record added (`XRC_START_DEFER`,
@@ -1737,3 +1751,9 @@ on ROMs the project has never seen, where recipes per game would not. Routes sta
 to reach what a boot never runs, and are not on by default for any game until one proves
 itself in a full build. Raising TLB misses to page in wanted pages was built, measured
 (2 pages of 232 across 28 games) and removed rather than kept as an untested path.
+
+## No ROM hack support (2026-11-04, maintainer)
+
+A hack that changes code is a different program with no answer key behind it, and the one
+tried (WWF No Mercy Plus V3) needed work well past the analyser's rules. The project builds
+retail ROMs. The ROM checks stay strict: a build runs only the ROM it was built from.

@@ -149,7 +149,15 @@ void xrc_fatal_vram(const char* what, uint32_t vram, uint32_t extra) {
 /* ---- the rest of the runtime, stubbed ---- */
 uint32_t xrc_tlb_to_phys(uint32_t v) { (void)v; return ~0u; }
 int xu_rcp_flush(void* mine) { (void)mine; return 0; }
+int xu_rcp_flush_recv(void* mine) { (void)mine; return 0; }
+void xu_rcp_senders_out(void* who) { (void)who; }
+int xu_rcp_dp_wait(void* mine, uint32_t key) { (void)mine, (void)key; return 0; }
+void xu_sp_held(void* me) { (void)me; }
+void* xu_task_thr(void) { return NULL; }
 void xu_vi_start(void) {}
+uint32_t xu_vi_framebuffer(void) { return 0; }
+uint32_t xu_vi_framebuffer_next(void) { return 0; }
+void xrc_gfx_swap_block(void) {}
 unsigned xu_retrace(void) { return 0; }
 void xrc_trace_dump(void) {}
 void xrc_trace_thread(void* thread, unsigned n) { (void)thread, (void)n; }
@@ -239,7 +247,10 @@ static void host_wait_ms(uint32_t ms) { xhw_sleep_ms(ms); }   /* a host block in
 static void grave(void) { for (;;) recv(GRAVE); }
 
 /* ---- scenarios ---- */
-enum { F_S1M, F_S1A, F_S1B, F_S2S, F_S2C, F_S2D, F_S3H, F_S3L, F_S4H, F_S4W, F_S5X, F_S5Y, F_S6Z, F_S7S, F_S7T };
+#ifndef XRC_START_DEFER
+#define XRC_START_DEFER 2   /* thread.c's default */
+#endif
+enum { F_S1M, F_S1A, F_S1B, F_S2S, F_S2C, F_S2D, F_S3H, F_S3L, F_S4H, F_S4W, F_S5X, F_S5Y, F_S6Z, F_S7S, F_S7T, F_S8M, F_S8W, F_S9M, F_S9H, F_S10M, F_S10L, F_S10H, F_S11M, F_S11T };
 static volatile int s_level_in, s_level_out, s_level_mid;
 static volatile int s_irq_go;
 
@@ -355,6 +366,88 @@ static void s7s(uint32_t a) {
     grave();
 }
 
+/* 8: a thread created and started again over its block starts over before its lower starter goes on, a host
+ * wait in its first steps or not; the message sent after that is not lost to the queue it makes (NuSystem's
+ * second nuGfxInit: the task's done went into the queue, which was then made again) */
+static void s8w(uint32_t again) {
+    if (again) host_wait_ms(20);
+    mq_make(8, 8);
+    ev(again ? "R" : "W");
+    recv(8);
+    ev("G");
+    grave();
+}
+static void s8m(uint32_t a) {
+    (void)a;
+    create(17, F_S8W, 0, 60);
+    start(17);
+    host_wait_ms(30);   /* (without the token the two run side by side: let it block) */
+    create(17, F_S8W, 1, 60);
+    start(17);
+    ev("M");
+    send(8);
+    grave();
+}
+
+/* 9: a queue made again over a higher thread asleep on it: on the N64 it never hears of it again, and its message is
+ * for the thread that made it (Fighter's Destiny 2's main thread and pad thread) */
+static void s9h(uint32_t a) {
+    (void)a;
+    ev("H");
+    recv(9);
+    ev("STOLE");
+    grave();
+}
+static void s9m(uint32_t a) {
+    (void)a;
+    mq_make(9, 8);
+    create(19, F_S9H, 0, 60);
+    start(19);
+    host_wait_ms(30);   /* (without the token the two run side by side: let it block) */
+    mq_make(9, 8);
+    send(9);
+    recv(9);
+    ev("M");
+    grave();
+}
+
+/* 10: a message goes to the highest waiter, whoever blocked first, and the others stay blocked (XRC_WAKE_ONE; Wipeout 64): priorities
+ * 8 and 10 share a kernel level, so a wake of both could go either way */
+static void s10l(uint32_t a) { (void)a; ev("L"); recv(10); ev("L2"); grave(); }
+static void s10h(uint32_t a) { (void)a; ev("H"); recv(10); ev("H2"); grave(); }
+static void s10m(uint32_t a) {
+    (void)a;
+    mq_make(10, 8);
+    create(20, F_S10L, 0, 8);
+    start(20);
+    host_wait_ms(30);
+    create(21, F_S10H, 0, 10);
+    start(21);
+    host_wait_ms(30);
+    send(10);
+    host_wait_ms(30);
+    ev("M");
+    send(10);
+    host_wait_ms(30);
+    ev("N");
+    grave();
+}
+
+/* 11: a thread started by a higher one waits until that one sleeps (XRC_START_DEFER; Knockout Kings 2000): the starter makes
+ * the queue after starting it, a host wait in between. Run first, the thread's message went into a queue then made again. */
+static void s11t(uint32_t a) { (void)a; ev("T"); send(11); grave(); }
+static void s11m(uint32_t a) {
+    (void)a;
+    create(24, F_S11T, 0, 60);
+    start(24);
+    host_wait_ms(30);
+    mq_make(11, 8);
+    ev("M");
+    recv(11);
+    ev("M2");
+    grave();
+}
+
 /* a boot thread per scenario: it creates and starts the first thread, then parks */
 static void* boot(void* p) {
     int* f = p;
@@ -363,7 +456,7 @@ static void* boot(void* p) {
     return NULL;
 }
 static int run(int idx, int fn, int pri, int want, uint32_t ms) {
-    static int args[16][3];
+    static int args[26][3];
     pthread_t b;
     uint64_t t0 = xhw_time_us();
     s_nlog = 0;
@@ -392,6 +485,9 @@ int main(int argc, char** argv) {
     s_entry[F_S2S] = s2s, s_entry[F_S2C] = s2c, s_entry[F_S2D] = s2d;
     s_entry[F_S3H] = s3h, s_entry[F_S3L] = s3l, s_entry[F_S4H] = s4h, s_entry[F_S4W] = s4w;
     s_entry[F_S5X] = s5x, s_entry[F_S5Y] = s5y, s_entry[F_S6Z] = s6z, s_entry[F_S7S] = s7s, s_entry[F_S7T] = s7t;
+    s_entry[F_S8M] = s8m, s_entry[F_S8W] = s8w, s_entry[F_S9M] = s9m, s_entry[F_S9H] = s9h;
+    s_entry[F_S10M] = s10m, s_entry[F_S10L] = s10l, s_entry[F_S10H] = s10h;
+    s_entry[F_S11M] = s11m, s_entry[F_S11T] = s11t;
     mq_make(GRAVE, 1);
 
 #ifndef TEST_SCEN_TOKEN
@@ -419,10 +515,27 @@ int main(int argc, char** argv) {
 #endif
     CHECK(run(11, F_S5Y, 65, 2, 3000), "5 (5b.5): a stop with interrupts off kept the lock (%d events)", s_nlog);
     order("5", "Y1 X2");
+    /* a 32-bit build only, as the console's: __builtin_longjmp to thread_body lost its frame on 64-bit Windows.
+     * By hand: MSYS2's mingw32 gcc -w -pthread with this file's includes (docs/testing.md) */
+#if defined(__i386__)
+    CHECK(run(16, F_S8M, 10, 4, 3000), "8: the thread started again lost its message (%d events)", s_nlog);
+    order("8", "W R M G");
+#endif
+    CHECK(run(18, F_S9M, 10, 2, 3000), "9: the message went to the thread the queue was made again over (%d events)", s_nlog);
+    order("9", "H M");
+    CHECK(run(22, F_S10M, 80, 6, 3000), "10: not finished (%d events)", s_nlog);
+    /* (with the token a host wait keeps the turn: M runs on. With the start's wait the two begin after M's messages, on one
+     * level, in no set order: the build with no wait is the one that shows the wake) */
+    if (XRC_RUN_TOKEN) order("10", "M N H H2 L L2");
+    else if (XRC_START_DEFER != 2) order("10", "L H H2 M L2 N");
+    if (XRC_RUN_TOKEN || XRC_START_DEFER == 2) {
+        CHECK(run(23, F_S11M, 100, 3, 3000), "11: the thread's message went into a queue made again (%d events)", s_nlog);
+        order("11", "M T M2");
+    }
     CHECK(run(13, F_S6Z, 80, 1, 3000), "scenario 6 did not finish (%d events)", s_nlog);
     CHECK(s_level_in == 14 && s_level_mid == 14 && s_level_out == xu_level_of(5),
           "6 (5b.7): levels %d, %d, %d (want 14, 14, %d)", s_level_in, s_level_mid, s_level_out, xu_level_of(5));
-    printf("test_thread (%s): %d checks, %d failed\n", XRC_RUN_TOKEN ? "run token" : "kernel levels", s_checks, s_fail);
+    printf("test_thread (%s): %d checks, %d failed\n", XRC_RUN_TOKEN ? "run token" : XRC_START_DEFER == 2 ? "kernel levels" : "kernel levels, no start wait", s_checks, s_fail);
     fflush(stdout);
     _exit(s_fail ? 1 : 0);   /* the scenarios' threads stay parked */
 }

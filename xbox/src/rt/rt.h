@@ -36,6 +36,7 @@ void xrc_tlb_init(void);   /* the crash handler's fixup for misses */
 /* mmio.c: the RCP's registers, the PIF and the cartridge through KSEG1, for
  * the interpreter (xrc_mmio_is: KSEG1 past RDRAM; -DXRC_MMIO=0: never) */
 void xrc_mmio_init(void);
+void xrc_mmio_imem0(uint32_t v);
 void xrc_trace_init(void);   /* trace.c: a trace build's functions in the crash report */
 void xrc_mmio_vi(void);
 void xrc_mmio_sp_task(uint32_t task);   /* osSpTaskLoad's task, for a raw SP start (0: none) */

@@ -110,7 +110,7 @@ Ranking = (popular games it unblocks or promotes) x (how sure the fix is) /
 
 **Evidence.** Kirby 64's deadlock (a priority-0 thread holding "interrupts
 off" preempted by a spinner: `XRC_INTS_BOOST`), Star Fox 64's boot race and
-scheduler lag (`XRC_START_DEFER`, `XRC_RANK_LEVELS`, both off by default),
+scheduler lag (`XRC_START_DEFER`, on since 2026-11-06, and `XRC_RANK_LEVELS`, off),
 Castlevania's run-to-run variance (threads at 9, 10, 12, 100, 110, 120...
 sharing levels), Mario Party's nnsched done-event mix-up (`XRC_RCP_OWNER`),
 Ocarina's title stall (`XRC_RCP_ROOM`), Mario Tennis's VI manager
@@ -460,7 +460,7 @@ no evidence yet, and the game's first sweep row decides.
 | 13 | Mario Party | CLBE | 32 | EEP 4K | 4 | R | Exp. (red: to a board; board freeze fixed, `vmp17` staged; textures shuffled, open) | B1 | verify |
 | 14 | Mario Party 2 | NMWE | 32 | EEP 4K | 4 | R | xemu: intro, menus; survives its audio thread restart | B1 | verify |
 | 15 | Mario Party 3 | NMVE | 32 | EEP 16K | 4 | R | xemu: 3377 frames at 59 fps (overlay precheck) | B1 | verify; decomp ongoing ? |
-| 16 | Perfect Dark | NPDE | 32 | EEP 16K | 4 | R C T | xemu: past its boot (round 8), no frame yet; 0x70000000 TLB code; 8 MB | B2, B3, B5 | Rare's later GBI (shares GoldenEye's, B3); audio Rare's own ?; Expansion Pak required (disputed); decomp complete (MIT) |
+| 16 | Perfect Dark | NPDE | 32 | EEP 16K | 4 | R C T | xemu: in play from the ROM alone (2026-11-04: its GBI, audio and MP3 read); 0x70000000 TLB code; 8 MB; no console yet | B2, B3, B5 | Rare's later GBI (shares GoldenEye's, B3); audio Rare's own ?; Expansion Pak required (disputed); decomp complete (MIT) |
 | 17 | Paper Mario | NMQE | 40 | Flash | 1 | R | xemu: 3139 frames in 70 s (round 8: effects recompiled); maps and effects through its TLB at 0xE0xxxxxx | B2, B7, B5 | verify; GCC-built libultra (B7); decomp WIP |
 | 18 | Kirby 64 (US) | NK4E | 32 | EEP 16K | 4 | R | Exp. (red: "major texture failure", likely the stale page tables fixed in set 17); (E) to its tutorial in xemu | console run | F3DEX2 (record); decomp ongoing ? |
 | 19 | Wave Race 64 | NWRE | 8 | EEP 4K | 2 | C | sweep: presents the whole 30 s; never played | B1? | verify |

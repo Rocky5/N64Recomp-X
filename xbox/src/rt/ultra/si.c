@@ -189,10 +189,19 @@ ULTRA(osContInit) {
     RET(0);
 }
 
+/* The SI takes time: reading four controllers is about 2 ms on the N64, a thread waits for its done event, and threads
+ * below it run meanwhile. Posted at once, a pad thread that reads again as soon as it can never slept (Body Harvest's,
+ * one priority above its main thread, which then never ran with the run token, and shared the CPU with it otherwise).
+ * -DXRC_SI_US=0: at once, as before */
+#ifndef XRC_SI_US
+#define XRC_SI_US 2000
+#endif
+void xu_si_later(uint32_t us);   /* time.c */
 ULTRA(osContStartReadData) {
     (void)rdram;
     read_pads();
-    xu_post_event(OS_EVENT_SI);
+    if (XRC_SI_US) xu_si_later(XRC_SI_US);
+    else xu_post_event(OS_EVENT_SI);
     RET(0);
 }
 
@@ -220,7 +229,8 @@ ULTRA(osContGetReadData) {
 
 ULTRA(osContStartQuery) {
     (void)rdram;
-    xu_post_event(OS_EVENT_SI);
+    if (XRC_SI_US) xu_si_later(XRC_SI_US);
+    else xu_post_event(OS_EVENT_SI);
     RET(0);
 }
 
@@ -393,7 +403,10 @@ ULTRA(__osSiRawStartDma) {
     } else {
         xu_to_rdram(dram, s_pif, 64);
     }
-    xu_post_event(OS_EVENT_SI);
+    /* (posted at once, it reached a thread already waiting on the queue before the caller got there: Wipeout 64's pad thread took
+     * the done of main's rumble pak probe, and main waited for ever, in some runs) */
+    if (XRC_SI_US) xu_si_later(XRC_SI_US);
+    else xu_post_event(OS_EVENT_SI);
     RET(0);
 }
 

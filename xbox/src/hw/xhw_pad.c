@@ -40,7 +40,12 @@ static volatile long s_pad_busy;
 
 int xhw_pad_trylock(void) { return __sync_bool_compare_and_swap(&s_pad_busy, 0, 1); }
 void xhw_pad_lock(void) {
-    while (!xhw_pad_trylock()) xhw_yield();
+    /* a yield gives way to this priority or above: a holder below would never run */
+    int n = 0;
+    while (!xhw_pad_trylock()) {
+        if (++n < 32) xhw_yield();
+        else xhw_sleep_ms(1);
+    }
 }
 void xhw_pad_unlock(void) { __sync_lock_release(&s_pad_busy); }
 

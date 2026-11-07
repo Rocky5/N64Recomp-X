@@ -164,7 +164,7 @@ def build_one(g, args, sdir):
     t0 = time.time()
     try:
         r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=args.timeout,
-                           env=dict(os.environ, N64RX_BUILD_ROOT=str(ROOT / 'build-sweep')),
+                           env=dict(os.environ, N64RX_BUILD_ROOT=os.environ.get('SWEEP_BUILD_ROOT', str(ROOT / 'build-sweep'))),
                            encoding='utf-8', errors='replace')
         text, rc, timed_out = r.stdout + r.stderr, r.returncode, False
     except subprocess.TimeoutExpired as e:
@@ -177,7 +177,7 @@ def build_one(g, args, sdir):
     m = re.search(r'full log: (.+n64rx\.log)', text)
     blog = m.group(1).strip() if m else None
     if blog is None:
-        cand = ROOT / 'build-sweep' / re.sub(r'[^a-z0-9]', '', code.lower()) / 'n64rx.log'
+        cand = pathlib.Path(os.environ.get('SWEEP_BUILD_ROOT', ROOT / 'build-sweep')) / re.sub(r'[^a-z0-9]', '', code.lower()) / 'n64rx.log'
         blog = str(cand) if cand.exists() else None
     if rc == 0 and 'Done:' in text:
         stage, err = 'xbe', ''

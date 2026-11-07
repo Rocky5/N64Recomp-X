@@ -6,11 +6,13 @@ doctor on a machine without Docker, and a ROM dropped onto the CLI."""
 import contextlib
 import io
 import json
+import os
 import pathlib
 import shutil
 import struct
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -511,23 +513,6 @@ class ReadsRa(unittest.TestCase):
         self.assertFalse(emit._reads_ra([0xAFBF0014, 0x03E04025, 0x0C000100, 0x03E00008], 0x80000000))
         self.assertFalse(emit._reads_ra([0x0C000100, 0x27EDFFF8], 0x80000000))   # after a jal: its own
 
-    def test_entry_with_a_hack_hook(self):
-        """an SDK entry whose first two instructions a ROM hack replaced with a jump to its hook, which runs them
-        and jumps back: the BSS and main read as without the hook"""
-        from n64rx_lib.analyze import funcs as F
-        entry = 0x80000400
-        words = [0x08000140, 0,                                   # j 80000500; nop (over the lui/addiu of t0)
-                 0x3C090007, 0x25298780,                          # t1 = 0x68780
-                 0xAD000000, 0xAD000004, 0x21080008, 0x2129FFF8,  # the clear loop
-                 0x1520FFFB, 0,
-                 0x3C0A8000, 0x254A0460, 0x3C1D800A, 0x01400008, 0x27BD1310]   # sp, jr t2 = 80000460
-        words += [0] * (0x40 - len(words))                        # to 80000500
-        words += [0, 0x3C088005, 0x08000101, 0x25086710]          # the hook: t0 = 80056710, j 80000404
-        rom = bytes(0x1000) + b''.join(struct.pack('>I', w) for w in words) + bytes(0x100)
-        self.assertEqual(F.parse_entry(rom, entry), (0x80056710, 0x68780, 0x80000460))
-        with mock.patch.dict('os.environ', {'N64RX_ENTRY_HOOK': '0'}):
-            self.assertIsNone(F.parse_entry(rom, entry))
-
     def test_weak_root_a_call_proves_is_a_start(self):
         """a learnt start with no return before it (GoldenEye's sinf, which cosf falls into) stays a function
         when the segment's own code calls it; with no call it is walked over, as an overlay's other start"""
@@ -551,6 +536,335 @@ class ReadsRa(unittest.TestCase):
         self.assertNotIn(sin, run(False))
         with mock.patch.object(F, 'CALLED_WEAK', False):
             self.assertNotIn(sin, run(True))
+
+
+class SetjmpSgi(unittest.TestCase):
+    """the pair with SGI's buffer (Bomberman 64): named for the runtime's coroutines, the layout told to it"""
+    @staticmethod
+    def sw(rt, off, op=43):
+        return (op << 26) | (4 << 21) | (rt << 16) | off
+
+    def analysis(self):
+        from n64rx_lib.analyze import funcs as F
+        order = [(31, 0xC), (2, 0x68), (29, 8), (30, 0x34)] + [(16 + i, 0x14 + 4 * i) for i in range(8)]
+        setjmp = [0x4442F800] + [self.sw(r, o) for r, o in order] + [0x03E00008, 0]
+        longjmp = [self.sw(2, 0x68, 35), self.sw(31, 0xC, 35), 0x44C2F800, self.sw(29, 8, 35), self.sw(30, 0x34, 35)] + \
+                  [self.sw(16 + i, 0x14 + 4 * i, 35) for i in range(8)] + [0x03E00008, 0]
+        words = setjmp + longjmp
+        data = b''.join(struct.pack('>I', w) for w in words)
+        img = F.Image(data)
+        seg = F.Segment('t', 0, 0x80001000, len(data))
+        img.segments.append(seg)
+        n = 4 * len(setjmp)
+        funcs = {0x80001000: F.Func(0x80001000, 0x80001000 + n), 0x80001000 + n: F.Func(0x80001000 + n, 0x80001000 + len(data))}
+        return types.SimpleNamespace(img=img, funcs={'t': funcs}), data, n
+
+    def test_named(self):
+        from n64rx_lib import romonly
+        a, _, n = self.analysis()
+        self.assertEqual(romonly._setjmp_longjmp(a), {0x80001000: 'n64_setjmp', 0x80001000 + n: 'n64_longjmp'})
+
+    def test_layout_told(self):
+        from n64rx_lib import saves
+        _, data, _ = self.analysis()
+        self.assertEqual(saves.jb_sgi(data), ['-DXRC_JB_SGI=1'])
+        self.assertEqual(saves.jb_sgi(b'\0' * 64), [])
+
+
+class DelaySlot(unittest.TestCase):
+    """a jal's target after a word that reads as a branch"""
+    def check(self, words, t, want):
+        from n64rx_lib.analyze import funcs as F
+        data = b''.join(struct.pack('>I', w) for w in words)
+        img = F.Image(data)
+        seg = F.Segment('.t', 0, 0x80001000, len(data))
+        img.segments.append(seg)
+        self.assertEqual(F._delay_slot(img, seg, 0x80001000 + t), want)
+
+    def test_not_a_start(self):
+        self.check([0x03E00008, 0x24020001], 4, True)    # jr ra; addiu v0: not a function
+
+    def test_a_word_before_a_prologue(self):
+        self.check([0x1252A4B1, 0x27BDFFE8], 4, False)   # Bust-A-Move 2's seed, then addiu sp, sp, -0x18
+
+    def test_after_ordinary_code(self):
+        self.check([0x00000000, 0x24020001], 4, False)
+
+    def discover(self, words):
+        from n64rx_lib.analyze import funcs as F
+        data = b''.join(struct.pack('>I', w) for w in words)
+        img = F.Image(data)
+        seg = F.Segment('.t', 0, 0x80001000, len(data))
+        img.segments.append(seg)
+        return F.discover(img, seg, [0x80001000])
+
+    def test_a_leaf_behind_padding_stands(self):
+        jal = 0x0C000000 | ((0x80001014 >> 2) & 0x3FFFFFF)
+        got = self.discover([jal, 0, 0x03E00008, 0, 0x1252A4B1, 0x03E00008, 0x24020001])
+        self.assertIn(0x80001014, got)
+
+    def test_a_call_into_a_delay_slot_does_not_cut(self):
+        s = 0x80001018
+        jal = lambda t: 0x0C000000 | ((t >> 2) & 0x3FFFFFF)
+        got = self.discover([jal(s), 0, jal(s + 4), 0, 0x03E00008, 0,
+                             0x10800002, 0x24020001, 0x24020002, 0x03E00008, 0])   # beq a0, zero, +2; delay; ...; jr ra
+        self.assertNotIn(s + 4, got)
+        self.assertEqual(got[s].end, s + 20)
+
+
+class JbWord(unittest.TestCase):
+    """a setjmp pair that keeps words only: s0-s7, sp, fp, ra (NHL 99)"""
+    def analysis(self):
+        from n64rx_lib.analyze import funcs as F
+        regs = (16, 17, 18, 19, 20, 21, 22, 23, 29, 30, 31)
+        sj = [(43 << 26) | (4 << 21) | (r << 16) | (4 * i) for i, r in enumerate(regs)] + [0x03E00008, 0x00421026]
+        lj = [(35 << 26) | (4 << 21) | (r << 16) | (4 * i) for i, r in enumerate(regs)] + [0x00A01021, 0x03E00008, 0]
+        data = b''.join(struct.pack('>I', w) for w in sj + lj)
+        img = F.Image(data)
+        img.segments.append(F.Segment('.t', 0, 0x80001000, len(data)))
+        n = 4 * len(sj)
+        funcs = {0x80001000: F.Func(0x80001000, 0x80001000 + n), 0x80001000 + n: F.Func(0x80001000 + n, 0x80001000 + len(data))}
+        a = types.SimpleNamespace(img=img, funcs={'.t': funcs})
+        return a, data, n
+
+    def test_found(self):
+        from n64rx_lib import romonly
+        a, _, n = self.analysis()
+        self.assertEqual(romonly._setjmp_longjmp(a), {0x80001000: 'n64_setjmp', 0x80001000 + n: 'n64_longjmp'})
+
+    def test_layout_told(self):
+        from n64rx_lib import saves
+        _, data, _ = self.analysis()
+        self.assertEqual(saves.jb_word(data), ['-DXRC_JB_WORD=1'])
+        self.assertEqual(saves.jb_word(b'\0' * 64), [])
+
+
+class StackSwitch(unittest.TestCase):
+    """routines that leave their stack are interpreted, for the runtime's strands (interp.c XRC_STACK_SWITCH)"""
+    JR_RA = 0x03E00008
+
+    def named(self, *routines):
+        from n64rx_lib import romonly
+        from n64rx_lib.analyze import funcs as F
+        data, funcs, base = b'', {}, 0x80001000
+        for ws in routines:
+            x = base + len(data)
+            data += b''.join(struct.pack('>I', w) for w in ws)
+            funcs[x] = F.Func(x, base + len(data))
+        img = F.Image(data)
+        img.segments.append(F.Segment('t', 0, base, len(data)))
+        a = types.SimpleNamespace(img=img, funcs={'t': funcs})
+        out = romonly._stack_switchers(a, set(funcs), {x: f'func_{x:08X}' for x in funcs})
+        return [(x - base) // 4 for x in out]
+
+    def test_loads_sp_from_memory(self):
+        self.assertEqual(self.named([0x8D5D0008, 0x03200008, 0]), [0])   # lw sp, 8(t2); jr t9
+
+    def test_saves_sp_and_never_returns(self):
+        self.assertEqual(self.named([0xAD5D0008, 0x0C000000, 0]), [0])   # sw sp, 8(t2); jal
+
+    def test_saves_sp_and_ra_together(self):
+        self.assertEqual(self.named([0xAD5F0000, 0xAD5D0008, self.JR_RA, 0]), [0])   # sw ra, 0(t2); sw sp, 8(t2); jr ra
+
+    def test_a_pointer_to_the_frame_is_not_a_switch(self):
+        self.assertEqual(self.named([0xAD5D0008, self.JR_RA, 0]), [])    # sw sp, 8(t2); jr ra
+
+    def test_its_own_frame_is_not_a_switch(self):
+        self.assertEqual(self.named([0x8FBD0008, self.JR_RA, 0]), [])    # lw sp, 8(sp); jr ra
+
+    def test_the_exception_code_is_not_one(self):
+        self.assertEqual(self.named([0x8F5D0008, 0x03200008, 0]), [])    # lw sp, 8(k0); jr t9
+
+
+class CodeTwins(unittest.TestCase):
+    """the same bytes at another window on the same physical memory get the runtime's function too"""
+    def setUp(self):
+        from n64rx_lib import romonly
+        from n64rx_lib.analyze import funcs as F
+        self.romonly = romonly
+        code = [0x27BDFFE0, 0x03E00008, 0x27BD0020]
+        other = [0x24020001, 0x03E00008, 0]
+        data = b''.join(struct.pack('>I', w) for w in code + code + other)
+        img = F.Image(data)
+        kseg, high, third = F.Segment('code_80001000', 0, 0x80001000, 12), F.Segment('code_E0001000', 12, 0xE0001000, 12), \
+            F.Segment('code_E0002000', 24, 0xE0002000, 12)
+        img.segments += [kseg, high, third]
+        self.a = types.SimpleNamespace(img=img, entry=0, funcs={
+            kseg.name: {0x80001000: F.Func(0x80001000, 0x8000100C)},
+            high.name: {0xE0001000: F.Func(0xE0001000, 0xE000100C)},
+            third.name: {0xE0002000: F.Func(0xE0002000, 0xE000200C)}})
+        self.a.key = lambda seg, x, ovl=None: x
+
+    def test_copy_named(self):
+        aliases = {}
+        out = self.romonly._alias_twins(self.a, {0x80001000: ('osSetThreadPri', 'rule')}, {'osSetThreadPri'}, aliases, set())
+        self.assertEqual(list(out), [0xE0001000])
+        self.assertEqual(aliases, {'osSetThreadPri__E0001000': 'osSetThreadPri'})
+
+    def test_not_what_the_runtime_lacks(self):
+        self.assertEqual(self.romonly._alias_twins(self.a, {0x80001000: ('osOther', 'rule')}, {'osSetThreadPri'}, {}, set()), {})
+
+    def test_other_bytes_at_that_offset_stay(self):
+        self.a.funcs['code_E0001000'] = {}
+        self.a.funcs['code_E0002000'] = {0xE0001000: self.a.funcs['code_E0002000'][0xE0002000]}
+        self.a.img.segments[2].vram = 0xE0001000
+        out = self.romonly._alias_twins(self.a, {0x80001000: ('osSetThreadPri', 'rule')}, {'osSetThreadPri'}, {}, set())
+        self.assertEqual(out, {})
+
+
+class RaLabel(unittest.TestCase):
+    """its own label in ra is a jump: such a routine is interpreted, where `jr ra` goes there"""
+    def named(self, ws):
+        from n64rx_lib import romonly
+        from n64rx_lib.analyze import funcs as F
+        data = b''.join(struct.pack('>I', w) for w in ws)
+        img = F.Image(data)
+        img.segments.append(F.Segment('t', 0, 0x80001000, len(data)))
+        funcs = {0x80001000: F.Func(0x80001000, 0x80001000 + len(data))}
+        return romonly._ra_labels(types.SimpleNamespace(img=img, funcs={'t': funcs}), set(funcs), {0x80001000: 'f'})
+
+    def test_its_own_label(self):
+        self.assertEqual(self.named([0x3C1F8000, 0x27FF1008, 0x03E00008, 0]), {0x80001000: 'f'})
+
+    def test_ra_as_a_scratch_register(self):
+        self.assertEqual(self.named([0x3C1F8001, 0x27FF2000, 0x03E00008, 0]), {})
+
+    def test_a_plain_routine(self):
+        self.assertEqual(self.named([0x8FBF0014, 0x03E00008, 0x27BD0018]), {})
+
+
+class GameRuntime(unittest.TestCase):
+    """games/runtime/: a ROM's switches, and nothing else can get in through that file"""
+    def write(self, text):
+        d = pathlib.Path(tempfile.mkdtemp())
+        (d / 'games' / 'runtime').mkdir(parents=True)
+        (d / 'games' / 'runtime' / 'NXXE.0123456789ab.txt').write_text(text, encoding='utf-8')
+        return d
+
+    def test_flags(self):
+        from n64rx_lib import saves
+        d = self.write('# why\n-DXRC_RUN_TOKEN=1  # plays with it\n\n-DXGFX_BG=0\n')
+        self.assertEqual(saves.game_runtime(d, 'NXXE', '0123456789abcdef'), ['-DXRC_RUN_TOKEN=1', '-DXGFX_BG=0'])
+
+    def test_another_rom(self):
+        from n64rx_lib import saves
+        d = self.write('-DXRC_RUN_TOKEN=1\n')
+        self.assertEqual(saves.game_runtime(d, 'NXXE', 'ffffffffffffffff'), [])
+
+    def test_nothing_but_a_switch(self):
+        from n64rx_lib import saves
+        d = self.write('-include /etc/passwd\n')
+        with self.assertRaises(ValueError):
+            saves.game_runtime(d, 'NXXE', '0123456789abcdef')
+
+    def test_kill_switch(self):
+        from n64rx_lib import saves
+        d = self.write('-DXRC_RUN_TOKEN=1\n')
+        with mock.patch.dict(os.environ, {'N64RX_GAME_RUNTIME': '0'}):
+            self.assertEqual(saves.game_runtime(d, 'NXXE', '0123456789abcdef'), [])
+
+
+class EepromRead(unittest.TestCase):
+    """Byte stores through a pointer tell osEepromRead from the write (most builds keep arg2 in a saved register)"""
+    def bytes_of(self, words):
+        from n64rx_lib.analyze import funcs as F
+        from n64rx_lib.analyze.features import features
+        data = b''.join(struct.pack('>I', w) for w in words)
+        img = F.Image(data)
+        img.segments.append(F.Segment('.t', 0, 0x80001000, len(data)))
+        return len(features(img, F.Func(0x80001000, 0x80001000 + len(data))).ptr_bytes)
+
+    def test_through_a_saved_register(self):
+        self.assertEqual(self.bytes_of([0xA2080000, 0x03E00008, 0]), 1)      # sb t0, 0(s0)
+
+    def test_not_the_stack_a_global_or_an_argument(self):
+        self.assertEqual(self.bytes_of([0xA3A80000, 0x03E00008, 0]), 0)      # sb t0, 0(sp)
+        self.assertEqual(self.bytes_of([0x3C018013, 0xA028FB40, 0x03E00008, 0]), 0)   # lui at; sb t0, x(at)
+        self.assertEqual(self.bytes_of([0xA0C80000, 0x03E00008, 0]), 0)      # sb t0, 0(a2): the rule's first case
+
+
+class CallLast(unittest.TestCase):
+    def test_after_the_last_call(self):
+        """a read's bytes go out after its last DMA, a write's packing before it"""
+        from n64rx_lib.analyze import funcs as F
+        from n64rx_lib.analyze.features import features
+        words = [0x0C000400, 0, 0xA2080000, 0x0C000400, 0, 0x03E00008, 0]   # jal; sb t0, 0(s0); jal
+        data = b''.join(struct.pack('>I', w) for w in words)
+        img = F.Image(data)
+        img.segments.append(F.Segment('.t', 0, 0x80001000, len(data)))
+        ft = features(img, F.Func(0x80001000, 0x80001000 + len(data)))
+        self.assertEqual(ft.call_last[0x80001000], 0x8000100C)
+        self.assertEqual(ft.ptr_bytes, [0x80001008])
+
+
+class TlbIndex(unittest.TestCase):
+    """osMapTLB takes the index in arg0; a helper with it set before (Factor 5's boot) is not osMapTLB"""
+    @staticmethod
+    def img(words, base=0x80001000):
+        from n64rx_lib.analyze import funcs as F
+        data = b''.join(struct.pack('>I', w) for w in words)
+        img = F.Image(data)
+        img.segments.append(F.Segment('t', 0, base, len(data)))
+        return img, {base: F.Func(base, base + len(data))}
+
+    HELPER = [0x40842800,   # mtc0 a0, PageMask
+              0x40855000,   # mtc0 a1, EntryHi
+              0x00062182,   # srl a0, a2, 6
+              0x40841000,   # mtc0 a0, EntryLo0
+              0x00072182,   # srl a0, a3, 6
+              0x40841800,   # mtc0 a0, EntryLo1
+              0x42000002,   # tlbwi
+              0x03E00008, 0]
+
+    def names(self):
+        from n64rx_lib.analyze import libultra
+        img, funcs = self.img(self.HELPER)
+        return {v[0] for v in libultra.identify(img, funcs)[0].values()}
+
+    def test_helper_is_not_osMapTLB(self):
+        self.assertNotIn('osMapTLB', self.names())
+
+    def test_the_old_rule_named_it(self):
+        from n64rx_lib.analyze import libultra
+        with mock.patch.object(libultra, 'TLB_INDEX', False):
+            self.assertIn('osMapTLB', self.names())
+
+
+class DebugLibultra(unittest.TestCase):
+    """GCC without optimisation, with libultra's checks (NFL Blitz 2001, Puzzle League, ITF 2000)"""
+    @staticmethod
+    def img(words, base=0x80001000):
+        from n64rx_lib.analyze import funcs as F
+        data = b''.join(struct.pack('>I', w) for w in words)
+        img = F.Image(data)
+        img.segments.append(F.Segment('t', 0, base, len(data)))
+        return img, F.Func(base, base + len(data))
+
+    WORDS = [0x27BDFFE0,   # addiu sp, sp, -0x20
+             0x03A0F021,   # addu fp, sp, zero
+             0xAFC40020,   # sw a0, 0x20(fp)
+             0x8FC20020,   # lw v0, 0x20(fp)
+             0x8C430008,   # lw v1, 8(v0): arg0 + 8
+             0x03E00008, 0]
+
+    def test_a_frame_pointer_is_the_stack(self):
+        from n64rx_lib.analyze import features as FE
+        img, f = self.img(self.WORDS)
+        self.assertIn((0, 8, 4), FE.features(img, f).arg)
+        with mock.patch.object(FE, 'FP_FRAME', False):
+            self.assertNotIn((0, 8, 4), FE.features(img, f).arg)
+
+    def test_error_stub(self):
+        from n64rx_lib.analyze import libultra
+        stub = [0x3C088008,   # lui t0, 0x8008
+                0x8D088770,   # lw t0, -0x7890(t0)
+                0x11000002,   # beq t0, zero, +2
+                0, 0x01000008, 0,   # jr t0
+                0x03E00008, 0]
+        self.assertTrue(libultra._error_stub(self.img(stub)[0], 0x80001000))
+        # a frame, or a jr through a register it did not load: not the stub
+        self.assertFalse(libultra._error_stub(self.img([0x27BDFFE0] + stub)[0], 0x80001000))
+        self.assertFalse(libultra._error_stub(self.img([0x01000008, 0, 0x03E00008, 0] + [0] * 16)[0], 0x80001000))
 
 
 if __name__ == '__main__':

@@ -25,6 +25,7 @@ void xrc_menu_vi(unsigned retrace);
 void xrc_video_vi(unsigned retrace);
 /* gfx.c: the frame drawn into fb presented (weak: frames presented at their task's end) */
 __attribute__((weak)) void xrc_gfx_swap(uint32_t fb) { (void)fb; }
+__attribute__((weak)) void xrc_gfx_swap_block(void) {}
 __attribute__((weak)) void xrc_gfx_vi(unsigned retrace) { (void)retrace; }
 
 #ifndef XRC_VI_RESERVE
@@ -42,12 +43,19 @@ static volatile int s_up;
 unsigned xu_retrace(void) { return s_retrace; }
 uint32_t xu_vi_mode(void) { return s_mode; }
 uint32_t xu_vi_framebuffer(void) { return s_cur; }
+uint32_t xu_vi_framebuffer_next(void) { return s_next; }
 
 /* the rows of the framebuffer the mode shows (the renderer's screen size,
  * f3d_interp.c): field 0's yScale (2.10) over its lines, (vEnd - vStart) / 2
  * taken as 240 or 288 when that close (NTSC 0x25..0x1FF is 237); 0 when no
  * mode is set. OSViMode: type, 9 common registers from +4, then the fields
  * (origin +0x28, yScale +0x2C, vStart +0x30) */
+/* osViSetYScale's value: fewer rows of the buffer stretched over the screen's lines. Madden 2000's title is 360 of its 480
+ * rows, and showed in the top three quarters. -DXRC_VI_YSCALE=0: not looked at */
+#ifndef XRC_VI_YSCALE
+#define XRC_VI_YSCALE 1
+#endif
+static float s_yscale = 1.0f;
 unsigned xu_vi_rows(void);
 unsigned xu_vi_rows(void) {
     uint32_t m = s_mode, ys, vs;
@@ -59,6 +67,7 @@ unsigned xu_vi_rows(void) {
     if (lines >= 230u && lines <= 250u) lines = 240u;
     else if (lines >= 278u && lines <= 298u) lines = 288u;
     if (!ys || !lines) return 0;
+    if (XRC_VI_YSCALE && s_yscale != 1.0f && s_yscale >= 0.25f && s_yscale <= 2.0f) return (unsigned)((float)((ys * lines + 512u) >> 10) * s_yscale + 0.5f);
     return (ys * lines + 512u) >> 10;
 }
 
@@ -146,6 +155,15 @@ static void vi_thread(void* arg) {
         }
         xu_post_event(OS_EVENT_VI);
         xu_ai_tick();    /* the DAC's buffers end on their own: OS_EVENT_AI (ai.c) */
+#ifdef XRC_DIAG_WATCH   /* diagnosis: a word of the game's, each time a retrace finds it changed */
+        {
+            static uint32_t s_was;
+            static unsigned s_n;
+            uint32_t now = rd32(XRC_DIAG_WATCH);
+            if (now != s_was && s_n++ < 400) xhw_logf("[WATCH] %08x: %08x -> %08x (retrace %u)", (unsigned)(XRC_DIAG_WATCH), (unsigned)s_was, (unsigned)now, xu_retrace());
+            s_was = now;
+        }
+#endif
         xrc_mmio_vi();   /* the register pages' status words, for recompiled pollers (../mmio.c) */
         xrc_guard_retrace();   /* versioned captured code checked again (../guard.c) */
         xhw_combo_vi_look(s_retrace);
@@ -198,11 +216,30 @@ ULTRA(osViSetEvent) {
              (unsigned)s_every);
 }
 
+/* the watchdog's heartbeat, test builds: a game with no retrace yet has no stall report from the VI thread (it reports each retrace) */
+void xrc_beat(unsigned secs);
+void xrc_beat(unsigned secs) {
+    static int s_said;
+    if (XHW_TEST_BUILD && secs >= 15 && !s_retrace && !s_said++) xu_stall_report("no retrace after 15 s: the VI manager never made");
+}
+
 ULTRA(osViSwapBuffer) {
     uint32_t fb = ARG(0);
     (void)rdram;
+#ifdef XRC_DIAG_SWAP   /* diagnosis: each swap, with a word of the game's */
+    {
+        static unsigned s_n;
+        if (s_n++ < 300) xhw_logf("[SWAP] %08x retrace %u, word %08x", (unsigned)fb, s_retrace, (unsigned)rd32(XRC_DIAG_SWAP));
+    }
+#endif
     s_next = fb;
-    if (!s_cur) s_cur = fb;
+    /* The first swap too shows at the next retrace. Star Wars Episode I Racer swaps, then waits while the current framebuffer is
+     * the one it will draw next: with the first swap current at once it waited for ever, after one frame.
+     * -DXRC_VI_SWAP_NOW=1: the first swap current at once, as before */
+#ifndef XRC_VI_SWAP_NOW
+#define XRC_VI_SWAP_NOW 0
+#endif
+    if (XRC_VI_SWAP_NOW && !s_cur) s_cur = fb;
     xrc_gfx_swap(xu_phys(fb));   /* the frame drawn into fb presented (../gfx.c) */
 }
 
@@ -252,7 +289,11 @@ ULTRA(osViSetXScale) {
 
 ULTRA(osViSetYScale) {
     (void)rdram;
-    (void)ctx;
+    if (ctx->f12.fl != s_yscale) {
+        static unsigned s_n;
+        if (s_n++ < 8) xhw_logf("[OS] VI Y scale %d/1000 (retrace %u)", (int)(ctx->f12.fl * 1000.0f), xu_retrace());
+    }
+    s_yscale = ctx->f12.fl;
 }
 
 ULTRA(osViRepeatLine) {

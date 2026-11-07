@@ -35,6 +35,9 @@ void asp_hle_run(const uint32_t* cmds, uint32_t n_cmds, asp_addr_fn addr, void* 
 #define ASP_HLE_LUT_ROM_US 0x51C30u
 int asp_hle_set_resample_lut(const int16_t lut[256]);
 int asp_hle_set_resample_lut_be(const uint8_t be[512]);
+/* Rare's MP3 command: rows 0..16 of the MPEG synthesis window as the microcode's data holds them, each
+ * D[i + 32j] for j = 0..15, big-endian (16 s16s). The rest of the window follows by its symmetry. */
+void asp_hle_set_mp3_window_be(const uint8_t rows_be[17][32]);
 int asp_hle_resample_lut_valid(const int16_t lut[256]);
 
 /* The microcode registry (PLAN.md 3.8). Every audio microcode's data
@@ -52,6 +55,7 @@ enum {
 #define ASP_NEAD_MK 1u          /* the first nead: no wet ramp, ENVMIXER without the wet negation and swap */
 #define ASP_NEAD_OLD_INTERL 2u  /* A_INTERLEAVE takes SETBUFF's out and count; opcode 14 is POLEF */
 #define ASP_NEAD_SHORT 4u       /* the 24-entry table: 7 FILTER, 9 DUPLICATE, 14 HILOGAIN */
+#define ASP_NAUDIO_RARE 8u      /* Rare's n_aspMain (Perfect Dark): 0 a gain, 7 and 8 MP3, 14 a low-pass filter */
 typedef struct {
     uint32_t abi;          /* ASP_ABI_* */
     uint32_t flags;        /* ASP_NEAD_* */

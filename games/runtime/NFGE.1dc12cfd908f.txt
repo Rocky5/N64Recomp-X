@@ -1,0 +1,3 @@
+# Fighter's Destiny 2: without the token it stops after its first frame, its main thread waiting on its scheduler;
+# with it, its Opus logo and 545 frames in 15 s (xemu, 2026-11-05; no console yet, nothing past the logo looked at).
+-DXRC_RUN_TOKEN=1

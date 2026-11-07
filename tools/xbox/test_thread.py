@@ -5,7 +5,8 @@ With the run token (-DXRC_RUN_TOKEN=1): libultra's order (a higher thread
 started or woken runs at once, a block runs the next highest, osYieldThread
 goes behind its equals), one game thread in game code at a time, a host wait
 inside game code keeping the turn, an interrupt that waits for interrupts on.
-Both builds: a thread stopped with interrupts off lets the lock go (review
+Without the token also with -DXRC_START_DEFER=0 (a thread started runs at
+once). All builds: a thread stopped with interrupts off lets the lock go (review
 5b.5), osSetThreadPri inside a critical section keeps the boost (5b.7);
 without the token, a polling higher thread on the starter's level no longer
 keeps it in osStartThread for good (5b.6)."""
@@ -18,10 +19,10 @@ ROOT = hostcc.ROOT
 
 def main():
     bad = 0
-    for token in (1, 0):
+    for defines in (['XRC_RUN_TOKEN=1'], ['XRC_RUN_TOKEN=0'], ['XRC_RUN_TOKEN=0', 'XRC_START_DEFER=0']):
         rc = hostcc.run(['tests/xbox/test_thread.c', 'xbox/src/rt/ultra/thread.c'],
                         includes=['xbox/include', 'xbox/include/xrc', 'xbox/src/rt', 'xbox/src/rt/ultra'],
-                        defines=[f'XRC_RUN_TOKEN={token}'],
+                        defines=defines,
                         flags=['-Wno-unused-function', '-pthread', '-include', str(ROOT / 'xbox/include/xrc/xrc_prelude.h')],
                         args=sys.argv[1:])
         bad += rc != 0

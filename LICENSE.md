@@ -75,6 +75,9 @@ in this repository, and none is linked into anything it builds.
   Ocarina of Time runs it (the order of dequantization, de-zigzag and the
   inverse transform, the scale, the colour constants and clamps), written
   up in prose and implemented here (`xbox/src/rt/jpeg.c`).
+- **GLideN64** (GPL-2.0): what Conker's Bad Fur Day's F3DEXBG microcode does
+  differently from F3DEX2 (its command fields, its vertex normals and lights),
+  taken down in prose and implemented here (`xbox/src/gfx/f3d_interp.c`).
 
 ## 3a. What the toolchain bundle redistributes
 

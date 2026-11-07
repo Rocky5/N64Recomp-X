@@ -29,6 +29,8 @@
 #include "xhw.h"
 #include "xhw_internal.h"
 
+__attribute__((weak)) void xrc_beat(unsigned secs) { (void)secs; }
+
 #ifndef XHW_WATCHDOG
 #define XHW_WATCHDOG 1
 #endif
@@ -231,6 +233,7 @@ static void watchdog_body(void* arg) {
             snprintf(line, sizeof line, "[BEAT] %us: retrace %u, presented %u, free %u KB", secs, f, p,
                      xhw_mem_free_kb());
             xhw_log_try(line);
+            xrc_beat(secs);   /* the runtime's look at the same moment (rt/ultra/vi.c) */
         }
         if (f == 0) {
             if (secs >= XHW_WATCHDOG_BOOT_SECS && !fired) {

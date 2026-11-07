@@ -39,9 +39,23 @@ enum { UNVERIFIED = 0, VERIFIED = 1, OTHER = 2 };
 void xrc_interp(uint8_t* rdram, recomp_context* ctx, uint32_t entry);
 void xrc_learn_recapture_n(uint32_t vram, uint32_t bytes);   /* learn.c: every page the function covers */
 
+/* Code a game pages in through its TLB (Conker's 0x15000000, 32 entries over megabytes). A page that just left the TLB says
+ * nothing about the code recompiled from it, yet the hash could not read it, the function counted as changed and ran in the
+ * interpreter, whose every fetch then took misses of its own, until the page next changed: code stayed interpreted because it
+ * had been paged out. Now the check takes the page as the CPU's fetch would, through the game's own miss code; an entry
+ * rewritten only checks again what it maps, not what it stopped mapping (tlb.c); and the hash looks a page up once, not
+ * once a word, over 32 entries.
+ * DIVERGES: a verified function runs with its page out of the TLB, where the N64's fetch would fault it back in; other code loaded
+ * at that address with no mapping in between goes unseen until something maps it. -DXRC_GUARD_PAGED=0: as before */
+#ifndef XRC_GUARD_PAGED
+#define XRC_GUARD_PAGED 1
+#endif
+uint32_t xrc_tlb_resolve(uint32_t vaddr, int store);
+
 static int word(uint32_t v, uint32_t* w) {
     if ((int32_t)v >= 0) {   /* KUSEG: through the TLB */
         uint32_t p = xrc_tlb_to_phys(v);
+        if (XRC_GUARD_PAGED && p == ~0u) p = xrc_tlb_resolve(v, 0);
         if (p == ~0u || p >= xrc_rdram_size) return 0;
         v = 0x80000000u | p;
     }
@@ -51,9 +65,21 @@ static int word(uint32_t v, uint32_t* w) {
 
 /* FNV-1a over the function's words as the N64 reads them (pipeline.py's twin) */
 static int fn_hash(uint32_t v, uint32_t n, uint32_t* out) {
-    uint32_t h = 0x811C9DC5u, i, w;
+    uint32_t h = 0x811C9DC5u, i, w, page = 1u, phys = 0;
     for (i = 0; i < n; i += 4) {
-        if (!word(v + i, &w)) return 0;
+        uint32_t a = v + i;
+        if (XRC_GUARD_PAGED && (int32_t)a >= 0) {
+            if ((a & ~(PAGE - 1)) != page) {   /* (a miss for this page can evict the one before: never read back) */
+                if (!word(a, &w)) return 0;
+                page = a & ~(PAGE - 1);
+                phys = xrc_tlb_to_phys(page);
+                if (phys == ~0u) page = 1u;    /* (an entry that could not stay: word by word) */
+            } else {
+                w = xrc_word(0x80000000u | (phys + (a & (PAGE - 1))));
+            }
+        } else if (!word(a, &w)) {
+            return 0;
+        }
         h = (h ^ w) * 0x01000193u;
     }
     *out = h;
@@ -120,6 +146,23 @@ void xrc_guard_retrace(void) {
         if (s_multi[i]) xrc_guard_state[i] = UNVERIFIED;
 }
 
+/* Whether a function recompiled at vram is what RDRAM holds now: a captured function's bytes against any of its
+ * versions; code not captured always is. (interp.c: a jump through a register that lands where another version of an
+ * overlay has a function is not a call to it) */
+int xrc_guard_current(uint32_t vram);
+int xrc_guard_current(uint32_t vram) {
+    unsigned lo = 0, hi = xrc_guard_count, j;
+    while (lo < hi) {
+        unsigned m = (lo + hi) / 2;
+        if (xrc_guard_vram[m] < vram) lo = m + 1;
+        else hi = m;
+    }
+    if (lo >= xrc_guard_count || xrc_guard_vram[lo] != vram) return 1;
+    for (j = lo; j < xrc_guard_count && xrc_guard_vram[j] == vram; j++)
+        if (verify(j)) return 1;
+    return 0;
+}
+
 void xrc_guard_miss(uint8_t* rdram, recomp_context* ctx, uint32_t vram, unsigned i, recomp_func_t* body) {
     static uint32_t s_logged_at[64];   /* each function once (the first 32 lines were one function's) */
     static unsigned s_logged;
@@ -171,7 +214,18 @@ void xrc_guard_kuseg_range(uint32_t va0, uint32_t va1) {
     unsigned i;
     if (!XRC_GUARD_KUSEG) return;
     if (!XRC_GUARD_KUSEG_EXACT) { xrc_guard_kuseg(); return; }
-    for (i = 0; i < xrc_guard_count && xrc_guard_vram[i] < 0x80000000u; i++)
+    i = 0;
+    if (XRC_GUARD_PAGED) {   /* sorted by vram: no scan of all of them for every TLB entry written */
+        unsigned lo = 0, hi = xrc_guard_count;
+        uint32_t from = va0 > 0x40000u ? va0 - 0x40000u : 0;   /* (a function that starts before it and reaches in) */
+        while (lo < hi) {
+            unsigned mid = (lo + hi) / 2;
+            if (xrc_guard_vram[mid] < from) lo = mid + 1;
+            else hi = mid;
+        }
+        i = lo;
+    }
+    for (; i < xrc_guard_count && xrc_guard_vram[i] < 0x80000000u && (!XRC_GUARD_PAGED || xrc_guard_vram[i] < va1); i++)
         if (xrc_guard_vram[i] < va1 && xrc_guard_vram[i] + xrc_guard_size[i] > va0) xrc_guard_state[i] = UNVERIFIED;
 }
 

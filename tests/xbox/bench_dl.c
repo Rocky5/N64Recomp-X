@@ -103,6 +103,7 @@ static void cycle(int cyc, const XgfxState* st, const float t0[4], const float t
         else if (c >= 7 && c <= 12) C = srcs[c - 7][3];
         else if (c == 14) C = c8(st->prim_lod_frac);
         else if (c == 13) C = c8(st->lod_frac);
+        else if (c == 15) C = c8(st->k5);
         else C = 0.0f;
         D = d < 6 ? srcs[d][i] : d == 6 ? 1.0f : 0.0f;
         out[i] = (A - B) * C + D;
@@ -186,10 +187,10 @@ void xgfx_draw(const XgfxState* st, const XgfxVtx* v, uint32_t ntris) {
         for (uint32_t i = 0; i < ntris * 3; i++) {
             x0 = fminf(x0, v[i].x), x1 = fmaxf(x1, v[i].x), y0 = fminf(y0, v[i].y), y1 = fmaxf(y1, v[i].y);
         }
-        printf("[BDRAW] %u: %u tris, x %.0f..%.0f y %.0f..%.0f, cc %06x:%08x%s, prim %02x%02x%02x%02x env %02x%02x%02x%02x, "
+        printf("[BDRAW] %u: %u tris, x %.0f..%.0f y %.0f..%.0f, k5 %u, cc %06x:%08x%s, prim %02x%02x%02x%02x env %02x%02x%02x%02x, "
                "shade %02x%02x%02x%02x, tex %u %u (%ux%u, st %.2f %.2f, wrap %u %u), blend %u, aref %u, depth %u/%u, cw %u, "
                "sc %d %d %d %d\n",
-               (unsigned)s_draws, (unsigned)ntris, x0, x1, y0, y1, (unsigned)st->cc0, (unsigned)st->cc1,
+               (unsigned)s_draws, (unsigned)ntris, x0, x1, y0, y1, (unsigned)st->k5, (unsigned)st->cc0, (unsigned)st->cc1,
                st->two_cycle ? " 2cyc" : "", st->prim[0], st->prim[1], st->prim[2], st->prim[3], st->env[0], st->env[1],
                st->env[2], st->env[3], v[0].rgba[0], v[0].rgba[1], v[0].rgba[2], v[0].rgba[3], (unsigned)st->tex[0],
                (unsigned)st->tex[1], st->tex[0] < MAXTEX ? (unsigned)s_tex[st->tex[0]].w : 0,

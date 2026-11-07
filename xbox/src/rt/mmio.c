@@ -104,6 +104,7 @@ static void idle(void) {
     R(0x04800018u) = 0;                                                 /* SI_STATUS */
 }
 
+static uint32_t s_imem0 = 6103;
 void xrc_mmio_init(void) {
     unsigned i;
 #if XRC_MMIO
@@ -120,8 +121,14 @@ void xrc_mmio_init(void) {
     /* the RSP's memories as the boot code leaves them: DMEM all ones and IMEM
      * 6103 at offset 0, which a game's copy-protection check reads (Pokemon
      * Snap; mem.c's shadow pages did it before the model) */
-    R(0x04000000u) = 0xFFFFFFFFu, R(0x04001000u) = 6103;
+    R(0x04000000u) = 0xFFFFFFFFu, R(0x04001000u) = s_imem0;
     idle();
+}
+
+/* boot.c: what this chip's IPL3 leaves there */
+void xrc_mmio_imem0(uint32_t v) {
+    s_imem0 = v;
+    R(0x04001000u) = v;
 }
 
 /* The cartridge through KSEG1 for recompiled code: a game that reads its
@@ -165,7 +172,7 @@ int xrc_cart_fault(uint32_t host) {
     if (off >= 0x0FC00000u) return 0;
     off &= ~0xFFFu;
     va = host & ~0xFFFu;
-    while (__sync_lock_test_and_set(&s_busy, 1)) xhw_sleep_ms(0);
+    XHW_WAIT_WHILE(__sync_lock_test_and_set(&s_busy, 1));
     /* a resident ROM: the whole image there at once (xhw_rom.c), the page window below otherwise */
     if (off < xhw_rom_size() && xhw_rom_cart_map((uint32_t)(uintptr_t)xrc_rdram + (v & 0xE0000000u) + 0x10000000u)) {
         __sync_lock_release(&s_busy);
@@ -197,6 +204,28 @@ int xrc_cart_fault(uint32_t host) {
     (void)host;
     return 0;
 #endif
+}
+
+/* KSEG0 past the RDRAM there is, up to the RCP's registers: on the N64 a store there goes nowhere and a load finds nothing.
+ * War Gods initialises a list through a pointer shifted twice, 0x80FBCC98 on a 4 MB console, and goes on. The host page a
+ * stray access reaches gets one blank page behind it.
+ * DIVERGES: a load finds what an earlier stray store left there (the page is shared, not bus noise).
+ * -DXRC_RDRAM_GAP=0 (tlb.c): a crash, as before */
+int xrc_gap_fault(uint32_t host);
+int xrc_gap_fault(uint32_t host) {
+    static uint32_t* s_blank;
+    static unsigned s_logged;
+    static volatile long s_busy;
+    uint32_t va = host & ~0xFFFu;
+    int ok;
+    XHW_WAIT_WHILE(__sync_lock_test_and_set(&s_busy, 1));
+    if (s_blank) ok = xhw_alias_map(va, (uint32_t)(uintptr_t)s_blank & 0x7FFFFFFFu, 4096);
+    else ok = (s_blank = (uint32_t*)xhw_alias_page(va)) != NULL;
+    __sync_lock_release(&s_busy);
+    if (s_logged < 8)
+        s_logged++, xhw_logf("[MEM] KSEG0 %08x, past the RDRAM there is: a blank page there%s",
+                             (unsigned)(host - (uint32_t)(uintptr_t)xrc_rdram), ok ? "" : " could not be mapped");
+    return ok;
 }
 
 /* the VI thread, each retrace: the status words back for recompiled pollers */

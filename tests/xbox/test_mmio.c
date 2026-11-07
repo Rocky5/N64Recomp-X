@@ -51,6 +51,11 @@ int xu_fault_wait(uint32_t vaddr, int store) { (void)vaddr; (void)store; return 
 uint32_t xu_self_sp(void) { return 0; }
 void xhw_crash_set_fixup(int (*fn)(uint32_t host, int write)) { (void)fn; }
 int xrc_kseg1_heal(uint32_t host) { (void)host; return 0; }
+int xrc_guard_current(uint32_t vram) { (void)vram; return 1; }       /* guard.c */
+void xrc_strand_switch(uint8_t* rdram, recomp_context* ctx, uint32_t target, uint32_t my_sp) { (void)rdram, (void)ctx, (void)target, (void)my_sp; }   /* strand.c */
+typedef struct { uint32_t vram; recomp_func_t* fn; } XrcInterpEntry;
+const XrcInterpEntry xrc_interp_table[1] = {{0, NULL}};              /* the build's xrc_interp.c */
+const unsigned xrc_interp_rows = 0;
 void xrc_guard_kuseg(void) {}                                        /* guard.c */
 void xrc_guard_kuseg_range(uint32_t a, uint32_t b) { (void)a, (void)b; }  /* guard.c */
 uint32_t xrc_ovl_reloc_vram(uint32_t v) { return v; }                     /* ovl.c */

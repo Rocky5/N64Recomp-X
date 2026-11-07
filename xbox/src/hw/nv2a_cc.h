@@ -74,7 +74,7 @@ typedef struct {
 
 /* cc0 = G_SETCOMBINE w0 & 0x00FFFFFF, cc1 = w1; two_cycle 0: cycle 0's
  * fields only; fog 1: the final combiner lerps toward the fog colour. */
-void cc_compile(uint32_t cc0, uint32_t cc1, int two_cycle, int fog, CcProg* out);
+void cc_compile(uint32_t cc0, uint32_t cc1, int two_cycle, int fog, int k5_one, CcProg* out);
 
 #ifdef __cplusplus
 }

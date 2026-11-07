@@ -51,7 +51,7 @@ typedef struct {
     uint8_t prim[4], env[4];     /* rgba */
     uint8_t prim_lod_frac;       /* PRIM_LOD_FRAC, 0..255 */
     uint8_t lod_frac;            /* LOD_FRACTION: 0 until mip levels are drawn (XGFX_MIPS) */
-    uint8_t k5, pad0;            /* K5 (YUV convert; unused by PW64) */
+    uint8_t k5, pad0;            /* K5 (G_SETCONVERT), 0..255: a negative one is 0 */
     /* textures: back-end handles (xgfx_tex_create), 0 none */
     uint32_t tex[2];
     uint32_t wrap_s[2], wrap_t[2];   /* XGFX_WRAP_* */

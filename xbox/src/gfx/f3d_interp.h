@@ -9,6 +9,7 @@
 
 /* One graphics task: interpret the display list at this N64 address and
  * present the frame. */
+void f3d_run_rdp(uint32_t list, uint32_t bytes, int present);   /* an RDP list of that length, no display list */
 void f3d_run(uint32_t dl, int present);   /* present: 0 leaves the frame open for the next task */
 void f3d_present_frame(void);   /* the open frame presented (none open: nothing) */
 int f3d_swap(uint32_t fb);

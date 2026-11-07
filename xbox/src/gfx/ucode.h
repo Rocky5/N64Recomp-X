@@ -38,6 +38,7 @@ enum {
 
 #define GFX_UC_F_OLD 1u   /* F3DEX 0.9x (F3D_OLD): CULLDL in Fast3D's units, 0xB2 RDPHALF_CONT, QUAD 0xB5 */
 #define GFX_UC_F_LINE 2u  /* L3DEX: TRI commands draw lines (not drawn here) */
+#define GFX_UC_F_BG 4u    /* F3DEXBG: Conker's own F3DEX2 (f3d_interp.c, "F3DEXBG") */
 
 typedef struct {
     uint8_t family;      /* GFX_UC_* */

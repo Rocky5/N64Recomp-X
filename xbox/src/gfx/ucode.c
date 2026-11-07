@@ -44,6 +44,7 @@ int gfx_ucode_parse(const uint8_t* data, size_t n, GfxUcode* out) {
             out->vtx_max = find(name, nl, "3DLP") ? 80 : find(name, nl, ".Rej") ? 64 : 32;
             if (major == 0) out->flags |= GFX_UC_F_OLD;
             if (name[0] == 'L') out->flags |= GFX_UC_F_LINE;
+            if (find(name, nl, "3DEXBG")) out->flags |= GFX_UC_F_BG, out->vtx_max = 80;
         } else {
             return 0;   /* an unknown graphics microcode: Fast3D's GBI is the best guess */
         }

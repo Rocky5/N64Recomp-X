@@ -100,6 +100,9 @@ static void alias(Ent* e, unsigned idx) {
 
 static int s_any_valid;
 
+#ifndef XRC_GUARD_PAGED
+#define XRC_GUARD_PAGED 1   /* guard.c */
+#endif
 void xrc_tlb_write(unsigned idx, uint32_t mask, uint32_t hi, uint32_t lo0, uint32_t lo1) {
     Ent* e = &s_ent[idx & (NENT - 1)];
     uint32_t span = e->mask + 0x2000u, va = e->hi & ~(span - 1);
@@ -109,7 +112,7 @@ void xrc_tlb_write(unsigned idx, uint32_t mask, uint32_t hi, uint32_t lo0, uint3
         if (s_writes >= 64 && (s_writes & (s_writes - 1)) == 0)
             xhw_logf("[TLB] %u entries written (index %u: %08x)", s_writes, idx, (unsigned)hi);
     }
-    if ((e->lo[0] | e->lo[1]) & LO_V) xrc_guard_kuseg_range(va, va + span);   /* what it mapped before */
+    if (!XRC_GUARD_PAGED && ((e->lo[0] | e->lo[1]) & LO_V)) xrc_guard_kuseg_range(va, va + span);   /* what it mapped before */
     unalias(e);
     e->mask = mask & 0x01FFE000u;
     e->hi = hi;
@@ -244,11 +247,16 @@ uint32_t xrc_high_addr(uint32_t a) {
     return 0x80000000u | p;
 }
 
+#ifndef XRC_RDRAM_GAP
+#define XRC_RDRAM_GAP 1   /* KSEG0 past the RDRAM there is (mmio.c) */
+#endif
+int xrc_gap_fault(uint32_t host);
 static int fixup(uint32_t host, int write) {
     uint32_t v = host - (uint32_t)(uintptr_t)xrc_rdram;
     if ((v >= 0xB0000000u && v < 0xBFC00000u) || (v >= 0x90000000u && v < 0x9FC00000u))
         return xrc_cart_fault(host);   /* the ROM through KSEG1 or KSEG0 (mmio.c) */
     if (v >= 0xA0000000u && v < 0xC0000000u) return xrc_kseg1_heal(host);   /* a lost alias page (mem.c) */
+    if (XRC_RDRAM_GAP && v >= 0x80000000u + xrc_rdram_size && v < 0x83F00000u) return xrc_gap_fault(host);
     if (v >= 0x80000000u) return 0;   /* KSEG0 is always there: a real crash */
     if (!(XRC_TLB && XRC_TLB_MISS)) return 0;
     /* DIVERGES: the first 64 KB of KUSEG is never a page a game maps; an access

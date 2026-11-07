@@ -119,6 +119,7 @@ void xu_post_event(int event);
 void xu_post_event_first(int event);
 int xu_event_room(int event);   /* thread.c: free slots in its queue */
 int xu_event_same(int a, int b);   /* thread.c: both events go to one queue */
+int xu_event_is(int event, uint32_t mq);   /* thread.c: this event goes to this queue */
 /* the N64 thread priority onto the kernel's levels 2..14 */
 int xu_level_of(int pri);
 void xu_stall_report(const char* why);   /* test builds: what each N64 thread waits on */
@@ -129,6 +130,9 @@ xhw_thread* xu_spawn(void (*fn)(void*), void* arg, int level, uint32_t stack);
 
 /* time.c */
 uint64_t xu_count64(void);   /* the CPU counter: 46.875 MHz from the ACPI clock */
+uint64_t xu_rcp_tick(uint64_t now);   /* sp.c, from time.c's thread */
+void xu_rcp_senders_out(void* who);   /* sp.c, from thread.c */
+void xu_rcp_kick(void);               /* time.c */
 void xu_count_set32(uint32_t v);   /* its low word set (osSetCount, an interpreted mtc0 Count) */
 
 /* vi.c */
@@ -136,9 +140,11 @@ unsigned xu_retrace(void);
 int xu_event_set(int e);   /* a queue was given for event e (osSetEventMesg) */
 uint32_t xu_vi_mode(void);              /* the OSViMode the game set (N64 address), or 0 */
 uint32_t xu_vi_framebuffer(void);       /* the one shown now */
+uint32_t xu_vi_framebuffer_next(void);  /* the one the last swap asked for */
 
 /* sp.c: a graphics task for the interpreter (weak until it exists) */
 void xrc_gfx_task(uint32_t task);
+void xrc_gfx_swap_block(void);   /* ../gfx.c: a thread about to block */
 void xrc_gfx_inval(uint32_t addr, uint32_t len);   /* ../gfx.c: osInvalDCache over a frame */
 void xrc_audio_task(uint32_t task);
 unsigned xu_gfx_tasks(void);
@@ -149,6 +155,7 @@ int xu_task_has_list(uint32_t task);   /* sp.c: a graphics task with a display l
 uint32_t xu_thr_t(void* thr);   /* the OSThread of a runtime thread (thread.c) */
 int xu_rcp_flush(void* mine);   /* sp.c: held done events out (under the lock): `mine`'s, or (NULL) a retrace's; how many */
 int xu_rcp_flush_recv(void* mine);   /* sp.c: XRC_RCP_RECV: `mine`'s, at a blocking receive that finds a message */
+int xu_rcp_dp_wait(void* mine, uint32_t key);   /* sp.c: blocking on `key`, the DP done's queue, with the SP done's full */
 
 /* pi.c: the ROM the PI reads (z64 order), through xhw_rom_read (resident or
  * the page cache, PLAN.md 3.5); 0 = done, 1 = outside the ROM (nothing read) */

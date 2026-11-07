@@ -50,6 +50,8 @@ xhw_thread* xu_spawn(void (*fn)(void*), void* arg, int level, uint32_t stack) {
 }
 xhw_event* xhw_event_create(void) { return (xhw_event*)1; }
 void xhw_event_signal(xhw_event* e) { (void)e; }
+uint64_t xu_rcp_tick(uint64_t now) { (void)now; return 0; }
+void xu_post_event(int e) { (void)e; }
 int xhw_event_wait(xhw_event* e, uint32_t ms) {
     (void)e;
     s_wait_ms = ms;

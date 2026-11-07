@@ -94,8 +94,11 @@ static volatile DWORD s_pads_t0;   /* ... since then */
 #define XHW_SPLASH_MENU 1          /* -DXHW_SPLASH_MENU=0: BACK at boot does nothing */
 #endif
 
+/* Sleep(0) gives way to threads of this priority or above, and this thread's is above the boot thread's. Taken while the boot
+ * thread held the lock, it spun for ever with the boot thread ready and never run: "no retrace", a boot that stopped at the ROM's
+ * read, in about one run in twenty beside the sweeps (xemu; nothing here is xemu's). Sleep(1) lets it run. */
 static void lock(void) {
-    while (InterlockedCompareExchange(&s_lock, 1, 0)) Sleep(0);
+    while (InterlockedCompareExchange(&s_lock, 1, 0)) Sleep(1);
 }
 static void unlock(void) { InterlockedExchange(&s_lock, 0); }
 

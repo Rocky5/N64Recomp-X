@@ -508,13 +508,24 @@ def _rom_backed(a, runs, rom_len, notes):
             other = [v for v in captured if base <= v < base + 0x100000 and pages.get(v) != d]
             lo = max([v + 0x1000 for v in other if v < min(vs)], default=base)
             end = min([end] + [v for v in other if v > min(vs)])
+        # the same ROM at the same addresses as a segment there already: only what lies past it is new. Conker's boot
+        # segment runs where its main maps it, and a second copy of it held libultra under other names, which the
+        # runtime's own did not replace: the game's osRecvMesg ran on the runtime's threads. N64RX_TLB_TWIN=0: as before
+        cover = range(lo, end, 0x1000)
+        if os.environ.get('N64RX_TLB_TWIN', '1') != '0':
+            for s in a.img.segments:
+                if s.rom - s.vram == d and s.vram < end and lo < s.vram + s.size:
+                    lo = max(lo, s.vram + s.size)
+            if end <= lo:
+                taken.update(cover)
+                continue
         if end <= lo or any(s.has(lo) or s.has(end - 1) for s in a.img.segments):
             continue
+        taken.update(cover)
         name = f'tlb_{base:08X}' if lo == base else f'tlb_{lo:08X}'
         seg = F.Segment(name, lo + d, lo, end - lo)
         a.img.segments.append(seg)
         a.funcs[seg.name] = {}
-        taken.update(range(lo, end, 0x1000))
         notes.append(f'{seg.name}: ROM {lo + d:#x} at {lo:08X}, {end - lo:#x} bytes (learnt: {len(vs)} pages the '
                      f'game mapped through its TLB match the ROM there)')
     if not taken:

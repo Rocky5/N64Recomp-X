@@ -16,7 +16,7 @@ import time
 from . import ROOT, VERSION, N64rxError, compat, dryboot, engines, packs, romonly, rom as romlib, saves
 from . import learn as learnmod
 
-GEN_VERSION = 15   # bump when what n64rx writes into gen/ changes (the cache key; 14: fix_stray_goto; 15: write_mmio)
+GEN_VERSION = 16   # bump when what n64rx writes into gen/ changes (the cache key; 14: fix_stray_goto; 15: write_mmio; 16: xrc_interp_rows)
 VIDEO = {'auto': 0, '480': 2, '720': 3}
 EEPROM = {'eep4k': 512, 'eep16k': 2048}
 FATX_BAD = '<>:"/\\|?*'
@@ -552,7 +552,8 @@ def write_interp_c(pack, gen):
         out += ['', 'typedef struct { uint32_t vram; recomp_func_t* fn; } XrcInterpEntry;',
                 'const XrcInterpEntry xrc_interp_table[] = {']
         out += [f'    {{ 0x{v:08X}u, {n} }},' for n, v in rows + patched]
-        out += ['};', f'const unsigned xrc_interp_count = {len(rows) + len(patched)};']
+        out += ['};', f'const unsigned xrc_interp_count = {len(rows) + len(patched)};',
+                f'const unsigned xrc_interp_rows = {len(rows)};']   # interp.c: the first ones, by address, are interpreted
     out += _ultra_table(pack)
     (gen / 'xrc_interp.c').write_text('\n'.join(out) + '\n', encoding='utf-8', newline='\n')
     return len(rows)
@@ -742,9 +743,8 @@ def _ultra_table(pack):
         secs = tomllib.loads(sp.read_text(encoding='utf-8')).get('section', []) if sp.is_file() else []
     except (OSError, KeyError, tomllib.TOMLDecodeError):
         secs = []
-    rows = sorted({(f['vram'], f['name'][:-3] if f['name'].endswith('__2') else f['name'])
-                   for s in secs for f in s.get('functions', [])
-                   if f['name'] in have or (f['name'].endswith('__2') and f['name'][:-3] in have)})
+    base = lambda n: re.sub(r'__(2|[0-9A-F]{8})$', '', n)   # a second copy (romonly.py: <name>__2, <name>__<vram>)
+    rows = sorted({(f['vram'], base(f['name'])) for s in secs for f in s.get('functions', []) if base(f['name']) in have})
     out = ['', "/* the runtime's libultra at the game's addresses (xbox/src/rt/ovl.c enters them) */",
            'typedef struct { uint32_t vram; recomp_func_t* fn; } XrcUltraEntry;']
     out += [f'void {n}_recomp(uint8_t* rdram, recomp_context* ctx);' for n in sorted({n for _v, n in rows})]
@@ -1012,11 +1012,17 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     flags += saves.consistent_threads(saves.running_thread(pack, recomp_bytes),   # __osRunningThread, kept by thread.c
                                       saves.faulted_thread(recomp_bytes, exc[0] if exc else None))   # its fault path (tlb.c)
     flags += saves.os_exception(recomp_bytes, segs)      # its exception code, for a TLB miss (interp.c)
+    flags += saves.jb_sgi(recomp_bytes)                  # its setjmp's buffer, if not libc's (strand.c)
+    flags += saves.jb_word(recomp_bytes)
     flags += saves.os_runqueue(recomp_bytes, exc[0] if exc else None)   # its run queue, a sentinel while that code runs
     fr = fr_mode(recomp_bytes)                           # the float mode its threads run with (recomp.h XRC_FR)
     flags += [f'-DXRC_FR={fr}'] if fr else []
     flags += learnmod.rdram_user(learnt)                 # RDRAM's home when KUSEG lands on the kernel's (mem.c)
     flags += learnmod.high_tlb(learnt)                   # KSEG2/3 through the game's TLB (recomp.h, tlb.c)
+    game_rt = saves.game_runtime(ROOT, rom.code, rom_sha1)   # the switches this ROM needs (games/runtime/)
+    if game_rt:
+        prog.note('this ROM\'s runtime switches: ' + ' '.join(game_rt))
+    flags += game_rt
     env = {
         'XBOX_BUILD_DIR': engines.msys_path(bdir / 'xbox') if engines.IS_WINDOWS else str(bdir / 'xbox'),
         'XRC_GEN_DIR': engines.msys_path(gen) if engines.IS_WINDOWS else str(gen),

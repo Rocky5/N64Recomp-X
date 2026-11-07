@@ -266,8 +266,8 @@ static struct {
     uint32_t timg_addr;
     uint32_t cimg, zimg;
     int num_lights;
-    uint8_t light_col[9][3];
-    int8_t light_dir[9][3];
+    uint8_t light_col[13][3];   /* (9 of them, 13 with F3DEXBG's: bg_light) */
+    int8_t light_dir[13][3];
     Vtx vc[VC_MAX + 4];   /* (+4: a line's quad, do_line) */
     uint32_t half1, half2;
 } R;
@@ -366,6 +366,73 @@ static void do_mtx(uint32_t w0, uint32_t w1) {
 
 /* Lighting and spherical texgen (rare in PW64: G_LIGHTING only with
  * G_TEXTURE_GEN + DECALRGB; Birdman64 gfx.md). Eye-space normal. */
+/* F3DEXBG, Conker's Bad Fur Day's F3DEX2 (its version text says "F3DEXBG"; the one it loads later says plain F3DEX, so a game
+ * that ran it stays in this mode). What differs:
+ * - G_VTX holds up to 80 vertices;
+ * - 0x10-0x1F draw four triangles, 12 indices of 5 bits, 0x1F's low nibble the first's top bits;
+ * - a vertex's colour is always a colour. Its normal is elsewhere: x, y as bytes at a table G_MOVEMEM 14 names, two bytes per
+ *   vertex of the buffer (not of the list), and z in its flag's low byte. A negative flag means no lighting;
+ * - lights are 48 bytes apart, two slots of look-at first, each with a position and a constant attenuation: the last is
+ *   directional, the others points (intensity ca / (2 d^2 / 65536), and the normal's dot if G_POINT_LIGHTING), the
+ *   positions compared with the vertex's own through the offsets and scales of G_MW_COORD_MOD; the normal is only read once a
+ *   G_LOAD_UCODE has switched that on.
+ * Read for behaviour from GLideN64's F3DEX2CBFD and gSP (GPL: nothing copied).
+ * -DXGFX_BG=0: plain F3DEX2, as before */
+#ifndef XGFX_BG
+#define XGFX_BG 1
+#endif
+#define BG_LIGHTS 12
+static int s_bg, s_bg_adv;
+static uint32_t s_bg_normals;
+static float s_bg_mod[16], s_bg_pos[BG_LIGHTS][3], s_bg_ca[BG_LIGHTS];
+#define F3DEX2_G_POINT_LIGHTING 0x00400000u
+
+static void vtx_lit_bg(Vtx* v, const uint8_t* cn, const int16_t* ob, unsigned index, int flag) {
+    const float(*m)[4] = R.mv[R.mv_top];
+    float nx = 0, ny = 0, nz = (int8_t)flag, ex, ey, ez, len;
+    if (s_bg_normals) {
+        nx = (int8_t)rd8(s_bg_normals + 2 * index);
+        ny = (int8_t)rd8(s_bg_normals + 2 * index + 1);
+    }
+    ex = nx * m[0][0] + ny * m[1][0] + nz * m[2][0];
+    ey = nx * m[0][1] + ny * m[1][1] + nz * m[2][1];
+    ez = nx * m[0][2] + ny * m[1][2] + nz * m[2][2];
+    len = sqrtf(ex * ex + ey * ey + ez * ez);
+    if (len > 1e-6f) { ex /= len; ey /= len; ez /= len; }
+    v->r = cn[0] * (1.0f / 255.0f);
+    v->g = cn[1] * (1.0f / 255.0f);
+    v->b = cn[2] * (1.0f / 255.0f);
+    if ((R.geom & F3D_G_LIGHTING) && (int16_t)flag >= 0) {
+        int num = R.num_lights > BG_LIGHTS ? BG_LIGHTS : R.num_lights, l;
+        float r = R.light_col[num][0], g = R.light_col[num][1], b = R.light_col[num][2];
+        float px = (ob[0] + s_bg_mod[8]) * s_bg_mod[12], py = (ob[1] + s_bg_mod[9]) * s_bg_mod[13], pz = (ob[2] + s_bg_mod[10]) * s_bg_mod[14];
+        for (l = num - 1; l >= 0; l--) {
+            float lx = R.light_dir[l][0], ly = R.light_dir[l][1], lz = R.light_dir[l][2];
+            float ll = sqrtf(lx * lx + ly * ly + lz * lz);
+            float dot = ll > 1e-6f ? (ex * lx + ey * ly + ez * lz) / ll : 0.0f, i;
+            if (dot < 0.0f) dot = 0.0f;
+            if (l == num - 1) {
+                if (!s_bg_adv) continue;
+                i = dot;
+            } else {
+                float dx = px - s_bg_pos[l][0], dy = py - s_bg_pos[l][1], dz = pz - s_bg_pos[l][2];
+                float d = 2.0f * (dx * dx + dy * dy + dz * dz) * (1.0f / 65536.0f);
+                i = d > 0.0f ? s_bg_ca[l] / d : 1.0f;
+                if (i > 1.0f) i = 1.0f;
+                if (s_bg_adv && (R.geom2 & F3DEX2_G_POINT_LIGHTING)) i *= dot;
+            }
+            if (i > 0.0f) { r += i * R.light_col[l][0]; g += i * R.light_col[l][1]; b += i * R.light_col[l][2]; }
+        }
+        v->r *= r > 255.0f ? 1.0f : r * (1.0f / 255.0f);
+        v->g *= g > 255.0f ? 1.0f : g * (1.0f / 255.0f);
+        v->b *= b > 255.0f ? 1.0f : b * (1.0f / 255.0f);
+    }
+    if (R.geom & F3D_G_TEXTURE_GEN) {
+        v->s = (ex + 1.0f) * 0.25f * R.tex_ss * (1.0f / 32.0f);
+        v->t = (ey + 1.0f) * 0.25f * R.tex_st * (1.0f / 32.0f);
+    }
+}
+
 static void vtx_lit(Vtx* v, const uint8_t* cn) {
     const float(*m)[4] = R.mv[R.mv_top];
     float nx = (int8_t)cn[0], ny = (int8_t)cn[1], nz = (int8_t)cn[2];
@@ -429,8 +496,23 @@ static unsigned s_vmax = 16;
 #define XGFX_VTX_SSE 0
 #endif
 
+/* Perfect Dark's Fast3D (its microcode has no version text): vertices are 12
+ * bytes (s16 x, y, z; u8 flags, colour; s16 s, t), the colour a byte offset
+ * into a table 0x07 copies to DMEM first (07 (bytes - 4) bytes + its address,
+ * RGBA or a normal and alpha, as Fast3D's cn). Read as JFG's 0x07 the table ran
+ * as display list commands, and as Fast3D's G_VTX every vertex took its
+ * neighbour's bytes. Found from its lists' shape, Fast3D's 16n becoming 12n,
+ * or 07's bytes = its first number + 4 (no JFG or DKR command has either).
+ * -DXGFX_PD=0: read as those, as before */
+#ifndef XGFX_PD
+#define XGFX_PD 1
+#endif
+static int s_pd;
+static uint8_t s_pd_col[256 + 4];
+
 static void do_vtx(uint32_t n, uint32_t v0, uint32_t addr) {
     uint32_t i, src;
+    const uint32_t step = s_pd ? 12u : 16u;
 #if XGFX_VTX_SSE
     __m128 m0, m1, m2, m3;
 #endif
@@ -442,14 +524,19 @@ static void do_vtx(uint32_t n, uint32_t v0, uint32_t addr) {
 #if XGFX_VTX_SSE
     m0 = _mm_loadu_ps(R.mvp[0]), m1 = _mm_loadu_ps(R.mvp[1]), m2 = _mm_loadu_ps(R.mvp[2]), m3 = _mm_loadu_ps(R.mvp[3]);
 #endif
-    for (i = 0; i < n && v0 + i < s_vmax; i++, src += 16) {
+    for (i = 0; i < n && v0 + i < s_vmax; i++, src += step) {
         /* N64 Vtx: s16 ob[3], u16 flag, s16 tc[2], u8 cn[4] */
         int16_t ob[3], tc[2];
         uint8_t cn[4];
         Vtx* v = &R.vc[v0 + i];
         float x, y, z;
         v->ostamp = 0;
-        if (XGFX_VTX_WORDS && !(src & 3u)) {   /* the image's words are native: four reads */
+        if (s_pd) {
+            const uint8_t* c = &s_pd_col[rd8(src + 7)];
+            ob[0] = (int16_t)rd16(src); ob[1] = (int16_t)rd16(src + 2); ob[2] = (int16_t)rd16(src + 4);
+            tc[0] = (int16_t)rd16(src + 8); tc[1] = (int16_t)rd16(src + 10);
+            cn[0] = c[0]; cn[1] = c[1]; cn[2] = c[2]; cn[3] = c[3];
+        } else if (XGFX_VTX_WORDS && !(src & 3u)) {   /* the image's words are native: four reads */
             const uint32_t* q = (const uint32_t*)xu_host(src);
             uint32_t w0, w1, w2, w3;
             /* the window's end tested before the four reads, not after them (docs/review-2026-10.md 5c.1) */
@@ -476,7 +563,9 @@ static void do_vtx(uint32_t n, uint32_t v0, uint32_t addr) {
         v->w = x * m[0][3] + y * m[1][3] + z * m[2][3] + m[3][3];
 #endif
         v->oc = outcode(v);
-        if (R.geom & (F3D_G_LIGHTING | F3D_G_TEXTURE_GEN)) {
+        if (s_bg) {
+            vtx_lit_bg(v, cn, ob, v0 + i, (int16_t)rd16(src + 6));
+        } else if (R.geom & (F3D_G_LIGHTING | F3D_G_TEXTURE_GEN)) {
             vtx_lit(v, cn);
         } else {
             v->r = cn[0] * (1.0f / 255.0f);
@@ -579,10 +668,19 @@ static void map_setup(void) {
 /* ------------------------------------------------------------- draw state */
 
 static XgfxState s_st;           /* the state the batch below is drawn with */
+static uint8_t s_k5;             /* G_SETCONVERT's K5, kept across tasks as the RDP keeps it */
 static float s_zrel;             /* XGFX_Z_REL: this state's depth bias, a fraction of the distance */
 static uint32_t s_st_epoch;
 static int s_textured, s_tex1, s_decal, s_overlay, s_shadow_pass2;
 static float s_u_scale[2], s_u_off[2], s_v_scale[2], s_v_off[2];
+/* A triangle's coordinates with the RDP's perspective divide off (G_TP_NONE) come out at half: South Park: Chef's Luv Shack
+ * draws its 2D so, 64x64 pictures with ST 0..127 over 66 pixels, which clamped and smeared as they stood. Mario Tennis has the
+ * same gSPTexture scale and the divide on, and needs its ST as they are, so it is this and not the scale. GLideN64 halves them
+ * too (read for behaviour); the RDP's own arithmetic was not read. -DXGFX_TP_NONE_HALF=0: as they stand */
+#ifndef XGFX_TP_NONE_HALF
+#define XGFX_TP_NONE_HALF 1
+#endif
+static float s_tp_k = 1.0f;
 static unsigned s_zorder;
 static float s_scissor[4] = { 0.0f, 0.0f, 320.0f, 240.0f };   /* N64_W x N64_H at each frame's start */
 static int s_sc_on;
@@ -1342,9 +1440,11 @@ static int cc_reads_texel0(void) {
 #define XGFX_TEX_UNREAD 1
 #endif
 static void draw_state(void) {
+    s_tp_k = XGFX_TP_NONE_HALF && !(R.omh & F3D_G_TP_PERSP) ? 0.5f : 1.0f;
     int cycle = (R.omh >> F3D_G_MDSFT_CYCLETYPE) & 3;
     flush();
     memset(&s_st, 0, sizeof s_st);
+    s_st.k5 = s_k5;
     s_st.cc0 = R.cc0 & 0x00FFFFFFu;
     s_st.cc1 = R.cc1;
     s_st.two_cycle = cycle == 1;
@@ -1426,10 +1526,10 @@ static void to_out(const Vtx* cv, XgfxVtx* o, const Vtx* flat) {
     } else {
         memcpy(o->rgba, v->orgba, 4);
     }
-    o->s0 = v->s * s_u_scale[0] - s_u_off[0];
-    o->t0 = v->t * s_v_scale[0] - s_v_off[0];
-    o->s1 = v->s * s_u_scale[1] - s_u_off[1];
-    o->t1 = v->t * s_v_scale[1] - s_v_off[1];
+    o->s0 = v->s * s_tp_k * s_u_scale[0] - s_u_off[0];
+    o->t0 = v->t * s_tp_k * s_v_scale[0] - s_v_off[0];
+    o->s1 = v->s * s_tp_k * s_u_scale[1] - s_u_off[1];
+    o->t1 = v->t * s_tp_k * s_v_scale[1] - s_v_off[1];
     o->fog = v->fog * (1.0f / 255.0f);
 }
 
@@ -1756,6 +1856,15 @@ static void lerp_vtx(Vtx* o, const Vtx* a, const Vtx* b, float t) {
 #define CULLMASK (F3D_G_CULL_FRONT | F3D_G_CULL_BACK)
 #endif
 
+/* Both cull bits set. By the manuals nothing is drawn; Mortal Kombat 4 sets both for its backdrops and its fighters (172 of
+ * its menu's 314 triangles, a clean grid of screen tiles), and those are its picture. As GLideN64 reads it (read for behaviour),
+ * both means back only. The microcode's own test was not read, so this is the picture's evidence alone.
+ * -DXGFX_CULL_BOTH=0: nothing drawn */
+#ifndef XGFX_CULL_BOTH
+#define XGFX_CULL_BOTH 1
+#endif
+#define CULLS_FRONT(g) (((g) & F3D_G_CULL_FRONT) && !(XGFX_CULL_BOTH && ((g) & F3D_G_CULL_BACK)))
+
 #ifdef XGFX_DEBUG_NOCLIPCULL
 #define CLIPCULLMASK 0u
 #else
@@ -1801,7 +1910,7 @@ static void clip_tri(Vtx* const v[3], const Vtx* flat) {
             area += (in[i].x / in[i].w) * (in[j].y / in[j].w) - (in[j].x / in[j].w) * (in[i].y / in[i].w);
         }
         if ((R.geom & F3D_G_CULL_BACK) && -area >= 0.0f) return;
-        if ((R.geom & F3D_G_CULL_FRONT) && -area <= 0.0f) return;
+        if (CULLS_FRONT(R.geom) && -area <= 0.0f) return;
     }
     emit_poly(in, n, flat);
 }
@@ -1835,11 +1944,19 @@ static void do_tri(int ia, int ib, int ic, int flag) {
         float x0 = v[0]->x * i0, y0 = v[0]->y * i0, x1 = v[1]->x * i1, y1 = v[1]->y * i1;
         float x2 = v[2]->x * i2, y2 = v[2]->y * i2;
         float cross = -((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0));
+        if (XHW_TEST_BUILD && (R.geom & CULLMASK) == CULLMASK) {
+            static int s_both;
+            if (!s_both++) xhw_logf("[GFX] both cull bits set");
+        }
         if ((R.geom & F3D_G_CULL_BACK) && cross >= 0.0f) { s_t_cull++; return; }
-        if ((R.geom & F3D_G_CULL_FRONT) && cross <= 0.0f) { s_t_cull++; return; }
+        if (CULLS_FRONT(R.geom) && cross <= 0.0f) { s_t_cull++; return; }
     }
     if (needs_clip) s_t_clip++;
     if (s_st_epoch != s_epoch) draw_state();
+    if (XHW_TEST_BUILD && s_tp_k < 1.0f && s_st.tex[0]) {
+        static int s_said;
+        if (!s_said++) xhw_logf("[GFX] textured triangles with the perspective divide off");
+    }
     if (!needs_clip) {
         emit_polyp((const Vtx* const*)v, 3, flat);
         return;
@@ -1948,6 +2065,7 @@ static void do_fillrect(uint32_t w0, uint32_t w1) {
     }
     flush();
     memset(&s_st, 0, sizeof s_st);
+    s_st.k5 = s_k5;
     pixel_state(1);
     s_st.fog = 0;
     s_st.depth_bias = 0;
@@ -2099,6 +2217,7 @@ static void do_texrect(uint32_t w0, uint32_t w1) {
                  (unsigned)ld->bytes, ld->dxt);
     }
     memset(&s_st, 0, sizeof s_st);
+    s_st.k5 = s_k5;
     pixel_state(1);
     s_st.fog = 0;
     s_st.depth_bias = 0;
@@ -2227,6 +2346,7 @@ static void rdp_tri(void) {
     }
     flush();
     memset(&s_st, 0, sizeof s_st);
+    s_st.k5 = s_k5;
     pixel_state(!zb);
     s_st.fog = 0;
     s_st.depth_bias = 0;
@@ -2290,11 +2410,17 @@ static void rdp_word(uint64_t w) {
  * album's 80x59 thumbnails, its 200x150 viewer) is honoured; the game
  * resets the scissor to the full screen after setting a thumbnail's, and
  * the RSP clips to the viewport anyway, so a small viewport alone clips */
+/* A game that only draws rectangles sets no viewport: the start-up 320x240 one read as a small viewport on a 640-wide screen, and Power Rangers' whole picture was
+ * clipped to its top-left quarter. -DXGFX_VP_UNSET=0: as before */
+#ifndef XGFX_VP_UNSET
+#define XGFX_VP_UNSET 1
+#endif
+static int s_vp_set;
 static void clip_rect_update(void) {
     float x0 = s_scissor[0], y0 = s_scissor[1], x1 = s_scissor[2], y1 = s_scissor[3];
     float kx = N64_W / 320.0f, ky = N64_H / 240.0f;
     int sc_small = x1 - x0 < 280.0f * kx || y1 - y0 < 190.0f * ky;
-    int vp_small = R.vp_sx < 140.0f * kx || R.vp_sy < 95.0f * ky;
+    int vp_small = (s_vp_set || !XGFX_VP_UNSET) && (R.vp_sx < 140.0f * kx || R.vp_sy < 95.0f * ky);
     if (!sc_small) { x0 = 0.0f; y0 = 0.0f; x1 = N64_W; y1 = N64_H; }
     if (vp_small) {
         if (R.vp_tx - R.vp_sx > x0) x0 = R.vp_tx - R.vp_sx;
@@ -2343,7 +2469,7 @@ static int s_rare, s_dkr_on;   /* Rare's DKR microcode (below, run_dl) */
 static int s_wrus;
 void f3d_set_ucode(const GfxUcode* uc) {
     int rare = XGFX_DKR && uc && !uc->found && uc->family == GFX_UC_F3D;
-    if ((uc ? uc : &s_uc_f3d) != s_uc) s_wrus = 0;
+    if ((uc ? uc : &s_uc_f3d) != s_uc) s_wrus = 0, s_pd = 0;
     s_uc = uc ? uc : &s_uc_f3d;
     s_fam = s_uc->family;
     s_vmax = s_uc->vtx_max > VC_MAX ? VC_MAX : s_uc->vtx_max < 16 ? 16 : s_uc->vtx_max;
@@ -2351,6 +2477,12 @@ void f3d_set_ucode(const GfxUcode* uc) {
     s_rare = rare;
     if (s_rare && s_dkr_on) s_vmax = 32;
     if (s_wrus) s_vmax = 32;
+    {   /* (the game's next microcode says plain F3DEX: it is its own too) */
+        static int s_bg_game;
+        if (XGFX_BG && (s_uc->flags & GFX_UC_F_BG)) s_bg_game = 1;
+        s_bg = s_bg_game && s_fam == GFX_UC_F3DEX2;
+        if (s_bg) s_vmax = VC_MAX;
+    }
 }
 
 /* the RDP halves that follow a G_TEXRECT */
@@ -2360,11 +2492,46 @@ static int is_half(uint32_t op) {
 }
 
 static void do_viewport(uint32_t m) {   /* Vp: s16 vscale[4], vtrans[4]; x, y with 2 fraction bits */
+    s_vp_set = 1;
     R.vp_sx = (int16_t)rd16(m) * 0.25f; R.vp_sy = (int16_t)rd16(m + 2) * 0.25f;
     R.vp_tx = (int16_t)rd16(m + 8) * 0.25f; R.vp_ty = (int16_t)rd16(m + 10) * 0.25f;
     R.vp_sz = (int16_t)rd16(m + 4); R.vp_tz = (int16_t)rd16(m + 12);
     s_ostamp++;
     clip_rect_update();
+}
+
+/* G_MOVEMEM's light in F3DEXBG: w0's bits 5-18 the offset, 48 bytes a slot; two of look-at first */
+static void bg_light(uint32_t w0, uint32_t m) {
+    unsigned n = ((w0 >> 5) & 0x3FFFu) / 48u, l;
+    if (n < 2 || (l = n - 2) > BG_LIGHTS) return;
+    R.light_col[l][0] = rd8(m); R.light_col[l][1] = rd8(m + 1); R.light_col[l][2] = rd8(m + 2);
+    R.light_dir[l][0] = (int8_t)rd8(m + 8); R.light_dir[l][1] = (int8_t)rd8(m + 9);
+    R.light_dir[l][2] = (int8_t)rd8(m + 10);
+    if (l < BG_LIGHTS) {
+        s_bg_pos[l][0] = (int16_t)rd16(m + 32); s_bg_pos[l][1] = (int16_t)rd16(m + 34);
+        s_bg_pos[l][2] = (int16_t)rd16(m + 36);
+        s_bg_ca[l] = rd8(m + 12) * (1.0f / 16.0f);
+    }
+}
+
+/* G_MW_COORD_MOD in F3DEXBG: w0's bit 3 off, bits 1-2 where in the set, bits 4-5 which set */
+static void bg_coord_mod(uint32_t w0, uint32_t w1) {
+    unsigned i = (w0 >> 1) & 3u;
+    if (w0 & 8u) return;
+    switch (w0 & 0x30u) {
+        case 0x00u:
+            s_bg_mod[i] = (float)(int16_t)(w1 >> 16); s_bg_mod[i + 1] = (float)(int16_t)w1;
+            break;
+        case 0x10u:
+            s_bg_mod[i + 4] = (float)(w1 >> 16) * (1.0f / 65536.0f); s_bg_mod[i + 5] = (float)(w1 & 0xFFFFu) * (1.0f / 65536.0f);
+            s_bg_mod[i + 12] = s_bg_mod[i] + s_bg_mod[i + 4]; s_bg_mod[i + 13] = s_bg_mod[i + 1] + s_bg_mod[i + 5];
+            break;
+        case 0x20u:
+            s_bg_mod[i + 8] = (float)(int16_t)(w1 >> 16); s_bg_mod[i + 9] = (float)(int16_t)w1;
+            break;
+        default:
+            break;
+    }
 }
 
 static void do_light(unsigned l, uint32_t m) {   /* Light: u8 col[3], pad, colc[3], pad, s8 dir[3] */
@@ -2545,6 +2712,7 @@ static void s2dex_bg(uint32_t w1, int copy) {
     nx = bg_spans(xs, 48, fx, fx + fw, ix0, sx, img_w, cw_tex);
     flush();
     memset(&s_st, 0, sizeof s_st);
+    s_st.k5 = s_k5;
     pixel_state(1);
     s_st.fog = 0;
     s_st.depth_bias = 0;
@@ -2691,6 +2859,7 @@ static void obj_sprite(uint32_t a, int mode) {
     }
     flush();
     memset(&s_st, 0, sizeof s_st);
+    s_st.k5 = s_k5;
     pixel_state(1);
     s_st.fog = 0;
     s_st.depth_bias = 0;
@@ -2866,8 +3035,9 @@ static int ex_cmd(uint32_t* pw0, uint32_t* pw1) {
             uint16_t off;
             f3dex2_moveword_decode(w0, &idx, &off);
             if (idx == F3D_G_MW_SEGMENT) set_segment((off >> 2) & 15, w1);
-            else if (idx == F3D_G_MW_NUMLIGHT) R.num_lights = f3dex2_numlights_from_data(w1);
+            else if (idx == F3D_G_MW_NUMLIGHT) R.num_lights = s_bg ? (int)(w1 / 48u) : f3dex2_numlights_from_data(w1);
             else if (idx == F3D_G_MW_FOG) f3d_fog_from_data(w1, &R.fog_m, &R.fog_o);
+            else if (s_bg && idx == 0x10u) bg_coord_mod(w0, w1);
             else if (idx == F3D_G_MW_LIGHTCOL && (l = f3dex2_lightcol_index(off)) < 9) {
                 R.light_col[l][0] = w1 >> 24; R.light_col[l][1] = w1 >> 16; R.light_col[l][2] = w1 >> 8;
             }
@@ -2878,6 +3048,8 @@ static int ex_cmd(uint32_t* pw0, uint32_t* pw1) {
             uint32_t ofs, len, m = seg(w1);
             f3dex2_movemem_decode(w0, &idx, &ofs, &len);
             if (idx == F3DEX2_G_MV_VIEWPORT) do_viewport(m);
+            else if (s_bg && idx == F3DEX2_G_MV_LIGHT) bg_light(w0, m);
+            else if (s_bg && idx == 14u) s_bg_normals = m;
             else if (idx == F3DEX2_G_MV_LIGHT) do_light(f3dex2_light_index(ofs), m);
             else if (XGFX_FORCE_MTX && idx == F3DEX2_G_MV_MATRIX && ofs == 0 && len >= 64) {
                 /* gSPForceMatrix: the clip matrix itself, the game's own MV x P (WWF No
@@ -2892,13 +3064,23 @@ static int ex_cmd(uint32_t* pw0, uint32_t* pw1) {
             }
             return 1;
         }
-        case F3DEX2_G_LOAD_UCODE: load_ucode(w0); return 1;
+        case F3DEX2_G_LOAD_UCODE:
+            load_ucode(w0);
+            if (s_bg) s_bg_adv = 1;
+            return 1;
         case F3DEX2_G_DL: *pw0 = (uint32_t)F3D_G_DL << 24 | (w0 & 0x00FF0000u); return 0;
         case F3DEX2_G_ENDDL: *pw0 = (uint32_t)F3D_G_ENDDL << 24; return 0;
         case F3DEX2_G_RDPHALF_1: *pw0 = (uint32_t)F3D_G_RDPHALF_1 << 24; return 0;
         case F3DEX2_G_RDPHALF_2: *pw0 = (uint32_t)F3D_G_RDPHALF_2 << 24; return 0;
         case F3DEX2_G_SETOTHERMODE_L: *pw0 = (uint32_t)F3D_G_SETOTHERMODE_L << 24 | f3dex2_othermode_to_f3d(w0); return 0;
         case F3DEX2_G_SETOTHERMODE_H: *pw0 = (uint32_t)F3D_G_SETOTHERMODE_H << 24 | f3dex2_othermode_to_f3d(w0); return 0;
+    }
+    if (s_bg && (op & 0xF0u) == 0x10u) {   /* four triangles */
+        ex_tri((w0 >> 23) & 31u, (w0 >> 18) & 31u, ((w0 >> 13) & 0x1Cu) | (w1 >> 30));
+        ex_tri((w0 >> 10) & 31u, (w0 >> 5) & 31u, w0 & 31u);
+        ex_tri((w1 >> 25) & 31u, (w1 >> 20) & 31u, (w1 >> 15) & 31u);
+        ex_tri((w1 >> 10) & 31u, (w1 >> 5) & 31u, w1 & 31u);
+        return 1;
     }
     if (op < 0xC0) {   /* no F3DEX2 command: Fast3D's numbers here would mean something else */
         s_unknown[op]++;
@@ -3030,6 +3212,7 @@ static void dkr_trin(uint32_t w0, uint32_t w1) {
 #define XGFX_DL_BOUNDS 1
 #endif
 static uint32_t s_dl_cmds;
+static const uint32_t* s_rdp_end;   /* f3d_run_rdp: where a list with no end command stops */
 /* every 256 commands: the runtime may let other game threads run (rt/gfx.c XRC_GFX_BREATHE: on the
  * N64 the RCP drew while the CPU ran them); weak, a no-op for the host tools */
 __attribute__((weak)) void xrc_gfx_breathe(void) {}
@@ -3038,6 +3221,7 @@ static void run_dl(const uint32_t* pc) {
     int sp = 0;
     for (;;) {
         uint32_t w0, w1;
+        if (s_rdp_end && pc >= s_rdp_end) return;
         if (XGFX_DL_BOUNDS) {   /* (synthesised lists live outside the window and end themselves) */
             uintptr_t o = (uintptr_t)((const uint8_t*)pc - xrc_rdram_host);
             if (o <= xrc_rdram_size && o + 8u > xrc_rdram_size) {
@@ -3059,7 +3243,23 @@ static void run_dl(const uint32_t* pc) {
             s_ring_n++;
         }
         pc += 2;
-        if (s_fam != GFX_UC_F3D && ex_cmd(&w0, &w1)) continue;
+        if (s_rdp_end) {   /* the RDP's own forms: a triangle's words in a row, a texture rectangle's second word with no opcode */
+            uint32_t rop = w0 >> 24;
+            if (rop >= 0xC8u && rop <= 0xCFu) {
+                unsigned k, more = (rop & 4u ? 8u : 0u) + (rop & 2u ? 8u : 0u) + (rop & 1u ? 2u : 0u) + 3u;
+                rdp_word((uint64_t)w0 << 32 | w1);
+                for (k = 0; k < more && pc < s_rdp_end; k++, pc += 2) rdp_word((uint64_t)pc[0] << 32 | pc[1]);
+                continue;
+            }
+            if ((rop == 0xE4u || rop == 0xE5u) && pc < s_rdp_end) {
+                R.half1 = pc[0];
+                R.half2 = pc[1];
+                pc += 2;
+                do_texrect(w0, w1);
+                continue;
+            }
+        }
+        if (!s_rdp_end && s_fam != GFX_UC_F3D && ex_cmd(&w0, &w1)) continue;
         switch (w0 >> 24) {
             case F3D_G_TEXTURE: case F3D_G_SETOTHERMODE_H: case F3D_G_SETOTHERMODE_L: case F3D_G_SETGEOMETRYMODE:
             case F3D_G_CLEARGEOMETRYMODE: case F3D_G_SETTILE: case F3D_G_SETTILESIZE: case F3D_G_LOADBLOCK:
@@ -3084,7 +3284,12 @@ static void run_dl(const uint32_t* pc) {
                     dkr_vtx(w0, w1);
                     break;
                 }
-                if (XGFX_WRUS && !s_wrus && !s_rare && s_fam == GFX_UC_F3D && (w0 & 0xFu)) {
+                if (XGFX_PD && !s_pd && s_fam == GFX_UC_F3D && (w0 & 0xFFFFu) == 12u * (((w0 >> 20) & 0xFu) + 1u)) {
+                    s_pd = 1;
+                    xhw_logf("[GFX] a Fast3D vertex load of n*12 bytes (%08x): Perfect Dark's vertices from here on (XGFX_PD)",
+                             (unsigned)w0);
+                }
+                if (XGFX_WRUS && !s_pd && !s_wrus && !s_rare && s_fam == GFX_UC_F3D && (w0 & 0xFu)) {
                     s_wrus = 1;
                     s_vmax = 32;
                     xhw_logf("[GFX] a Fast3D vertex load of n*16-1 bytes (%08x): Wave Race 64's vertex layout from here on (XGFX_WRUS)",
@@ -3129,7 +3334,7 @@ static void run_dl(const uint32_t* pc) {
                 }
                 break;
             case F3D_G_RESERVED1:   /* Rare's G_TRIN (DKR, JFG): triangles from memory */
-                if (s_rare) {
+                if (s_rare && !s_pd) {
                     if (!s_dkr_on) dkr_turn_on(0x05);
                     dkr_trin(w0, w1);
                 } else {
@@ -3137,6 +3342,16 @@ static void run_dl(const uint32_t* pc) {
                 }
                 break;
             case F3D_G_RESERVED2:
+                if (XGFX_PD && !s_dkr_on && s_fam == GFX_UC_F3D && (w0 & 0xFFFFu) == ((w0 >> 16) & 0xFFu) + 4u) {
+                    uint32_t k, bytes = w0 & 0xFFFFu, a = seg(w1);
+                    if (bytes > 256u) bytes = 256u;
+                    if (!s_pd) {
+                        s_pd = 1;
+                        xhw_logf("[GFX] a colour table (%08x): Perfect Dark's vertices from here on (XGFX_PD)", (unsigned)w0);
+                    }
+                    for (k = 0; k < bytes; k++) s_pd_col[k] = rd8(a + k);
+                    break;
+                }
                 if (s_rare && !s_dkr_on) dkr_turn_on(0x07);
                 /* Rare's later Fast3D (Jet Force Gemini; its microcode has no
                  * version text): 0x07 runs n commands from memory and comes
@@ -3438,8 +3653,14 @@ static void run_dl(const uint32_t* pc) {
             case F3D_G_RDPFULLSYNC:
                 s_fullsync = 1;   /* the RDP's interrupt at the end: DP done (sp.c) */
                 break;
+            case F3D_G_SETCONVERT: {   /* a signed 9 bits */
+                uint32_t k5 = w1 & 0x1FFu;
+                s_k5 = k5 >= 0x100u ? 0 : (uint8_t)k5;
+                DIRTY();
+                break;
+            }
             case F3D_G_RDPLOADSYNC: case F3D_G_RDPPIPESYNC: case F3D_G_RDPTILESYNC:
-            case F3D_G_SPNOOP: case F3D_G_SETPRIMDEPTH: case F3D_G_SETCONVERT: case F3D_G_SETKEYR:
+            case F3D_G_SPNOOP: case F3D_G_SETPRIMDEPTH: case F3D_G_SETKEYR:
             case F3D_G_SETKEYGB: case F3D_G_CULLDL:
                 break;
             default:
@@ -4207,6 +4428,13 @@ void f3d_run(uint32_t dl, int present) {
         xhw_perf_add(XHW_PERF_DL, us);
     }
     if (present) f3d_present_frame();
+}
+
+/* osDpSetNextBuffer's list (rt/gfx.c): the RDP's own commands from memory, no microcode, and no end command: it stops at its length */
+void f3d_run_rdp(uint32_t list, uint32_t bytes, int present) {
+    s_rdp_end = (const uint32_t*)host(list) + bytes / 4u;
+    f3d_run(list, present);
+    s_rdp_end = NULL;
 }
 
 /* gfx.c's XRC_DLBENCH: one run of the list into the open frame, the back end

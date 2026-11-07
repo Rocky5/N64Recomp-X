@@ -111,6 +111,13 @@ and no addresses. It takes the training past the menus into play, so the game un
 what a plain boot never reaches (`N64RX_DRYBOOT_ROUTES=0`: not read). None ships yet:
 check a new one with a full build in xemu, Banjo-Kazooie's crashed (`docs/handoff.md`).
 
+## Runtime switches (`games/runtime/`)
+
+`games/runtime/<code>.<sha1[:12]>.txt` holds the runtime's switches one ROM needs, a `-D` on a line and why after a `#`.
+Only `XRC_`, `XGFX_` and `XHW_` switches are accepted; anything else stops the build. Keep this short: use it for a
+game that does not work otherwise, and say what was seen and where. A default for every game goes in the code.
+`N64RX_GAME_RUNTIME=0` ignores these files.
+
 ## Patches (`games/patches/`)
 
 `games/patches/<code>.<sha1[:12]>.c` holds functions of one ROM written in

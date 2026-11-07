@@ -69,6 +69,7 @@ static void timers_shift(int64_t d) {
 }
 static volatile int s_up;
 static xhw_event* s_kick;
+static uint64_t s_si_due;   /* xu_si_later */
 
 static void timer_thread(void* arg) {
     (void)arg;
@@ -78,6 +79,18 @@ static void timer_thread(void* arg) {
         uint32_t ms;
         xu_lock();
         now = xu_count64();
+        if (s_si_due) {
+            if (s_si_due <= now) {
+                s_si_due = 0;
+                xu_post_event(OS_EVENT_SI);
+            } else {
+                next = s_si_due;
+            }
+        }
+        {
+            uint64_t rcp = xu_rcp_tick(now);   /* sp.c XRC_RCP_MIN_US */
+            if (rcp && rcp < next) next = rcp;
+        }
         for (i = 0; i < MAX_TIMERS; i++) {
             if (!s_timers[i].t) continue;
             if (s_timers[i].due <= now) {
@@ -100,17 +113,40 @@ static void timer_thread(void* arg) {
     }
 }
 
+/* (under the lock: osSetTimer comes here without it, and another thread found s_up set and s_kick not yet: Gauntlet Legends' crash) */
+static void timer_up(void) {
+    xu_lock();
+    if (!s_up) {
+        s_kick = xhw_event_create();
+        s_up = 1;
+        xu_spawn(timer_thread, NULL, 14, 32 * 1024);
+    }
+    xu_unlock();
+}
+
+/* sp.c: a task's done is due: under the lock */
+void xu_rcp_kick(void) {
+    timer_up();
+    xhw_event_signal(s_kick);
+}
+
+/* the SI done event `us` from now, from the timer thread (si.c XRC_SI_US) */
+void xu_si_later(uint32_t us) {
+    xu_lock();
+    timer_up();
+    if (s_si_due) xu_post_event(OS_EVENT_SI);   /* (one still to come: this one's start means that one ended) */
+    s_si_due = xu_count64() + (uint64_t)us * 46875u / 1000u;
+    xu_unlock();
+    xhw_event_signal(s_kick);
+}
+
 /* osSetTimer(t, OSTime countdown (a2/a3), OSTime interval (0x10/0x14), mq (0x18), msg (0x1C)) */
 ULTRA(osSetTimer) {
     uint32_t t = ARG(0), mq = ARG(6), msg = ARG(7);
     uint64_t countdown = xu_arg64(ctx, 2), interval = xu_arg64(ctx, 4);
     int i, slot = -1;
     (void)rdram;
-    if (!s_up) {
-        s_up = 1;
-        s_kick = xhw_event_create();
-        xu_spawn(timer_thread, NULL, 14, 32 * 1024);
-    }
+    timer_up();
 #ifdef XRC_LOG_TIMERS   /* diagnosis: the first n osSetTimer calls (Donkey Kong 64's audio start timer) */
     {
         static unsigned s_n;

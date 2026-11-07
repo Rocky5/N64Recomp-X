@@ -465,6 +465,14 @@ static DWORD WINAPI spawn_entry(LPVOID p) {
     return 0;
 }
 
+/* A new thread took its level itself, on its first instruction, and until then it stood at the kernel's default, 8. Two game
+ * threads spinning on level 10 (Top Gear Hyper-Bike: main waits for a counter that a thread of N64 priority 127 adds to) left
+ * it there for good, ready and never run. Its level is now set before it can run.
+ * -DXHW_SPAWN_LEVEL=0: as before */
+#ifndef XHW_SPAWN_LEVEL
+#define XHW_SPAWN_LEVEL 1
+#endif
+
 xhw_thread* xhw_thread_spawn(void (*fn)(void*), void* arg, int level, uint32_t stack_bytes) {
     xhw_thread* t = (xhw_thread*)calloc(1, sizeof *t);
     HANDLE h;
@@ -473,10 +481,18 @@ xhw_thread* xhw_thread_spawn(void (*fn)(void*), void* arg, int level, uint32_t s
     t->fn = fn;
     t->arg = arg;
     t->level = level;
-    h = CreateThread(NULL, stack_bytes ? stack_bytes : 64 * 1024, spawn_entry, t, 0, NULL);
+    h = CreateThread(NULL, stack_bytes ? stack_bytes : 64 * 1024, spawn_entry, t, XHW_SPAWN_LEVEL ? CREATE_SUSPENDED : 0, NULL);
     if (!h) {
         free(t);
         return NULL;
+    }
+    if (XHW_SPAWN_LEVEL) {
+        PETHREAD et = NULL;
+        if (NT_SUCCESS(ObReferenceObjectByHandle(h, NULL, (PVOID*)&et))) {
+            apply_level(&et->Tcb, level);
+            ObfDereferenceObject(et);
+        }
+        ResumeThread(h);
     }
     CloseHandle(h);
     return t;

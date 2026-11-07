@@ -965,9 +965,16 @@ static int s_cc_n;
 static uint32_t s_cc_approx;
 uint32_t xgfx_cc_approximated(void) { return s_cc_approx; }
 
-static const CcProg* cc_lookup(uint32_t cc0, uint32_t cc1, int two, int fog) {
+/* A game can set K5 for use as a constant in its modes: Conker sets it to 255, then (SHADE - ENV) * K5 + PRIM, and read as 0 those
+ * polygons came out black. No register holds K5, so about 1 is the value it can have here; anything else still reads as 0
+ * (nv2a_cc.h). -DXGFX_K5_ONE=0: always 0 */
+#ifndef XGFX_K5_ONE
+#define XGFX_K5_ONE 1
+#endif
+static const CcProg* cc_lookup(uint32_t cc0, uint32_t cc1, int two, int fog, int k5) {
     static int s_last = -1;
-    uint32_t flags = 0x80000000u | (two ? 1u : 0u) | (fog ? 2u : 0u);
+    int k5_one = XGFX_K5_ONE && k5 >= 0xF0;
+    uint32_t flags = 0x80000000u | (two ? 1u : 0u) | (fog ? 2u : 0u) | (k5_one ? 4u : 0u);
     int k;
     if (s_last >= 0 && s_cc[s_last].cc0 == cc0 && s_cc[s_last].cc1 == cc1 && s_cc[s_last].flags == flags)
         return &s_cc[s_last].prog;
@@ -980,7 +987,7 @@ static const CcProg* cc_lookup(uint32_t cc0, uint32_t cc1, int two, int fog) {
     s_cc[k].cc0 = cc0;
     s_cc[k].cc1 = cc1;
     s_cc[k].flags = flags;
-    cc_compile(cc0, cc1, two, fog, &s_cc[k].prog);
+    cc_compile(cc0, cc1, two, fog, k5_one, &s_cc[k].prog);
     if (s_cc[k].prog.approximated) {
         s_cc_approx++;
         if (s_cc_approx <= 32)
@@ -1021,7 +1028,7 @@ static uint32_t pack_rgba(const uint8_t c[4]) {
 }
 
 static void emit_combiners(const XgfxState* st) {
-    const CcProg* cp = cc_lookup(st->cc0, st->cc1, (int)st->two_cycle, (int)st->fog);
+    const CcProg* cp = cc_lookup(st->cc0, st->cc1, (int)st->two_cycle, (int)st->fog, st->k5);
     uint32_t c0 = pack_rgba(st->prim), c1 = pack_rgba(st->env);
     int i;
     if (cp != s_cc_sent) {

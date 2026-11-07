@@ -96,6 +96,29 @@ static int find_lut(uint32_t task, uint32_t* where) {
     return 0;
 }
 
+/* Rare's MP3 command (asp_abis.inc): the synthesis window out of this microcode's data, past
+ * what a task loads at first (its second overlay's, up to 8 KB on). A row of the window: 16 s16s,
+ * its peak at [8], [7] = -[9], and the row after it twice over. Nothing of it is stored. */
+static int find_mp3_window(uint32_t task, uint32_t* where) {
+    uint32_t data = rd32(task + TK_UCODE_DATA), off, i;
+    uint8_t rows[17][32];
+    if (!xrc_host(data, 0x2000)) return 0;
+    for (off = 0; off + 0x20 * 34 <= 0x2000; off += 8) {
+        int16_t peak = (int16_t)rd16(data + off + 16), l = (int16_t)rd16(data + off + 14), r = (int16_t)rd16(data + off + 18);
+        if (peak < 0x7F00 || l != -r) continue;
+        for (i = 0; i < 32 && rd8(data + off + 0x20 + i) == rd8(data + off + 0x40 + i); i++) {}
+        if (i < 32) continue;
+        for (i = 0; i < 17; i++) {
+            uint32_t k, at = data + off + (i ? 0x20 * (2 * i - 1) : 0);
+            for (k = 0; k < 32; k++) rows[i][k] = rd8(at + k);
+        }
+        asp_hle_set_mp3_window_be((const uint8_t(*)[32])rows);
+        *where = off;
+        return 1;
+    }
+    return 0;
+}
+
 static void audio_up(void) {
     if (s_up) return;
     s_up = 1;
@@ -164,6 +187,11 @@ static void identify(uint32_t task) {
         lut_ok = find_lut(task, &lut_off);
         if (lut_ok) xhw_logf("[AUDIO] RSP audio HLE: resampler table at data+%03x", (unsigned)lut_off);
         else xhw_logf("[AUDIO] RSP audio HLE: no resampler table in the microcode data (linear fallback)");
+        if (uc.flags & ASP_NAUDIO_RARE) {
+            uint32_t at;
+            if (find_mp3_window(task, &at)) xhw_logf("[AUDIO] MP3 synthesis window at data+%03x", (unsigned)at);
+            else xhw_logf("[AUDIO] no MP3 synthesis window in the microcode data: its MP3 stays silent");
+        }
     }
     if (s_nucs < 4) {
         s_ucs[s_nucs].data = data, s_ucs[s_nucs].uc = uc, s_ucs[s_nucs].lut_off = lut_off;

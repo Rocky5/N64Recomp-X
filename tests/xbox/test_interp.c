@@ -50,7 +50,25 @@ int xu_start_dispatched(uint32_t t) { (void)t; return 0; }
 void pause_self(uint8_t* rdram) { (void)rdram; xrc_fatal_vram("pause_self", 0, 0); }
 
 static void known_fn(uint8_t* rdram, recomp_context* ctx) { (void)rdram; ctx->r2 = (gpr)(ctx->r4 * 3); }
-recomp_func_t* xrc_try_function(uint32_t vram) { return vram == 0x80003000u ? known_fn : NULL; }
+void xrc_interp(uint8_t* rdram, recomp_context* ctx, uint32_t entry);
+/* a routine the runtime interprets, as a build's xrc_interp.c has it (t_inline) */
+#define SUB_AT 0x80004000u
+static void sub_stub(uint8_t* rdram, recomp_context* ctx) { xrc_interp(rdram, ctx, SUB_AT); }
+typedef struct { uint32_t vram; recomp_func_t* fn; } XrcInterpEntry;
+const XrcInterpEntry xrc_interp_table[] = {{SUB_AT, sub_stub}};
+const unsigned xrc_interp_rows = 1;
+/* a recompiled function, called by an interpreted run, that exits through another: t_sp_escape */
+#define ESC_SUB 0x80003100u
+#define ESC_EXIT 0x80005200u
+static int s_esc_calls;
+static void esc_sub(uint8_t* rdram, recomp_context* ctx) {
+    s_esc_calls++;
+    xrc_interp(rdram, ctx, ESC_EXIT);
+    s_esc_calls += 100;   /* never: the exit does not come back here */
+}
+recomp_func_t* xrc_try_function(uint32_t vram) {
+    return vram == 0x80003000u ? known_fn : vram == SUB_AT ? sub_stub : vram == ESC_SUB ? esc_sub : NULL;
+}
 
 static struct { uint32_t vram, len, caller; } s_learnt[8];
 static int s_nlearnt;
@@ -67,7 +85,19 @@ int xu_fault_wait(uint32_t vaddr, int store) { (void)vaddr; (void)store; return 
 void xhw_crash_set_fixup(int (*fn)(uint32_t host, int write)) { (void)fn; }
 int xrc_kseg1_heal(uint32_t host) { (void)host; return 0; }
 int xrc_cart_fault(uint32_t host) { (void)host; return 0; }          /* mmio.c */
+int xrc_gap_fault(uint32_t host) { (void)host; return 0; }           /* mmio.c */
 void xrc_guard_kuseg(void) {}                                        /* guard.c */
+static int s_guard_stale;
+int xrc_guard_current(uint32_t vram) { return !(s_guard_stale && vram == 0x80003000u); }   /* guard.c */
+/* strand.c: as if another context ran and something switched back to this stack */
+static uint32_t s_sw_target, s_sw_sp, s_sw_mine;
+static int s_sw_n;
+void xrc_strand_switch(uint8_t* rdram, recomp_context* ctx, uint32_t target, uint32_t my_sp) {
+    (void)rdram;
+    s_sw_n++, s_sw_target = target, s_sw_sp = (uint32_t)ctx->r29, s_sw_mine = my_sp;
+    ctx->r29 = (gpr)(int32_t)my_sp;
+    ctx->r2 = 77;
+}
 void xrc_guard_kuseg_range(uint32_t a, uint32_t b) { (void)a, (void)b; }  /* guard.c */
 uint32_t xrc_ovl_reloc_vram(uint32_t v) { return v; }                     /* ovl.c */
 uint32_t xrc_ipl3_vec[4];                                            /* boot.c */
@@ -404,8 +434,124 @@ static void t_refill(void) {
     memset(s_ram, 0, 0x80);
 }
 
+/* hand-written code: a routine with one frame calls another interpreted one
+ * that shares it, whose error path takes the caller's epilogue and so returns
+ * from both (Perfect Dark's 0x70018680 and 0x70019634) */
+static void t_inline(void) {
+    enum { FRAME = 0x800, RA_AT = 0x7DC, EPI = 0x80001020u };
+    static const uint32_t caller[] = {
+        ADDIU(sp, sp, -FRAME), IT(43, sp, ra, RA_AT) /* sw ra */, JT(3, SUB_AT) /* jal */, NOP,
+        ORI(v0, v0, 1) /* only when the callee came back */, NOP, NOP, NOP,
+        /* EPI */ IT(35, sp, ra, RA_AT) /* lw ra */, JR_RA, ADDIU(sp, sp, FRAME)};
+    static const uint32_t leave[] = {ORI(v1, zero, 7), JT(2, EPI) /* j the caller's epilogue */, NOP};
+    static const uint32_t back[] = {ORI(v1, zero, 9), JR_RA, NOP};
+    static const uint32_t sys[] = {0x0000000Cu /* syscall */, NOP};
+    static const uint32_t tail[] = {LUI(t9, 0x8000), ORI(t9, t9, 0x3000), RT(8, t9, 0, 0, 0) /* jr t9 */, NOP};
+    fresh();
+    put(ENTRY, caller, (int)(sizeof caller / 4));
+    put(SUB_AT, leave, 3);
+    xrc_interp(xrc_rdram, &C, ENTRY);
+    CHECK("inline: the callee ran", REG(v1), 7);
+    CHECK("inline: both left", REG(v0), 0);
+    CHECK("inline: one frame popped", REG(sp), G(0x8000F000u));
+    CHECK("inline: the caller's ra", REG(ra), G(0x80000ABCu));
+    CHECK("inline: no break", s_breaks, 0);
+    fresh();
+    put(SUB_AT, back, 3);
+    xrc_interp(xrc_rdram, &C, ENTRY);
+    CHECK("inline: a plain return", REG(v1), 9);
+    CHECK("inline: the caller goes on", REG(v0), 1);
+    CHECK("inline: its frame popped", REG(sp), G(0x8000F000u));
+    fresh();   /* the callee ends in a tail call to recompiled code: the caller still goes on (Bomberman 64 2) */
+    C.r4 = 5;
+    put(SUB_AT, tail, 4);
+    xrc_interp(xrc_rdram, &C, ENTRY);
+    CHECK("inline: the tail call ran, then the caller", REG(v0), 15 | 1);
+    CHECK("inline: its frame popped after a tail call", REG(sp), G(0x8000F000u));
+    CHECK("inline: the caller's ra after a tail call", REG(ra), G(0x80000ABCu));
+    fresh();   /* the callee is a syscall its handler has run: the caller still goes on (Banjo-Tooie's linker) */
+    put(SUB_AT, sys, 2);
+    xrc_interp(xrc_rdram, &C, ENTRY);
+    CHECK("inline: after a syscall, the caller", REG(v0) & 1, 1);
+    CHECK("inline: its frame popped after a syscall", REG(sp), G(0x8000F000u));
+    CHECK("inline: the caller's ra after a syscall", REG(ra), G(0x80000ABCu));
+    memset(s_ram + 0x1000, 0, sizeof caller);
+    memset(s_ram + (SUB_AT & 0xFFFF), 0, sizeof tail);
+}
+
+/* a run keeps ra and sp in memory and calls; below it, a run loads them back and returns: the first run ends there
+ * (Mortal Kombat 4's objects). XRC_SP_ESCAPE */
+static void t_sp_escape(void) {
+    static const uint32_t saver[] = {
+        ADDIU(sp, sp, -0x18), LUI(t0, 0x8000), ORI(t0, t0, 0x6000), IT(43, t0, ra, 0), IT(43, t0, sp, 8),
+        (3u << 26) | ((ESC_SUB >> 2) & 0x3FFFFFFu), NOP,
+        ORI(v0, 0, 99),   /* not reached: the exit returned for it */
+        JR_RA, ADDIU(sp, sp, 0x18)};
+    static const uint32_t leaver[] = {
+        LUI(t0, 0x8000), ORI(t0, t0, 0x6000), IT(35, t0, sp, 8), IT(35, t0, ra, 0), ORI(v0, 0, 7), JR_RA, ADDIU(sp, sp, 0x18)};
+    fresh();
+    s_sw_n = 0, s_esc_calls = 0;
+    put(ESC_EXIT, leaver, 7);
+    run_prog(saver, 10);
+    CHECK("exit: the function below ran once and did not go on", s_esc_calls, 1);
+    CHECK("exit: not taken as a change of context", s_sw_n, 0);
+    CHECK("exit: the saving run returned, with the exit's v0", REG(v0), 7);
+    CHECK("exit: its stack back", REG(sp), G(0x8000F000u));
+    CHECK("exit: the caller's ra", REG(ra), G(0x80000ABCu));
+    wr32(0x80006000u, 0), wr32(0x80006008u, 0);
+    memset(s_ram + (ESC_EXIT & 0xFFFF), 0, sizeof leaver);
+}
+
+static void t_stack_switch(void) {
+    static const uint32_t lw_sp[] = {LUI(t0, 0x8000), ORI(t0, t0, 0x6000), IT(35, t0, sp, 0) /* lw sp */, IT(35, t0, t9, 4),
+                                     RT(8, t9, 0, 0, 0) /* jr t9 */, ADDIU(sp, sp, 0x10)};
+    static const uint32_t own[] = {LUI(t0, 0x8000), ORI(t0, t0, 0x6000), IT(35, t0, sp, 0), JR_RA, NOP};
+    fresh();
+    s_sw_n = 0;
+    wr32(0x80006000u, 0x80008000u), wr32(0x80006004u, 0x80003000u);
+    run_prog(lw_sp, 6);
+    CHECK("switch: taken once", s_sw_n, 1);
+    CHECK("switch: to the address the routine jumped to", s_sw_target, 0x80003000u);
+    CHECK("switch: with the sp after its delay slot", s_sw_sp, 0x80008010u);
+    CHECK("switch: this run's own stack", s_sw_mine, 0x8000F000u);
+    CHECK("switch: back, with the registers of the context that came back", REG(v0), 77);
+    CHECK("switch: back on its stack", REG(sp), G(0x8000F000u));
+    CHECK("switch: the caller's ra", REG(ra), G(0x80000ABCu));
+    fresh();   /* sp loaded back to what it is: a return */
+    s_sw_n = 0;
+    wr32(0x80006000u, 0x8000F000u);
+    run_prog(own, 5);
+    CHECK("switch: not to its own stack", s_sw_n, 0);
+    CHECK("switch: returned", REG(sp), G(0x8000F000u));
+    wr32(0x80006000u, 0), wr32(0x80006004u, 0);
+}
+
+static void t_tail_guard(void) {
+    static const uint32_t tail[] = {LUI(t9, 0x8000), ORI(t9, t9, 0x3000), RT(8, t9, 0, 0, 0) /* jr t9 */, NOP};
+    static const uint32_t there[] = {ORI(v1, zero, 5), JR_RA, NOP};
+    put(0x80003000u, there, 3);
+    fresh();   /* a function there that is what RDRAM holds: a tail call to it */
+    s_guard_stale = 0;
+    C.r4 = 5;
+    run_prog(tail, 4);
+    CHECK("tail guard: the function ran", REG(v0), 15);
+    CHECK("tail guard: not the bytes", REG(v1), 0);
+    fresh();   /* other code there now: the code goes on, in line */
+    s_guard_stale = 1;
+    C.r4 = 5;
+    run_prog(tail, 4);
+    CHECK("tail guard: not the stale function", REG(v0), 0);
+    CHECK("tail guard: the bytes RDRAM holds", REG(v1), 5);
+    s_guard_stale = 0;
+    memset(s_ram + 0x3000, 0, sizeof there);
+}
+
 int main(void) {
     xrc_rdram = s_ram - 0x80000000u;
+    t_inline();
+    t_stack_switch();
+    t_sp_escape();
+    t_tail_guard();
     t_int();
     t_64();
     t_branch();

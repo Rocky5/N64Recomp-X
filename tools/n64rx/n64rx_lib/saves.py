@@ -11,6 +11,7 @@ address is found in the game's osContInit: the byte store of the constant 4
 to a lui-based address. A rule about libultra's code, not about one game."""
 import os
 import pathlib
+import re
 import tomllib
 
 
@@ -146,6 +147,41 @@ def faulted_thread(rom_data: bytes, near=None):
     inside = [f for f in found if near is not None and near <= f[0] < near + 0x1000]
     _o, addr, off = inside[0] if inside else found[-1]
     return [f'-DXRC_FAULTED_THREAD=0x{addr:08X}u', f'-DXRC_TH_BADVADDR=0x{off:X}u']
+
+
+def game_runtime(root, code: str, sha1: str):
+    """games/runtime/<code>.<sha1[:12]>.txt: the runtime's switches one ROM needs, a -D on a line and why after a #. Only a
+    runtime or renderer switch, so a file here can do nothing else to the build. N64RX_GAME_RUNTIME=0: not used."""
+    p = pathlib.Path(root) / 'games' / 'runtime' / f'{code}.{sha1[:12]}.txt'
+    if os.environ.get('N64RX_GAME_RUNTIME', '1') == '0' or not p.is_file():
+        return []
+    out = []
+    for line in p.read_text(encoding='utf-8').splitlines():
+        flag = line.split('#', 1)[0].strip()
+        if not flag:
+            continue
+        if not re.fullmatch(r'-D(XRC|XGFX|XHW)_[A-Z0-9_]+(=[0-9A-Za-z]+)?', flag):
+            raise ValueError(f'{p.name}: not a runtime switch: {flag}')
+        out.append(flag)
+    return out
+
+
+def jb_sgi(rom_data: bytes):
+    """-DXRC_JB_SGI=1: the game's setjmp keeps SGI's layout (cfc1 v0, $31; sw ra, 0xC(a0); sw v0, 0x68(a0); sw sp, 8(a0);
+    sw fp, 0x34(a0); sw s0, 0x14(a0)), for the runtime's own (rt/strand.c). N64RX_JB_SGI=0: not looked for."""
+    if os.environ.get('N64RX_JB_SGI', '1') == '0':
+        return []
+    pat = bytes.fromhex('4442F800AC9F000CAC820068AC9D0008AC9E0034AC900014')
+    return ['-DXRC_JB_SGI=1'] if pat in rom_data else []
+
+
+def jb_word(rom_data: bytes):
+    """-DXRC_JB_WORD=1: the game's setjmp keeps words only: s0-s7 from 0, sp 0x20, fp 0x24, ra 0x28, no floats (rt/strand.c).
+    N64RX_JB_WORD=0: not looked for."""
+    if os.environ.get('N64RX_JB_WORD', '1') == '0':
+        return []
+    pat = bytes.fromhex('AC900000AC910004AC920008AC93000CAC940010AC950014AC960018AC97001CAC9D0020AC9E0024AC9F0028')
+    return ['-DXRC_JB_WORD=1'] if pat in rom_data else []
 
 
 def os_exception(rom_data: bytes, segments=()):

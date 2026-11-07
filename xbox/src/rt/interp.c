@@ -54,6 +54,22 @@
 #include "xhw.h"
 
 #define SENTINEL 0x8FFFFFF0u        /* an address no code has */
+/* A routine that loads sp from memory and jumps through a register has gone to another stack: hand-written coroutines
+ * (Chopper Attack's task switch). On the host every N64 call is a C call, so the context it left stays on this host
+ * stack and the one it goes to runs on a host thread of its own (strand.c, xrc_strand_switch). -DXRC_STACK_SWITCH=0: the
+ * interpreter runs on into the other context's code, as before */
+#ifndef XRC_STACK_SWITCH
+#define XRC_STACK_SWITCH 1
+#endif
+void xrc_strand_switch(uint8_t* rdram, recomp_context* ctx, uint32_t target, uint32_t my_sp);
+/* A jump through a register to where another version of an overlay had a function, with other code there now, is no
+ * call to that function: Mystical Ninja's jump table landed on a case that was a function's start in the overlay
+ * captured, the case ran as a function of its own, and it came back with its caller's registers not restored.
+ * -DXRC_TAIL_GUARD=0: a tail call, as before */
+#ifndef XRC_TAIL_GUARD
+#define XRC_TAIL_GUARD 1
+#endif
+int xrc_guard_current(uint32_t vram);   /* guard.c */
 #ifndef XRC_TAIL_RA
 #define XRC_TAIL_RA 1               /* a tail call from code run in line goes back to its ra (run) */
 #endif
@@ -81,6 +97,14 @@ typedef struct {
     uint32_t entry, ret, top, caller;
 } Frame;
 
+/* A routine that keeps ra and sp in memory and calls on, and another that from anywhere below it loads them back and
+ * returns: an exit from deep down, not a change of context (Mortal Kombat 4's objects leave so: 0x801D0B9C and
+ * 0x801D0BDC, every frame). Recompiled, a jal sets no ra: it kept 0, and the exit went to address 0. Both now run here: the
+ * saving run marks its place, the exit finds the enclosing run that saved its ra and the host stack goes back there.
+ * DIVERGES: none meant. -DXRC_SP_ESCAPE=0: taken as a change of context (the crash) */
+#ifndef XRC_SP_ESCAPE
+#define XRC_SP_ESCAPE 1
+#endif
 typedef struct {
     uint64_t r[32];
     uint64_t hi, lo;
@@ -89,6 +113,13 @@ typedef struct {
     int exc;               /* the refill vector (xrc_interp_refill): eret returns */
     uint32_t epc_k0;       /* k0 when EPC was last written (__osDispatchThread: the thread it restores) */
     int eret_ret;          /* the run ended at an eret outside the exception code (XRC_ERET_KEEP) */
+    int sp_loaded;         /* sp came from memory, not from sp, since the last jump through a register (XRC_STACK_SWITCH) */
+    int sp_saved;          /* XRC_SP_ESCAPE: 1 it stored sp and ra through another register, 2 jb is set */
+    int esc_seen;          /* the first of the two: its register + 1, as rt 29 or rt 31 */
+    int esc_rt;
+    uint32_t save_ra;      /* ra when it did */
+    void* jb[5];
+    void* up;              /* the enclosing run on this thread */
     int nframes;
     Frame fr[MAX_FRAMES];
 } St;
@@ -96,6 +127,7 @@ typedef struct {
 typedef struct {
     int branch, taken, likely, link, jreg, ret, abs;
     uint32_t target;
+    int sys;   /* a syscall its handler has run (hooks.c) */
 } Br;
 
 /* ---- the register file ---- */
@@ -391,7 +423,7 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
             regs_out(st, ctx);
             recomp_syscall_handler(rdram, ctx, (int32_t)pc);
             regs_in(st, ctx);
-            br->ret = 1;
+            br->ret = br->sys = 1;
             return;
         case 13: do_break(pc); return;
         case 15: return;                                                                                    /* sync */
@@ -519,7 +551,10 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
     case 32: SET(rt, (uint64_t)(int64_t)MEM_B(0, ea)); return;
     case 33: SET(rt, (uint64_t)(int64_t)MEM_H(0, ea)); return;
     case 34: SET(rt, SX32(do_lwl(rdram, (gpr)t, 0, ea))); return;
-    case 35: case 48: SET(rt, SX32(MEM_W(0, ea))); return;   /* lw, ll */
+    case 35: case 48:   /* lw, ll */
+        if (rt == 29 && rs != 29) st->sp_loaded = 1;
+        SET(rt, SX32(MEM_W(0, ea)));
+        return;
     case 36: SET(rt, (uint64_t)MEM_BU(0, ea)); return;
     case 37: SET(rt, (uint64_t)MEM_HU(0, ea)); return;
     case 38: SET(rt, SX32(do_lwr(rdram, (gpr)t, 0, ea))); return;
@@ -527,7 +562,14 @@ static void exec(uint8_t* rdram, recomp_context* ctx, St* st, uint32_t pc, uint3
     case 40: MEM_B(0, ea) = (int8_t)t; return;
     case 41: MEM_H(0, ea) = (int16_t)t; return;
     case 42: do_swl(rdram, 0, ea, (gpr)t); return;
-    case 43: MEM_W(0, ea) = (int32_t)t; return;
+    case 43:
+        /* both through one register: a thread switcher (Chopper Attack's) stores sp so and keeps ra on the stack */
+        if (XRC_SP_ESCAPE && (rt == 29 || rt == 31) && rs != 29 && !st->sp_saved) {
+            if (st->esc_seen == (int)rs + 1 && st->esc_rt != (int)rt) st->sp_saved = 1;
+            else st->esc_seen = (int)rs + 1, st->esc_rt = (int)rt;
+        }
+        MEM_W(0, ea) = (int32_t)t;
+        return;
     case 44: sdl(rdram, ea, t); return;
     case 45: sdr(rdram, ea, t); return;
     case 46: do_swr(rdram, 0, ea, (gpr)t); return;
@@ -642,8 +684,44 @@ static void hot_note(uint32_t entry, unsigned steps) {
     __sync_lock_release(&s_hot_busy);
 }
 
+/* A call from interpreted code to another routine the runtime interprets stays
+ * in this run: hand-written code can share a frame between its routines and
+ * leave both at once. Perfect Dark's 0x70018680 (a 0x800-byte frame) calls
+ * 0x70019634, whose error path jumps to the caller's epilogue. On the N64 that
+ * returns from both; as a run of its own only the inner run ended, the outer one
+ * went on with the frame already popped, popped it again and returned to what
+ * lay past the stack's top, a display list (xemu: a jump to 0xFD10013F at the
+ * title). -DXRC_INTERP_INLINE=0: each its own run, as before */
+#ifndef XRC_INTERP_INLINE
+#define XRC_INTERP_INLINE 1
+#endif
+typedef struct { uint32_t vram; recomp_func_t* fn; } XrcInterpRow;
+extern const XrcInterpRow xrc_interp_table[];       /* the build's xrc_interp.c, by address: the routines first */
+__attribute__((weak)) const unsigned xrc_interp_rows = 0;
+static int interp_row(uint32_t vram) {
+    unsigned lo = 0, hi = xrc_interp_rows;
+    while (XRC_INTERP_INLINE && lo < hi) {
+        unsigned m = (lo + hi) / 2;
+        if (xrc_interp_table[m].vram == vram) return 1;
+        if (xrc_interp_table[m].vram < vram) lo = m + 1;
+        else hi = m;
+    }
+    return 0;
+}
+
+#ifndef XRC_STUB_CALL
+#define XRC_STUB_CALL 1
+#endif
+/* (a function of its own: run's locals do not come back from a __builtin_longjmp, and here there are none) */
+static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learning, uint32_t caller, int exc, uint32_t ra);
+static __attribute__((noinline)) void esc_run(uint8_t* rdram, recomp_context* ctx, uint32_t pc, void** jb, uint32_t ra) {
+    if (__builtin_setjmp(jb)) return;
+    run(rdram, ctx, pc, 0, 0, 0, ra);
+}
+
 static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learning, uint32_t caller, int exc, uint32_t ra) {
     St st;
+    unsigned inl = 0;   /* calls this run took in line (interp_row) and has not returned from */
     gpr saved_ra = ctx->r31;
     uint32_t pc = entry, steps = 0;
     Last* last = last_of();
@@ -655,7 +733,8 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
         for (k = 0; k < 8; k++) keep0[k] = st.r[16 + k];
         keep0[8] = st.r[29], keep0[9] = st.r[30], keep0[10] = st.r[28];
     }
-    st.fcc = 0, st.learning = learning, st.nframes = 0, st.exc = exc, st.epc_k0 = 0, st.eret_ret = 0;
+    st.fcc = 0, st.learning = learning, st.nframes = 0, st.exc = exc, st.epc_k0 = 0, st.eret_ret = 0, st.sp_loaded = 0;
+    st.sp_saved = 0, st.esc_seen = 0, st.esc_rt = 0, st.up = outer;
     st.r[31] = SX32(ra ? ra : SENTINEL);
     if (learning) st.fr[st.nframes++] = (Frame){entry, SENTINEL, entry, caller};
     xrc_trace_vram(entry);   /* trace.c: what the crash report names */
@@ -663,11 +742,31 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
         Br br = {0}, ds = {0};
         uint32_t w;
         last->pc = pc, last->st = &st;
+        if (st.sp_saved == 1 && !learning && !exc) {   /* XRC_SP_ESCAPE: the rest of the routine from a place an exit can land */
+            st.sp_saved = 2;
+            st.save_ra = (uint32_t)st.r[31];
+            regs_out(&st, ctx);
+            esc_run(rdram, ctx, pc, st.jb, st.save_ra);
+            regs_in(&st, ctx);
+            break;
+        }
         w = fetch(rdram, pc);
         if (++steps > STEP_LIMIT && !learning) stop(&st, "Interpreted code never returned", pc, entry);
         if (st.nframes && pc > st.fr[st.nframes - 1].top && pc - st.fr[st.nframes - 1].entry < 0x10000u)
             st.fr[st.nframes - 1].top = pc;
         exec(rdram, ctx, &st, pc, w, &br);
+        /* the syscall's handler ran the routine it stands for (hooks.c): back from it, which is the end of this run
+         * only if this run began there. Interpreted in line (a call in the game's linker to a stub not linked yet),
+         * it comes back to its caller here: Banjo-Tooie's linker ended with its frame not popped */
+        if (br.sys && (st.nframes > (learning ? 1 : 0) || inl)) {
+            uint32_t back = (uint32_t)st.r[31];
+            if (back != SENTINEL && !(ra && back == ra)) {
+                if (inl) inl--;
+                else if (back == st.fr[st.nframes - 1].ret) frames_report(&st, st.nframes - 1);
+                pc = back;
+                continue;
+            }
+        }
         if (br.ret) break;
         if (!br.branch) {
             pc += 4;
@@ -698,11 +797,47 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
             }
         }
 #endif
+        if (XRC_STACK_SWITCH && st.sp_loaded && br.jreg && !br.link && !exc) {
+            uint32_t sp = (uint32_t)st.r[29], sp0 = (uint32_t)keep0[8];
+            st.sp_loaded = 0;
+            /* (a routine run in line that kept its old sp in memory stays on this stack, just below) */
+            if (XRC_SP_ESCAPE && sp > sp0) {   /* back up the stack, to the run that saved this return */
+                St* o;
+                for (o = (St*)st.up; o; o = (St*)o->up)
+                    if (o->sp_saved == 2 && o->save_ra == br.target) {
+                        regs_out(&st, ctx);
+                        last->st = o;
+                        __builtin_longjmp(o->jb, 1);
+                    }
+            }
+            if (sp != sp0 && !((inl || st.nframes > (learning ? 1 : 0)) && sp < sp0 && sp0 - sp < 0x4000u)) {
+                if (XHW_TEST_BUILD) {   /* whose: the first few */
+                    static unsigned s_n;
+                    if (s_n++ < 8)
+                        xhw_logf("[INTERP] %08x (from %08x): stack switch at %08x, to %08x with sp %08x (was %08x), frames %d", (unsigned)entry, (unsigned)ra, (unsigned)pc,
+                                 (unsigned)br.target, (unsigned)sp, (unsigned)sp0, st.nframes);
+                }
+                regs_out(&st, ctx);
+                xrc_strand_switch(rdram, ctx, br.target, sp0);
+                regs_in(&st, ctx);   /* something switched back to this stack: this run's routine returns */
+                break;
+            }
+        }
         if (br.target == SENTINEL || (ra && br.jreg && br.target == ra)) break;   /* back to the caller */
+        if (inl && br.jreg && !br.link && br.target == (uint32_t)st.r[31]) {
+            inl--;
+            pc = br.target;
+            continue;
+        }
         if (br.target == pc && !br.link && !fetch(rdram, pc + 4)) pause_self(rdram);   /* b . (an idle loop), as the recompiler does */
         if (br.link) {   /* a call */
             recomp_func_t* f = xrc_try_function(br.target);
             xrc_trace_vram(br.target);
+            if (f && interp_row(br.target)) {
+                inl++;
+                pc = br.target;
+                continue;
+            }
             if (f) {
                 regs_out(&st, ctx);
                 f(rdram, ctx);
@@ -729,7 +864,7 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
         }
         if (br.jreg && br.target != entry) {   /* a jump through a register to a function: a tail call */
             recomp_func_t* f = xrc_try_function(br.target);
-            if (f) {
+            if (f && (!XRC_TAIL_GUARD || xrc_guard_current(br.target))) {
                 /* it returns where this code's ra points: the caller of the run, or,
                  * inside a function interpreted in line (the net's jal into code with
                  * no function), back into the code that called that one. Leaving the
@@ -740,7 +875,16 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
                 regs_out(&st, ctx);
                 f(rdram, ctx);
                 regs_in(&st, ctx);
-                if (!XRC_TAIL_RA || back == SENTINEL || (ra && back == ra) || !st.nframes) break;
+                /* a call taken in line (inl) that ended in a tail call comes back to its caller in this run:
+                 * Bomberman 64: The Second Attack!'s 0x6000xxxx routines; leaving the run there lost the rest of
+                 * the outer routine and the game wrote through NULL */
+                if (!XRC_TAIL_RA || back == SENTINEL || (ra && back == ra) || (!st.nframes && !inl)) break;
+                if (!st.nframes) {
+                    inl--;
+                    st.r[31] = SX32(back);
+                    pc = back;
+                    continue;
+                }
                 if (XHW_TEST_BUILD) {   /* diagnosis: where a tail call goes on in line */
                     static unsigned s_n;
                     if (s_n++ < 24)
@@ -757,6 +901,18 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
         }
         if (st.nframes > (learning ? 1 : 0) && br.jreg && br.target == st.fr[st.nframes - 1].ret)
             frames_report(&st, st.nframes - 1);
+        /* a run that begins with a jump is a stub (Banjo-Tooie's overlay calls): the function it names, not that
+         * function's code here. -DXRC_STUB_CALL=0: interpreted */
+        if (XRC_STUB_CALL && br.abs && pc == entry) {
+            recomp_func_t* f = xrc_try_function(br.target);
+            if (f) {
+                regs_out(&st, ctx);
+                ctx->r31 = saved_ra;
+                f(rdram, ctx);
+                regs_in(&st, ctx);
+                break;
+            }
+        }
         pc = br.target;
     }
     frames_report(&st, 0);
@@ -857,7 +1013,7 @@ int xrc_interp_refill(uint32_t vaddr, int store) {
     uint32_t runq;
 #endif
     if (!start) return 0;
-    while (__sync_lock_test_and_set(&s_busy, 1)) xhw_sleep_ms(0);
+    XHW_WAIT_WHILE(__sync_lock_test_and_set(&s_busy, 1));
     memset(&ctx, 0, sizeof ctx);
 #if !XRC_FODD_ARRAY
     ctx.f_odd = &ctx.f0.u32h;
@@ -892,6 +1048,16 @@ int xrc_interp_refill(uint32_t vaddr, int store) {
                 xhw_logf("[TLB] vec %08x: %08x %08x %08x %08x %08x %08x %08x %08x", (unsigned)a,
                          (unsigned)MEM_W(0, a), (unsigned)MEM_W(4, a), (unsigned)MEM_W(8, a), (unsigned)MEM_W(12, a),
                          (unsigned)MEM_W(16, a), (unsigned)MEM_W(20, a), (unsigned)MEM_W(24, a), (unsigned)MEM_W(28, a));
+            {
+                void xrc_trace_dump(void);   /* trace.c: what ran last */
+                xrc_trace_dump();
+                xrc_interp_crash_report();
+                if (sp)
+                    for (a = sp & ~31u; a < (sp & ~31u) + 0x100u; a += 32)
+                        xhw_logf("[TLB] stack %08x: %08x %08x %08x %08x %08x %08x %08x %08x", (unsigned)a,
+                                 (unsigned)MEM_W(0, a), (unsigned)MEM_W(4, a), (unsigned)MEM_W(8, a), (unsigned)MEM_W(12, a),
+                                 (unsigned)MEM_W(16, a), (unsigned)MEM_W(20, a), (unsigned)MEM_W(24, a), (unsigned)MEM_W(28, a));
+            }
         }
     }
     run(rdram, &ctx, start, 0, 0, 1, 0);

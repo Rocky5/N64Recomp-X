@@ -80,10 +80,29 @@ static int gfx_lock_game(void) {   /* the levels to take back after */
     return n;
 }
 
+/* A present waits for the frame on screen to go, up to a vblank, and on the N64 a swap only writes a register. A thread that
+ * swapped therefore slept where the game has it running, and lower threads ran in its place: Snowboard Kids' main thread reuses
+ * the second task of a frame as soon as it has built two more, its graphics thread had still to read that task, read another
+ * frame's buffer, the one just swapped, and waited for ever for it to leave the screen (0 to 39 frames, a different number each
+ * run). The present now waits for the first thing that can tell: a thread about to block, the next task, a retrace.
+ * DIVERGES: none meant. -DXRC_SWAP_AT_BLOCK=0: in the swap, as before */
+#ifndef XRC_SWAP_AT_BLOCK
+#define XRC_SWAP_AT_BLOCK 1
+#endif
+static volatile int s_swap_pending;
+static volatile uint32_t s_swap_fb;
+static volatile unsigned s_swap_retrace;
+
 /* the VI thread, every retrace: a frame left open with no task and no swap
  * to its buffer for XRC_SWAP_STALE retraces (a game that draws once and
  * waits, or swaps a buffer it did not draw into) is presented as it is */
+static void swap_run(void);
 void xrc_gfx_vi(unsigned retrace) {
+    if (s_swap_pending && retrace != s_swap_retrace && !s_busy) {   /* nothing blocked or drew since the swap (a task presents it at its start) */
+        xrc_gfx_lock();
+        swap_run();
+        xrc_gfx_unlock();
+    }
     if (!XRC_PRESENT_ON_SWAP || !s_up || !s_swapped || s_busy || !f3d_frame_open()) return;
     if (retrace - s_task_retrace < XRC_SWAP_STALE) return;
     xrc_gfx_lock();
@@ -92,15 +111,38 @@ void xrc_gfx_vi(unsigned retrace) {
 }
 
 /* osViSwapBuffer (ultra/vi.c) */
-void xrc_gfx_swap(uint32_t fb) {
-    if (!XRC_PRESENT_ON_SWAP || !s_up) return;
-    xu_lock_take(gfx_lock_game());
+static void swap_now(uint32_t fb) {   /* the renderer held */
     if (!s_swapped) {
         s_swapped = 1;
         f3d_split_frames(1);
         xhw_logf("[GFX] the game swaps (osViSwapBuffer %08x): frames presented at the swap", (unsigned)fb);
     }
     if (f3d_swap(fb)) s_open_tasks = 0;
+}
+static void swap_run(void) {          /* the renderer held: a swap still to do */
+    if (s_swap_pending) {
+        s_swap_pending = 0;
+        swap_now(s_swap_fb);
+    }
+}
+void xrc_gfx_swap(uint32_t fb) {
+    if (!XRC_PRESENT_ON_SWAP || !s_up) return;
+    if (XRC_SWAP_AT_BLOCK && !s_swap_pending) {
+        s_swap_fb = fb;
+        s_swap_retrace = xu_retrace();
+        s_swap_pending = 1;
+        return;
+    }
+    xu_lock_take(gfx_lock_game());
+    swap_run();     /* (a swap with another still waiting: no task between them, so no frame to wait for) */
+    swap_now(fb);
+    xrc_gfx_unlock();
+}
+/* osRecvMesg, about to block */
+void xrc_gfx_swap_block(void) {
+    if (!s_swap_pending) return;
+    xu_lock_take(gfx_lock_game());
+    swap_run();
     xrc_gfx_unlock();
 }
 
@@ -276,25 +318,14 @@ void xrc_gfx_dp_taken(void) {
 /* DIVERGES: a task that comes while the BACK menu is open waits for it to
  * close (the game is frozen under the menu; settings_menu.c) */
 static int s_dp = 1;
+static void task_begin(int* split, int* n, unsigned* before);
+static void task_end(int split, unsigned before);
 void xrc_gfx_task(uint32_t task) {
     int split, n;
     unsigned before;
     s_dp = 1;
     if (!s_up) return;
-    n = gfx_lock_game();
-    while (xrc_menu_open()) {
-        xrc_gfx_unlock();
-        xhw_sleep_ms(10);
-        xrc_gfx_lock();
-    }
-    xu_lock_take(n);   /* the menu closed and the renderer is this thread's */
-    split = s_swapped && s_open_tasks < XRC_SWAP_TASKS;
-    if (s_swapped && s_open_tasks == XRC_SWAP_TASKS) {
-        s_open_tasks++;
-        f3d_split_frames(0);
-        xhw_logf("[GFX] %u tasks and no swap to their buffer: frames presented at every task's end", XRC_SWAP_TASKS);
-    }
-    before = f3d_presents();
+    task_begin(&split, &n, &before);
 #if defined(XRC_DLDUMP) && XRC_DLDUMP > 0
     dl_dump(task);
 #endif
@@ -307,6 +338,44 @@ void xrc_gfx_task(uint32_t task) {
     f3d_set_ucode(gfx_ucode_for_task(rd32(task + TK_UCODE_DATA), rd32(task + TK_UCODE_DATA_SIZE),
                                      rd32(task + TK_DATA_PTR)));
     f3d_run(rd32(task + TK_DATA_PTR), !split);
+    task_end(split, before);
+}
+
+/* osDpSetNextBuffer (ultra/sp.c): an RDP list the game wrote itself, with no RSP task (Killer Instinct Gold clears its screen so) */
+void xrc_gfx_dp_list(uint32_t list, uint32_t bytes) {
+    int split, n;
+    unsigned before;
+    if (!s_up) return;
+    task_begin(&split, &n, &before);
+    s_busy = 1;
+    s_breathe_ok = n == 0, s_breathe_t = xhw_time_us();
+    f3d_run_rdp(list, bytes, !split);
+    task_end(split, before);
+}
+
+/* the renderer taken for a task; the frame's state as the task finds it */
+static void task_begin(int* split_out, int* n_out, unsigned* before) {
+    int split, n = gfx_lock_game();
+    while (xrc_menu_open()) {
+        xrc_gfx_unlock();
+        xhw_sleep_ms(10);
+        xrc_gfx_lock();
+    }
+    xu_lock_take(n);   /* the menu closed and the renderer is this thread's */
+    swap_run();
+    split = s_swapped && s_open_tasks < XRC_SWAP_TASKS;
+    if (s_swapped && s_open_tasks == XRC_SWAP_TASKS) {
+        s_open_tasks++;
+        f3d_split_frames(0);
+        xhw_logf("[GFX] %u tasks and no swap to their buffer: frames presented at every task's end", XRC_SWAP_TASKS);
+    }
+    *before = f3d_presents();
+    *split_out = split;
+    *n_out = n;
+}
+
+/* a task's end: the renderer let go */
+static void task_end(int split, unsigned before) {
     s_busy = 0;
     s_breathe_ok = 0;
     s_task_retrace = xu_retrace();
@@ -324,6 +393,7 @@ void xrc_gfx_task(uint32_t task) {
 void xrc_gfx_inval(uint32_t addr, uint32_t len) {
     if (!s_up) return;
     xu_lock_take(gfx_lock_game());
+    swap_run();
     f3d_fb_inval(addr, len);
     xrc_gfx_unlock();
 }

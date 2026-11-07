@@ -110,6 +110,8 @@ def make(rom, bdir, base=None, learnt=None):
     # loader's (Rare's games): named on its own, a name the loader's copy has becomes <name>__2, left out of
     # the recompile and given a body that calls the runtime's (gen/xrc_alias.c, pipeline.py)
     aliases = {}
+    if '__osError' in {n for n, _w in ids.values()}:
+        aliases['__osError'] = 'xrc_osError'   # not on the recompiler's lists: the runtime's, gen/xrc_alias.c
     # a second copy a rule fits beside the one it named (Mario Tennis's two osStartThreads): <name>__2 too
     have = _runtime_ultra()
     for k, (n, why) in sorted(_N.twins.items()):
@@ -117,11 +119,23 @@ def make(rom, bdir, base=None, learnt=None):
             ids[k] = (f'{n}__2', why)
             aliases[f'{n}__2'] = n
     replaced = replaced | set(aliases)
-    code_keys = {k for seg in a.img.segments if seg.name.startswith(('code_', 'tlb_')) for k in a.funcs.get(seg.name, {})}
-    if code_keys:
-        ids2, _N2 = libultra.identify(a.img, {k: f for k, f in a.all_funcs().items() if k in code_keys})
+    # keyed by vram for the rules (they follow calls by address); a captured segment that shares its vram with
+    # the boot segment (Excitebike 64 decompresses itself over its loader) has longer keys in all_funcs, and the
+    # lookup by its plain ones found nothing: no libultra named, its own threads ran. Only with nothing named so
+    # far: a game's real overlays stay unnamed (N64RX_CODE_KEYS=0: as before)
+    code_funcs, code_key = {}, {}
+    ovl_map = a.overlays()
+    for seg in a.img.segments:
+        if seg.name.startswith(('code_', 'tlb_')):
+            for v, f in a.funcs.get(seg.name, {}).items():
+                k = a.key(seg, v, ovl_map)
+                if k < 1 << 32 or (not ids and os.environ.get('N64RX_CODE_KEYS', '1') != '0'):
+                    code_funcs[v], code_key[v] = f, k
+    if code_funcs:
+        ids2, _N2 = libultra.identify(a.img, code_funcs)
         taken = {n for n, _w in ids.values()}
-        for k, (n, why) in ids2.items():
+        for v, (n, why) in ids2.items():
+            k = code_key[v]
             if k in ids or k == a.entry:
                 continue
             if n not in taken:
@@ -132,6 +146,30 @@ def make(rom, bdir, base=None, learnt=None):
                 aliases[f'{n}__2'] = n
                 taken.add(f'{n}__2')
         replaced = replaced | set(aliases)
+        # The same bytes at another address of the same physical memory: Gauntlet Legends runs at 0xE0000000, its TLB's
+        # window on physical 0, and the capture holds its code there and through KSEG0. A rule names one copy, and the
+        # game's own osSetThreadPri then ran from the other, on the runtime's threads. N64RX_CODE_TWINS=0: as before
+        if os.environ.get('N64RX_CODE_TWINS', '1') != '0':
+            ids.update(_alias_twins(a, ids, have, aliases, ovl_map))
+            # the rules follow calls by address, so a copy of a function whose callee was named at the other window never
+            # fit (its osYieldThread, whose KSEG0 copy was not captured at all): each window of captured code on its own
+            windows = {}
+            for seg in a.img.segments:
+                if seg.name.startswith(('code_', 'tlb_')):
+                    for v, f in a.funcs.get(seg.name, {}).items():
+                        k = a.key(seg, v, ovl_map)
+                        if k < 1 << 32:
+                            windows.setdefault(v >> 29, {})[v] = f
+            named_at = {k >> 29 for k in ids if k < 1 << 32}
+            for w, fs in sorted(windows.items()):
+                if len(windows) < 2 or len(fs) < 8 or w not in named_at:
+                    continue
+                for v, (n, why) in libultra.identify(a.img, fs)[0].items():
+                    if v not in ids and n in have:
+                        alias = f'{n}__{v:08X}'
+                        ids[v] = (alias, why + ' (at this window of the same code)')
+                        aliases[alias] = n
+            replaced = replaced | set(aliases)
     # a game's own setjmp/longjmp (Mario Party's processes switch stacks with them): the runtime's,
     # which give each context a host thread of its own (xbox/src/rt/strand.c); pipeline.py turns each
     # call to setjmp into a host setjmp in the caller (XRC_SETJMP)
@@ -159,6 +197,19 @@ def make(rom, bdir, base=None, learnt=None):
     # register other than ra, a jump through a register with no table): the
     # runtime's interpreter runs it (xbox/src/rt/interp.c)
     interp = {x: nm[x] for x, f in a.all_funcs().items() if x in live and x != a.entry and f.bad.startswith('jr $')}
+    # a routine that switches stacks (the runtime's strands take the switch: interp.c XRC_STACK_SWITCH)
+    if os.environ.get('N64RX_STACK_SWITCH', '1') != '0':
+        interp.update({x: n for x, n in _stack_switchers(a, live, nm).items() if n not in replaced and n not in ignored and x != a.entry})
+    # a routine that puts its own label in ra and jumps with it: to the recompiler `jr ra` is a return, and the routine left
+    # at its first turn of the loop (Conker's collision walk). N64RX_RA_LABEL=0: recompiled, as before
+    if os.environ.get('N64RX_RA_LABEL', '1') != '0':
+        interp.update({x: n for x, n in _ra_labels(a, live, nm).items() if n not in replaced and n not in ignored and x != a.entry})
+    # a call target whose bytes in the ROM do not decode is not what runs there: the game loads its code over it when it boots (NBA Courtside's
+    # 0x80001F10, in an image it unpacks). Recompiled it returned at the bad word, with registers trashed; the interpreter reads what is in
+    # RDRAM then. N64RX_BAD_INTERP=0: recompiled, as before
+    if os.environ.get('N64RX_BAD_INTERP', '1') != '0':
+        interp.update({x: nm[x] for x, f in a.all_funcs().items()
+                       if x in live and x != a.entry and f.bad.startswith('invalid instruction') and nm[x] not in replaced and nm[x] not in ignored})
     lookups = set()   # jal targets the recompiler calls through the lookup (patches/recomp/0002)
     # code captured from RDRAM a page at a time, with pages between not captured (Mario Tennis's KUSEG
     # 0x50000000, 0x50002000, 0x50005000): a function whose walk runs out of its segment was recompiled
@@ -352,13 +403,6 @@ def _wants_8mb(a):
                     if any(n.op == 35 and n.rs == ins.rt and n.imm == 0 for n in near) and \
                             any(n.op == 43 and n.rs == ins.rt and n.imm == 0 for n in near):
                         return True
-                # osMemSize's second byte read and compared with 0x80 (0x00800000): a ROM hack's hook that uses
-                # the Expansion Pak's memory for its own code (WWF No Mercy Plus)
-                if ins.op == 36 and ins.imm == 0x319:
-                    near = [Ins(x, 0) for x in ws[max(0, i - 2):i + 4]]
-                    if any(n.op == 15 and n.rt == ins.rs and n.imm == 0x8000 for n in near) and \
-                            any(n.op == 9 and n.rs == 0 and n.imm == 0x80 for n in near):
-                        return True
                 if ins.op != 35 or ins.imm != 0x318:
                     continue
                 near = [Ins(x, 0) for x in ws[max(0, i - 6):i + 6]]
@@ -410,6 +454,89 @@ def _reloc_overlays(a, learnt):
     return keys, hooks
 
 
+def _alias_twins(a, ids, have, aliases, ovl_map):
+    """{key: (name, why)} for captured copies, at the same physical offset and with the same bytes, of a libultra function
+    named elsewhere; each onto the runtime's function, in `aliases`"""
+    from .analyze.mips import words
+    segs = [s for s in a.img.segments if s.name.startswith(('code_', 'tlb_'))]
+    copies = {}
+    for seg in segs:
+        for v, f in a.funcs.get(seg.name, {}).items():
+            copies.setdefault(v & 0x1FFFFFFF, []).append((seg, v, f))
+    all_segs = {s.name: s for s in a.img.segments}
+
+    def bytes_of(seg, f):
+        return words(a.img.rom, seg.rom + (f.start - seg.vram), (f.end - f.start) // 4)
+
+    out = {}
+    for name, fs in a.funcs.items():
+        seg0 = all_segs.get(name)
+        if seg0 is None:
+            continue
+        for v0, f0 in fs.items():
+            k0 = a.key(seg0, v0, ovl_map)
+            if k0 not in ids:
+                continue
+            n = ids[k0][0].split('__')[0]
+            if n not in have:
+                continue
+            ws0 = None
+            for seg, v, f in copies.get(v0 & 0x1FFFFFFF, ()):
+                k = a.key(seg, v, ovl_map)
+                if v == v0 or k in ids or k in out or k == a.entry or f.end - f.start != f0.end - f0.start:
+                    continue
+                ws0 = ws0 if ws0 is not None else bytes_of(seg0, f0)
+                if ws0 != bytes_of(seg, f):
+                    continue
+                alias = f'{n}__{v:08X}'
+                out[k] = (alias, f'the same bytes as {n} at {v0:08X}')
+                aliases[alias] = n
+    return out
+
+
+def _ra_labels(a, live, nm):
+    """{vram: name}: routines that build an address inside themselves in ra (lui ra, hi; addiu ra, ra, lo). Compilers use ra
+    as a scratch register too (`lui ra` alone is in 68 games of the library): only a label of its own makes it a jump"""
+    from .analyze.mips import words
+    lui, addiu = 15 << 10 | 31, 9 << 10 | 31 << 5 | 31
+    out = {}
+    for seg in a.img.segments:
+        for x, f in a.funcs.get(seg.name, {}).items():
+            if x not in live:
+                continue
+            ws = words(a.img.rom, seg.rom + (f.start - seg.vram), (f.end - f.start) // 4)
+            for w0, w1 in zip(ws, ws[1:]):
+                if w0 >> 16 == lui and w1 >> 16 == addiu:
+                    label = ((w0 & 0xFFFF) << 16) + ((w1 & 0xFFFF) ^ 0x8000) - 0x8000 & 0xFFFFFFFF
+                    if f.start <= label < f.end:
+                        out[x] = nm[x]
+                        break
+    return out
+
+
+def _stack_switchers(a, live, nm):
+    """{vram: name}: routines a recompiled C function cannot express because they leave its stack: sp loaded from memory
+    through another register, or stored through one by a routine that has no return (it goes on in the next context),
+    or stored with ra through the same register (an exit from below comes back to its caller: Mortal Kombat 4's). A stored
+    sp alone in a routine that returns is an ordinary pointer to its frame. N64RX_SP_ESCAPE=0: not that third."""
+    from .analyze.mips import words
+    out = {}
+    skip = {0, 26, 27, 29}   # sp itself, and the exception code's k0, k1: libultra's
+    for seg in a.img.segments:
+        for x, f in a.funcs.get(seg.name, {}).items():
+            if x not in live:
+                continue
+            ws = words(a.img.rom, seg.rom + (f.start - seg.vram), (f.end - f.start) // 4)
+            lw = any(w >> 26 == 35 and (w >> 16) & 31 == 29 and (w >> 21) & 31 not in skip for w in ws)
+            sw = any(w >> 26 == 43 and (w >> 16) & 31 == 29 and (w >> 21) & 31 not in skip for w in ws)
+            bases = {(w >> 21) & 31 for w in ws if w >> 26 == 43 and (w >> 16) & 31 == 29}
+            saved = os.environ.get('N64RX_SP_ESCAPE', '1') != '0' and any(
+                w >> 26 == 43 and (w >> 16) & 31 == 31 and (w >> 21) & 31 in bases - skip for w in ws)
+            if lw or (sw and 0x03E00008 not in ws) or saved:
+                out[x] = nm[x]
+    return out
+
+
 def _setjmp_longjmp(a):
     """{vram: 'n64_setjmp' | 'n64_longjmp'}: the libc pair by their shape (sw / lw of sp at 0(a0), ra at
     4(a0), s0-s7 at 8.., fp at 0x28; setjmp returns 0, longjmp returns arg1 or 1)"""
@@ -426,7 +553,37 @@ def _setjmp_longjmp(a):
                 if all(ws[i] == (op << 26) | (4 << 21) | (r << 16) | (4 * i) for i, r in enumerate(regs)):
                     out[x] = name
     if sorted(out.values()) != ['n64_longjmp', 'n64_setjmp']:   # one pair, or none
-        return {}
+        out = {}
+        if os.environ.get('N64RX_JB_SGI', '1') != '0':
+            # SGI's layout (Bomberman 64: saves.jb_sgi says so to the runtime): FCSR at 0x68 first, then ra, sp, fp, s0-s7
+            sgi = [(31, 0xC), (2, 0x68), (29, 8), (30, 0x34)] + [(16 + i, 0x14 + 4 * i) for i in range(8)]
+            for seg in a.img.segments:
+                for x, f in a.funcs.get(seg.name, {}).items():
+                    n = (f.end - f.start) // 4
+                    if not 14 <= n <= 64:
+                        continue
+                    ws = words(a.img.rom, seg.rom + (f.start - seg.vram), n)
+                    if ws[0] == 0x4442F800 and all(ws[1 + i] == (43 << 26) | (4 << 21) | (r << 16) | o for i, (r, o) in enumerate(sgi)):
+                        out[x] = 'n64_setjmp'
+                    if ws[0] == (35 << 26) | (4 << 21) | (2 << 16) | 0x68 and ws[1] == (35 << 26) | (4 << 21) | (31 << 16) | 0xC and \
+                            ws[2] == 0x44C2F800 and ws[3] == (35 << 26) | (4 << 21) | (29 << 16) | 8:
+                        out[x] = 'n64_longjmp'
+        if sorted(out.values()) != ['n64_longjmp', 'n64_setjmp'] and os.environ.get('N64RX_JB_WORD', '1') != '0':
+            # words only (NHL 99: saves.jb_word says so to the runtime): s0-s7 from 0, sp, fp, ra; a recompiled setjmp
+            # kept ra 0 (a recompiled jal sets none), and the game's longjmp went to address 0
+            out = {}
+            word = (16, 17, 18, 19, 20, 21, 22, 23, 29, 30, 31)
+            for seg in a.img.segments:
+                for x, f in a.funcs.get(seg.name, {}).items():
+                    n = (f.end - f.start) // 4
+                    if not 12 <= n <= 64:
+                        continue
+                    ws = words(a.img.rom, seg.rom + (f.start - seg.vram), n)
+                    for op, name in ((43, 'n64_setjmp'), (35, 'n64_longjmp')):
+                        if all(ws[i] == (op << 26) | (4 << 21) | (r << 16) | (4 * i) for i, r in enumerate(word)):
+                            out[x] = name
+        if sorted(out.values()) != ['n64_longjmp', 'n64_setjmp']:
+            return {}
     return out
 
 

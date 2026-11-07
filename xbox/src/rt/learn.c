@@ -268,7 +268,7 @@ static void save_rec(uint32_t base, uint32_t size, uint32_t flags, uint32_t (*wo
     uint8_t* buf = sbuf;
     char path[96], line[64];
     uint32_t i, sz = size | flags;
-    while (__sync_lock_test_and_set(&s_rec_busy, 1)) xhw_sleep_ms(0);
+    XHW_WAIT_WHILE(__sync_lock_test_and_set(&s_rec_busy, 1));
     if (size > CODE_BLOCK && (buf = (uint8_t*)malloc(8 + size)) == NULL) {
         __sync_lock_release(&s_rec_busy);
         return;
@@ -302,7 +302,7 @@ static void capture_locked(uint32_t vram);
 static void capture(uint32_t vram) {   /* one at a time: two threads' dumps would interleave on COM1 */
     static volatile long s_busy;
     if (!XRC_LEARN_CODE) return;
-    while (__sync_lock_test_and_set(&s_busy, 1)) xhw_sleep_ms(0);
+    XHW_WAIT_WHILE(__sync_lock_test_and_set(&s_busy, 1));
     capture_locked(vram);
     __sync_lock_release(&s_busy);
 }
@@ -410,7 +410,7 @@ void xrc_learn_recapture_n(uint32_t vram, uint32_t bytes) {
         if (s_done[i] == vram) return;
     if (s_n == 64) return;
     s_done[s_n++] = vram;
-    while (__sync_lock_test_and_set(&s_busy, 1)) xhw_sleep_ms(0);
+    XHW_WAIT_WHILE(__sync_lock_test_and_set(&s_busy, 1));
     /* from the function's own start to its last page's end, at one moment: learn.py makes it a version
      * rooted at that start alone (a group from the page's start made versions with starts it guessed) */
     v = vram & ~3u;
@@ -429,7 +429,7 @@ void xrc_learn_recapture(uint32_t vram) {
         if (s_done[i] == vp) return;
     if (s_n == 256) return;
     s_done[s_n++] = vp;
-    while (__sync_lock_test_and_set(&s_busy, 1)) xhw_sleep_ms(0);
+    XHW_WAIT_WHILE(__sync_lock_test_and_set(&s_busy, 1));
     if ((int32_t)vp >= 0) {
         char line[48];
         snprintf(line, sizeof line, "kuseg_versions %08x", (unsigned)vp);   /* other code at a mapped page */

@@ -146,6 +146,9 @@ static uint32_t tv_of_region(uint32_t r) {
     }
 }
 
+#ifndef XRC_IPL3_6106
+#define XRC_IPL3_6106 1
+#endif
 /* what the IPL3 and the boot ROM leave in low RDRAM (libultra's os globals) */
 static void boot_block(const xrom_info* info) {
     uint32_t i;
@@ -155,7 +158,10 @@ static void boot_block(const xrom_info* info) {
     wr32(0x80000304, 0);                 /* osRomType: cartridge */
     wr32(0x80000308, 0xB0000000u);       /* osRomBase */
     wr32(0x8000030C, 0);                 /* osResetType: cold */
-    wr32(0x80000310, xrc_game.cic ? xrc_game.cic : 6102);   /* osCicId: the chip's number (Conker, Banjo check it) */
+    /* osCicId: the chip's number (Conker, Banjo check it). The 6106's tail leaves 0x17D8 (6104) in IMEM, and Cruis'n World
+     * looks for the same here and in IMEM (xrc_mmio_imem0) */
+    wr32(0x80000310, xrc_game.cic == 6106u && XRC_IPL3_6106 ? 0x17D8u : xrc_game.cic ? xrc_game.cic : 6102);
+    if (xrc_game.cic == 6106u && XRC_IPL3_6106) xrc_mmio_imem0(0x17D8u);
     wr32(0x80000314, 0);                 /* osVersion */
     wr32(0x80000318, xrc_rdram_size);    /* osMemSize */
     for (i = 0; i < 64; i += 4) wr32(0x8000031C + i, 0);   /* osAppNMIBuffer */
@@ -203,6 +209,22 @@ static void ipl3_left(void) {
             y - x + d > (xrc_game.entrypoint & 0x1FFFFFFFu))
             continue;
         xu_rom_to_rdram(x, 0x80000000u + d, y - x);
+        /* The 6106's tail is scrambled: its copy loop xors each word with a key, and multiplies the key by 0x0260BCD5
+         * for the next (`xor t5, t5, t4`, the key's start the chip's own, the same in all three 6106 games of the
+         * library). Copied as it stands, Cruis'n World's copy protection read noise at 0xA0000164 and on, and stopped
+         * for ever. -DXRC_IPL3_6106=0: as it stands */
+        if (XRC_IPL3_6106) {
+            int scrambled = 0;
+            for (j = i + 4; j < i + 0x40 && j < sizeof ipl; j += 4)
+                if (be32(ipl + j) == 0x01AC6826u) scrambled = 1;
+            if (scrambled) {
+                uint32_t k = 0x3C421AAAu;
+                for (j = 0; j < y - x; j += 4) {
+                    wr32(0x80000000u + d + j, be32(ipl + x + j) ^ k);
+                    k *= 0x0260BCD5u;
+                }
+            }
+        }
         for (j = 0; j < 4; j++) xrc_ipl3_vec[j] = rd32(0x80000000u + j * 4);
         xhw_logf("[BOOT] IPL3's last part in RDRAM %03x..%03x (DMEM %03x..%03x)", (unsigned)d, (unsigned)(d + y - x),
                  (unsigned)x, (unsigned)y);
@@ -250,9 +272,17 @@ static void game(void) {
     /* DIVERGES: the 6105 boot chip's IPL3 leaves boot magic in RDRAM that
      * games check (OoT's CIC6105_SaveBootMagicValues reads 0x2FE1C0;
      * Donkey Kong 64's boot waits until it holds IPL3's own word at ROM
-     * 0x750). The word is copied from the ROM's IPL3; the second value
-     * (0x2FB1F4) is not known and stays 0. */
-    if (xrc_game.cic == 6105) xu_rom_to_rdram(0x750, 0x802FE1C0u, 4);
+     * 0x750). The words are copied from the ROM's IPL3. The second, at 0x2FB1F4,
+     * is its word at ROM 0x73C (Banjo-Tooie's boot compares both, keeps the result
+     * in a flag and goes on to call its overlays' unpatched stubs, a syscall each).
+     * -DXRC_CIC_WORD2=0: it stays 0 */
+#ifndef XRC_CIC_WORD2
+#define XRC_CIC_WORD2 1
+#endif
+    if (xrc_game.cic == 6105) {
+        xu_rom_to_rdram(0x750, 0x802FE1C0u, 4);
+        if (XRC_CIC_WORD2) xu_rom_to_rdram(0x73C, 0x802FB1F4u, 4);
+    }
     xhw_logf("[RECOMP] boot segment: %u KB from ROM 0x1000 to %08x", (unsigned)(boot >> 10),
              (unsigned)xrc_game.entrypoint);
 

@@ -53,6 +53,15 @@ typedef struct xhw_mutex xhw_mutex;
 xhw_mutex* xhw_mutex_create(void);   /* recursive */
 void xhw_mutex_lock(xhw_mutex* m);
 void xhw_mutex_unlock(xhw_mutex* m);
+/* A wait on a flag another thread clears. Sleep(0) gives the CPU only to the waiter's own level: with the holder on a lower
+ * one, preempted while it held the flag, the waiter spins for good (Conker: its level 10 thread waited for the TLB refill
+ * its level 8 main thread was in). A few yields, for the usual short hold, then 1 ms, which any level gets to use.
+ * -DXHW_WAIT_SLEEP=0: Sleep(0) only, as before */
+#ifndef XHW_WAIT_SLEEP
+#define XHW_WAIT_SLEEP 1
+#endif
+#define XHW_WAIT_WHILE(cond) do { unsigned n_ = 0; while (cond) xhw_sleep_ms(XHW_WAIT_SLEEP && n_++ >= 4 ? 1 : 0); } while (0)
+
 typedef struct xhw_event xhw_event;
 xhw_event* xhw_event_create(void);   /* auto-reset */
 void xhw_event_signal(xhw_event* e);

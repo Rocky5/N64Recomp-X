@@ -160,21 +160,6 @@ def _analyze_sdk(rom, entry, bss, bss_size, main, extra_segments):
                    f'main {main:08X}, {len(a.funcs["boot"])} functions')
     for seg in extra_segments:
         _add(a, seg, [seg.vram])
-    # code a ROM hack's entry hook copies into RAM: from the jals in the boot code and in itself that land on
-    # the start of a function there
-    for seg in F.hook_copies(rom, entry):
-        ends = {seg.vram}
-        for base, lo, n in ((boot.rom, boot.vram, boot.size), (seg.rom, seg.vram, seg.size)):
-            for o in range(0, n & ~3, 4):
-                w = int.from_bytes(rom[base + o:base + o + 4], 'big')
-                t = ((lo + o) & 0xF0000000) | ((w & 0x3FFFFFF) << 2)
-                if w >> 26 == 3 and seg.has(t):
-                    p = t - seg.vram + seg.rom
-                    if int.from_bytes(rom[p:p + 2], 'big') == 0x27BD or rom[p - 8:p - 4] == b'\x03\xe0\x00\x08':
-                        ends.add(t)
-        _add(a, seg, sorted(ends))
-        a.notes.append(f'{seg.name}: ROM {seg.rom:#x} at {seg.vram:08X}, {seg.size:#x} bytes (copied by the entry\'s '
-                       f'hook), {len(a.funcs[seg.name])} functions')
     while True:
         new = S.find(img, list(a.funcs.values()), len(rom))
         if not new:

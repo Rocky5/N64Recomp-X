@@ -194,7 +194,9 @@ docs/look/           baseline shots: the loading screen (xemu, STILL; the deep-s
   `f000 0f00 00f0 000f`; its place, its length and the entries that point
   at opcode 0's handler pick the ABI: `aspMain` (ABI1: table at +0x10, 16
   entries), the nead family (+0x10, 32 or 24 entries; variant flags from
-  which opcodes exist) or `n_aspMain` (+0x00, 16). `asp_hle_run` decodes
+  which opcodes exist) or `n_aspMain` (+0x00, 16; Rare's, Perfect Dark's: +0x10
+  behind two overlay records, opcode 0 a gain, 7 and 8 MP3, 14 a low-pass
+  filter). `asp_hle_run` decodes
   that ABI from then on; an unknown microcode is logged and plays silence.
   Nothing from any microcode is stored.
 

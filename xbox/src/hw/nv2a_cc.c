@@ -73,7 +73,8 @@
  *     the fields that run.
  *   - COMBINED in the first cycle (the previous pixel's result), NOISE, K4,
  *     K5 and the chroma-key CENTER/SCALE: approximated, flagged in
- *     CcProg.approximated / approx_why (nv2a_cc.h).
+ *     CcProg.approximated / approx_why (nv2a_cc.h). A K5 set to about 1 is not:
+ *     it reads as 1 (k5_one), 255/256 on the RDP.
  */
 #include <string.h>
 
@@ -173,6 +174,7 @@ typedef struct {
     Op rgb;     /* COMBINED in the rgb portion */
     Op a_rgb;   /* COMBINED_ALPHA in the rgb portion (rgb c) */
     Op a;       /* COMBINED in the alpha portion */
+    int k5_one; /* K5 is about 1 (cc_compile) */
 } Comb;
 
 static Op in_common(int v, int alpha, const Comb* cb) {
@@ -211,7 +213,7 @@ static Op rgb_in(int slot, int v, const Comb* cb) {
                 case 12: return op_reg(S_C1, CH_A);
                 case 13: return op_reg(S_V1, CH_RGB);                 /* LOD_FRACTION (V1.rgb) */
                 case 14: return op_reg(S_V1, CH_A);                   /* PRIM_LOD_FRAC (V1.a) */
-                case 15: return op_approx(OP_ZERO, CC_APPROX_K5);
+                case 15: return cb->k5_one ? OP_ONE : op_approx(OP_ZERO, CC_APPROX_K5);
                 default: return OP_ZERO;
             }
         default:
@@ -368,14 +370,14 @@ static uint32_t use_of_byte(uint32_t b) {
     }
 }
 
-void cc_compile(uint32_t cc0, uint32_t cc1, int two_cycle, int fog, CcProg* out) {
+void cc_compile(uint32_t cc0, uint32_t cc1, int two_cycle, int fog, int k5_one, CcProg* out) {
     Cyc cyc[2];
     Ops o0, o1;
     /* the first cycle compiled: COMBINED is the previous pixel's, approximated as 0 */
     const Op z0 = op_approx(OP_ZERO, CC_APPROX_COMBINED0);
-    const Comb first = { z0, z0, z0 };
+    const Comb first = { z0, z0, z0, k5_one };
     const Op r0 = { S_R0, CH_RGB, M_SID, K_COMB, 0 }, r0a = { S_R0, CH_A, M_SID, K_COMB, 0 };
-    const Comb second = { r0, r0a, r0a };
+    const Comb second = { r0, r0a, r0a, k5_one };
     int i;
 
     memset(out, 0, sizeof *out);
@@ -396,6 +398,7 @@ void cc_compile(uint32_t cc0, uint32_t cc1, int two_cycle, int fog, CcProg* out)
                 sub.rgb = o0.rgb[3];
                 sub.a = o0.a[3];
                 sub.a_rgb = o0.a[3];
+                sub.k5_one = k5_one;
                 if (sub.a_rgb.ch == CH_B) sub.a_rgb.ch = CH_RGB;   /* V1.b = V1.rgb (LOD_FRACTION) */
                 out->approx_why |= why_of(o0.rgb) | why_of(o0.a);
                 cycle_ops(&cyc[1], &sub, &o1);
