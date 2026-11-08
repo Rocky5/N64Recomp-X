@@ -50,6 +50,10 @@ jobs:
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "release $TAG exists: its files will be replaced"
+            # a draft has no tag yet: point it at this commit
+            if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ]; then
+              gh release edit "$TAG" --target "$GITHUB_SHA" --notes-file .github/release-notes.md
+            fi
           else
             gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "N64Recomp-X $TAG" \
               --notes-file .github/release-notes.md
@@ -62,7 +66,7 @@ jobs:
       matrix:
         include:
           - { os: windows-2022, name: windows-x64 }
-          - { os: macos-14, name: macos-arm64 }
+          - { os: macos-15, name: macos-arm64 }
           - { os: ubuntu-22.04, name: linux-x64 }   # the older glibc: the bundle runs on newer systems, not the reverse
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
@@ -73,6 +77,21 @@ jobs:
       PYTHONUTF8: "1"
       CSC_IDENTITY_AUTO_DISCOVERY: "false"   # unsigned (app/README.md "First launch")
     steps:
+      # the toolchain is staged, then copied into the unpacked app, then packed: ~14 GB free is not enough
+      - name: Free disk space (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      # nxdk's deep trees (pruned only after the copy) pass 260 characters under D:\a\N64Recomp-X\N64Recomp-X\app\stage
+      - name: Long paths (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force
+          git config --system core.longpaths true
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -127,7 +146,11 @@ jobs:
       # make-icon, stage-src (with the leak check), stage-toolchain (pack_toolchain.py), electron-builder
       - name: Package the app with its build tools (npm run dist)
         working-directory: app
-        run: npm run dist
+        # setup-python's 3.12, not whatever `py -3` finds first (3.15 on the Windows image)
+        run: |
+          export N64RX_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+          npm run dist
+          df -h . || true
 
       - name: Upload to release ${{ env.TAG }}
         run: |
