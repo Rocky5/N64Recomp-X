@@ -74,7 +74,7 @@ them are generated and gitignored.
 | OS | files in `app/dist/` |
 |---|---|
 | Windows x64 | `N64Recomp-X-<v>-win-x64.zip`: the unpacked app folder, the build tools in `resources/toolchain/` |
-| macOS arm64, x64 | `N64Recomp-X-<v>-mac-<arch>.zip` (the .app, the tools in `Contents/Resources/toolchain/`) and a `.dmg` |
+| macOS arm64 (Intel Macs are not built) | `N64Recomp-X-<v>-mac-arm64.zip` (the .app, the tools in `Contents/Resources/toolchain/`) and a `.dmg` |
 | Linux x64 | `N64Recomp-X-<v>-x86_64.AppImage` |
 
 The Windows zip is the one file to release. Measured on this machine
@@ -172,8 +172,12 @@ app\dist\win-unpacked\N64Recomp-X.exe
 
 ## Releasing
 
-`npm run dist` per OS, on a machine where `tools/xbox/setup.sh` has run; publish
-the zip (Windows), the mac zip / dmg and the AppImage. `toolchain.json` is only for
+`.github/workflows/release.yml` does it: `gh workflow run release.yml --ref main
+-f tag=v1-experimental` (or push a `v*` tag) runs `npm run dist` on Windows x64,
+macOS arm64 and Linux x64, uploads the zip, the mac zip / dmg and the AppImage
+to a draft GitHub Release, and publishes it (a pre-release by default) with
+`SHA256SUMS.txt` once all three pass; the notes are `.github/release-notes.md`.
+By hand: `npm run dist` per OS, on a machine where `tools/xbox/setup.sh` has run. `toolchain.json` is only for
 the no-tools build: fill it from each OS's `pack_toolchain.py` `.json` (the
 archives uploaded to a release the public can reach). Updates:
 `electron-updater` is wired but stays off until `build.publish` is set in

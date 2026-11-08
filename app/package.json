@@ -1,7 +1,7 @@
 {
   "name": "n64recomp-x",
   "productName": "N64Recomp-X",
-  "version": "0.1.0",
+  "version": "1.0.0-experimental",
   "description": "Drop your own N64 ROM, get a folder for the original Xbox.",
   "author": "TechProGabe",
   "license": "MIT",
@@ -84,15 +84,13 @@
         {
           "target": "zip",
           "arch": [
-            "arm64",
-            "x64"
+            "arm64"
           ]
         },
         {
           "target": "dmg",
           "arch": [
-            "arm64",
-            "x64"
+            "arm64"
           ]
         }
       ],

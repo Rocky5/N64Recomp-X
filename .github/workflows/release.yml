@@ -1,0 +1,164 @@
+# The desktop app (app/, docs/app.md) for every OS, published as a GitHub
+# Release: the full build (`npm run dist`, the build tools inside), so a user
+# downloads one file and builds with no network. Windows x64 (zip), macOS
+# arm64 (zip + dmg; Intel Macs are not built), Linux x64 (AppImage).
+#
+# Each OS job runs tools/xbox/setup.sh (as a user's `n64rx doctor --install`
+# does), packs the toolchain into the app and uploads its files straight to a
+# draft release (no Actions artifacts: each file is ~330 MB). When all three
+# pass, the release is published as a pre-release with SHA256SUMS.txt. A
+# failed OS leaves the draft; re-run the failed job and the release finishes.
+# No job ever has a game ROM (PLAN.md 4.6).
+#
+# Manual (free Actions minutes; macOS counts 10x on a private repository), or
+# on pushing a v* tag:
+#   gh workflow run release.yml --ref main -f tag=v1-experimental
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "release tag (created at the chosen ref if it does not exist)"
+        type: string
+        default: v1-experimental
+      prerelease:
+        description: "mark the release as a pre-release"
+        type: boolean
+        default: true
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Draft release ${{ env.TAG }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG exists: its files will be replaced"
+          else
+            gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "N64Recomp-X $TAG" \
+              --notes-file .github/release-notes.md
+          fi
+
+  app:
+    needs: draft
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-2022, name: windows-x64 }
+          - { os: macos-14, name: macos-arm64 }
+          - { os: ubuntu-22.04, name: linux-x64 }   # the older glibc: the bundle runs on newer systems, not the reverse
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUTF8: "1"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"   # unsigned (app/README.md "First launch")
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Toolchain locations
+        run: |
+          if [ "$RUNNER_OS" != Windows ]; then
+            echo "NXDK_DIR=$HOME/toolchain/nxdk" >> "$GITHUB_ENV"
+          fi
+          if [ "$RUNNER_OS" = Linux ]; then
+            echo "LLVM=$HOME/toolchain/llvm21" >> "$GITHUB_ENV"
+          fi
+
+      # the same key as toolchain.yml's pack job, so the two share the cache
+      - name: Toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/toolchain
+            C:/xdev/nxdk
+            build-host/recomp
+          key: toolchain-${{ runner.os }}-${{ matrix.name }}-${{ hashFiles('tools/xbox/setup.sh') }}-${{ hashFiles('.gitmodules') }}-${{ hashFiles('patches/recomp/*') }}
+
+      - name: Toolchain (tools/xbox/setup.sh)
+        run: bash tools/xbox/setup.sh
+
+      - name: Homebrew's LLVM 21 and lld on the PATH (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "LLVM=$(brew --prefix llvm@21)" >> "$GITHUB_ENV"
+          if brew --prefix lld@21 >/dev/null 2>&1; then echo "$(brew --prefix lld@21)/bin" >> "$GITHUB_PATH"; fi
+
+      - name: No ROM material
+        run: python tools/xbox/rom_leak_check.py
+
+      - name: App dependencies and tests
+        working-directory: app
+        run: |
+          npm ci
+          npm test
+
+      # make-icon, stage-src (with the leak check), stage-toolchain (pack_toolchain.py), electron-builder
+      - name: Package the app with its build tools (npm run dist)
+        working-directory: app
+        run: npm run dist
+
+      - name: Upload to release ${{ env.TAG }}
+        run: |
+          shopt -s nullglob
+          files=(app/dist/N64Recomp-X-*.zip app/dist/N64Recomp-X-*.dmg app/dist/N64Recomp-X-*.AppImage)
+          if [ ${#files[@]} -eq 0 ]; then echo "no packages in app/dist" >&2; ls -la app/dist; exit 1; fi
+          sums="SHA256SUMS-${{ matrix.name }}.txt"
+          python - "$sums" "${files[@]}" <<'EOF'
+          import hashlib, os, sys
+          with open(sys.argv[1], 'w', newline='\n') as out:
+              for f in sys.argv[2:]:
+                  h = hashlib.sha256()
+                  with open(f, 'rb') as fh:
+                      for b in iter(lambda: fh.read(1 << 20), b''):
+                          h.update(b)
+                  out.write(f'{h.hexdigest()}  {os.path.basename(f)}\n')
+                  print(f'{os.path.basename(f)}: {os.path.getsize(f) / 1e6:.0f} MB')
+          EOF
+          cat "$sums"
+          gh release upload "$TAG" "${files[@]}" "$sums" --clobber
+
+  publish:
+    needs: app
+    runs-on: ubuntu-24.04
+    steps:
+      - name: SHA256SUMS.txt and publish
+        run: |
+          mkdir sums && cd sums
+          gh release download "$TAG" --pattern 'SHA256SUMS-*.txt'
+          cat SHA256SUMS-*.txt | sort -k2 > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "$TAG" SHA256SUMS.txt --clobber
+          for f in SHA256SUMS-*.txt; do gh release delete-asset "$TAG" "$f" --yes; done
+          gh release edit "$TAG" --draft=false --prerelease=${{ inputs.prerelease != false }}
