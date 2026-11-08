@@ -6,7 +6,8 @@
 # Each OS job runs tools/xbox/setup.sh (as a user's `n64rx doctor --install`
 # does), packs the toolchain into the app and uploads its files straight to a
 # draft release (no Actions artifacts: each file is ~330 MB). When all three
-# pass, the release is published as a pre-release with SHA256SUMS.txt. A
+# pass, the release is published (a full release marked Latest, unless
+# -f prerelease=true) with SHA256SUMS.txt. A
 # failed OS leaves the draft; re-run the failed job and the release finishes.
 # No job ever has a game ROM (PLAN.md 4.6).
 #
@@ -23,9 +24,9 @@ on:
         type: string
         default: v1-experimental
       prerelease:
-        description: "mark the release as a pre-release"
+        description: "mark the release as a pre-release (default: a full release, shown as Latest)"
         type: boolean
-        default: true
+        default: false
   push:
     tags: ["v*"]
 
@@ -184,4 +185,8 @@ jobs:
           cat SHA256SUMS.txt
           gh release upload "$TAG" SHA256SUMS.txt --clobber
           for f in SHA256SUMS-*.txt; do gh release delete-asset "$TAG" "$f" --yes; done
-          gh release edit "$TAG" --draft=false --prerelease=${{ inputs.prerelease != false }}
+          if [ "${{ inputs.prerelease == true }}" = true ]; then
+            gh release edit "$TAG" --draft=false --prerelease
+          else
+            gh release edit "$TAG" --draft=false --prerelease=false --latest
+          fi

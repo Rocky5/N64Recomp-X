@@ -175,7 +175,8 @@ app\dist\win-unpacked\N64Recomp-X.exe
 `.github/workflows/release.yml` does it: `gh workflow run release.yml --ref main
 -f tag=v1-experimental` (or push a `v*` tag) runs `npm run dist` on Windows x64,
 macOS arm64 and Linux x64, uploads the zip, the mac zip / dmg and the AppImage
-to a draft GitHub Release, and publishes it (a pre-release by default) with
+to a draft GitHub Release, and publishes it (a full release marked Latest;
+`-f prerelease=true` for a pre-release) with
 `SHA256SUMS.txt` once all three pass; the notes are `.github/release-notes.md`.
 By hand: `npm run dist` per OS, on a machine where `tools/xbox/setup.sh` has run. `toolchain.json` is only for
 the no-tools build: fill it from each OS's `pack_toolchain.py` `.json` (the
