@@ -152,21 +152,32 @@ def make_key(os_, arch, nxdk_pin, recomp_pin):
 # --- file helpers -------------------------------------------------------------
 def copy_file(src, dst):
     dst.parent.mkdir(parents=True, exist_ok=True)
-    if src.is_symlink() and os.name != 'nt':
-        if dst.is_symlink() or dst.exists():
-            dst.unlink()
-        os.symlink(os.readlink(src), dst)
-    else:
-        shutil.copy2(src, dst)
+    # copied before (a symlink's target, then the name itself): brew's binaries are 0555, so replace, not overwrite
+    if dst.is_symlink() or dst.exists():
+        dst.unlink()
+    try:
+        if src.is_symlink() and os.name != 'nt':
+            os.symlink(os.readlink(src), dst)
+        else:
+            shutil.copy2(src, dst)
+    except OSError as e:
+        die(f'copying {src} -> {dst} ({len(str(dst))} characters): {e}')
 
 
-def copy_tree(src, dst, drop=(), keep_links=True):
-    """copy src's tree to dst, skipping any entry whose name matches a drop pattern"""
+def copy_tree(src, dst, drop=(), keep_links=True, prune=(), base=''):
+    """copy src's tree to dst, skipping any entry whose name matches a drop pattern, and any folder whose path
+    (base/relative to src, '/'-separated) matches a prune pattern of the same depth (NXDK_PRUNE), before its
+    files are copied: libcxx's tests alone pass Windows' 260 characters under a CI checkout's path"""
     n = 0
+
+    def pruned(rel, d):
+        r = pathlib.PurePosixPath(base, rel.as_posix(), d).as_posix()
+        return any(r.count('/') == p.count('/') and fnmatch.fnmatch(r, p) for p in prune)
+
     for dirpath, dirnames, filenames in os.walk(src):
         dp = pathlib.Path(dirpath)
-        dirnames[:] = [d for d in dirnames if not any(fnmatch.fnmatch(d, p) for p in drop)]
         rel = dp.relative_to(src)
+        dirnames[:] = [d for d in dirnames if not any(fnmatch.fnmatch(d, p) for p in drop) and not pruned(rel, d)]
         (dst / rel).mkdir(parents=True, exist_ok=True)
         for f in filenames:
             if any(fnmatch.fnmatch(f, p) for p in drop):
@@ -330,7 +341,7 @@ def gather_nxdk(stage, nxdk, lic):
     dest = stage / 'nxdk'
     say('nxdk', nxdk)
     for d in ('bin', 'lib', 'share'):
-        copy_tree(nxdk / d, dest / d, drop=NXDK_DROP)
+        copy_tree(nxdk / d, dest / d, drop=NXDK_DROP, prune=NXDK_PRUNE, base=d)
     for pat in NXDK_PRUNE:
         for p in dest.glob(pat):
             if p.is_dir():
