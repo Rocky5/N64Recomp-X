@@ -19,7 +19,8 @@ runs [Melee-X](https://github.com/TechProGabe/Melee-X),
 [OpenCrossing-Xbox](https://github.com/TechProGabe/OpenCrossing-Xbox) and
 [Wings64-X](https://github.com/TechProGabe/Wings64-X).
 
-**Status: in development, not released.** `n64rx` takes your ROM and
+**Status: experimental release, [`v1-experimental`](https://github.com/TechProGabe/N64Recomp-X/releases/latest)
+(1.0.0-experimental), still in active development.** `n64rx` takes your ROM and
 builds an XBE **from the ROM alone**: it finds the game's code, its
 segments and its libultra functions itself, with no decompilation and no
 per-game file needed.
@@ -33,7 +34,7 @@ real Xbox moves a game up:
   GoldenEye 007, Banjo-Kazooie, Ocarina of Time, Castlevania: Legacy of Darkness.
   (GoldenEye's and Banjo-Kazooie's rating comes from builds that used the
   console's learning rounds; built from the ROM alone they run slower for
-  now, and closing that gap comes before any release.)
+  now; closing that gap is the next step.)
 - **Experimental**, everything else: it may boot, run partly, or not at
   all. Across a whole library, all 246 games build today and 192
   present frames in xemu (sweep s16, with the dry boot), far fewer run well yet; what blocks the rest is tracked in
@@ -43,13 +44,17 @@ real Xbox moves a game up:
 
 ## Three steps
 
-1. Download the app for your computer (Windows
-   `N64Recomp-X-<version>-win-x64.zip`, macOS `.zip`, Linux `.AppImage`),
+1. Download the app for your computer from the
+   [latest release](https://github.com/TechProGabe/N64Recomp-X/releases/latest)
+   (Windows `N64Recomp-X-<version>-win-x64.zip`, macOS on Apple silicon
+   `.dmg` or `.zip`, Linux `.AppImage`),
    unzip it to a folder you own and start `N64Recomp-X.exe`: nothing to
    install and nothing more to download, the build tools are inside it.
    What it writes goes into an `N64Recomp-X Data` folder next to the app;
-   deleting the app's folder removes everything. (Not released yet: until
-   then, run it from a checkout or build the zip, [`app/README.md`](app/README.md).)
+   deleting the app's folder removes everything. The app is not signed
+   yet: on Windows choose More info, then Run anyway; on macOS right-click
+   the app and choose Open. (To build the app yourself, see
+   [`app/README.md`](app/README.md).)
 2. Drop your ROM on the window. It shows the game, its tier and its known
    problems. Choose an Xbox folder (XBE) or a disc image (ISO), press
    Build, and say where to save it: about 1 to 3 minutes.
