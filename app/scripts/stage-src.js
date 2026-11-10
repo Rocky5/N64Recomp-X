@@ -111,6 +111,22 @@ function main() {
   }
   // N64Recomp's source is not shipped: the toolchain bundle's prebuilt recompiler runs, its key
   // passed as N64RX_RECOMPILER_KEY (paths.runner). The submodule's pin is kept for the record.
+  // One file of it is: its reimplemented and ignored lists, which tools/xbox/recomp_scan64.py reads to
+  // skip the libultra functions the runtime replaces. `git ls-files` lists the submodule as one entry,
+  // so it was never staged, the scan skipped nothing, and every game built 64-bit (__osEnqueueAndYield's
+  // sd saves): WWF No Mercy Plus V3's XBE 5.3 MB, not 3.9 MB, and slower.
+  for (const f of ['tools/recomp/src/symbol_lists.cpp']) {
+    const src = path.join(ROOT, f);
+    if (!fs.existsSync(src)) {
+      console.error(`stage-src: ${f} is missing (git submodule update --init tools/recomp): builds would pick 64-bit registers.`);
+      process.exit(1);
+    }
+    const data = fs.readFileSync(src);
+    fs.mkdirSync(path.dirname(path.join(out, f)), { recursive: true });
+    fs.writeFileSync(path.join(out, f), data);
+    h.update(f + '\0' + crypto.createHash('sha256').update(data).digest('hex') + '\0');
+    bytes += data.length;
+  }
   let pin = null;
   try {
     pin = git(['rev-parse', 'HEAD'], path.join(ROOT, 'tools', 'recomp')).toString().trim();

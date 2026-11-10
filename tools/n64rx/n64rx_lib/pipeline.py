@@ -121,6 +121,9 @@ def cache_key(rom, pack, gpr=None, pin=None, data=None):
     `data`, the bytes N64Recomp reads when they are not the ROM's (learnt code
     appended, or decompressed code in place: learn._decompressed_code)"""
     extra = [hashlib.sha1(data).hexdigest()] if data is not None and data != rom.data else []
+    # the 64-bit scan's skip list (decide_gpr): an app that lacked it built 64-bit, and kept that build once it had it
+    if (ROOT / 'tools/recomp/src/symbol_lists.cpp').exists():
+        extra.append('symbol_lists')
     return hashlib.sha256(json.dumps([rom.sha1, pack.file_hash(), pin or engines.recompiler_pin(), GEN_VERSION,
                                       gpr or '', os.environ.get('N64RX_TRACE', ''), pack.rdram_mb, os.environ.get('N64RX_GUARD', '1'),
                                       os.environ.get('N64RX_RESTRICT', '0'), os.environ.get('N64RX_FR', '1'),
@@ -148,6 +151,8 @@ def decide_gpr(pack, rom, override, prog, data=None):
         return 64
     finally:
         sys.path.pop(0)
+    if r.get('no_skip_list'):   # tools/recomp/src/symbol_lists.cpp missing: the runtime's libultra counted too (most games' 64-bit saves)
+        prog.note("N64Recomp's symbol lists (tools/recomp/src/symbol_lists.cpp) not found: libultra counted, so this may build 64-bit")
     if r['kseg1']:
         prog.note(f"{len(r['kseg1'])} KSEG1 sites (see the log); the pack patches them")
     bits = 32 if not r['hits'] else 64

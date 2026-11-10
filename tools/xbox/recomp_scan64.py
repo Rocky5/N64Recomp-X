@@ -71,7 +71,7 @@ def scan(rom, syms):
                     imm = word & 0xFFFF
                     if 0xA000 <= imm <= 0xBFFF:
                         kseg1.append((f['name'], vram, imm))
-    return {'hits': hits, 'kseg1': kseg1, 'functions': nfunc}
+    return {'hits': hits, 'kseg1': kseg1, 'functions': nfunc, 'no_skip_list': not skip}
 
 
 def main():
