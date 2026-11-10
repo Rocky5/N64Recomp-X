@@ -345,6 +345,8 @@ typedef struct xhw_video_plan {
 void xhw_video_predict(xhw_video_plan* out);
 /* Screenshot requests (BACK, autopad SHOT); the renderer takes them at present. */
 void xhw_shot_request(int to_serial);
+/* every shot request so far (BACK + WHITE, an autopad SHOT): rt/gfx.c's XRC_DLDUMP_SHOT starts its dump at the first */
+unsigned xhw_shot_requests(void);
 int xhw_shot_take(void);             /* 0 none, 1 BMP to E:, 2 [FBDUMP] to COM1 */
 int xhw_running_in_xemu(void);
 

@@ -192,6 +192,12 @@ uint32_t xrom_xbe_section(const uint8_t* hdr, uint32_t len, const char* name, ui
 #ifndef XHW_ROM_IN_XBE
 #define XHW_ROM_IN_XBE 1   /* 0: ignore $ROM, read a ROM beside default.xbe only */
 #endif
+/* DIVERGES (testing): a ROM for the page cache is read only as far as its header, its size and header checked, and its
+ * SHA-1 not computed: about 9 s less at each boot of a 65 MB ROM on the console. Only for a ROM known to be the right
+ * one. Default 0: the whole ROM hashed and checked */
+#ifndef XHW_ROM_NOHASH
+#define XHW_ROM_NOHASH 0
+#endif
 
 /* PLAN.md 3.5: resident up to this many MB (0: the page cache for every
  * ROM, a test of the cache on a small one), the page cache over it */
@@ -507,6 +513,7 @@ static void stream_check(HANDLE h, uint32_t size, xsha1_ctx* sha) {
         xsha1_update(sha, buf, got);
         done += got;
         xhw_splash_progress((float)done / (float)size);
+        if (XHW_ROM_NOHASH) break;   /* the header is checked: the rest not read */
     }
     free(buf);
 }
@@ -584,9 +591,15 @@ const uint8_t* xhw_rom_load_verified(const xrom_target* target, xrom_info* out) 
         xsha1_final(&sha, info->sha1);
         t1 = xhw_time_us();
         xhw_splash_progress(1.0f);
-        xhw_logf("[ROM] %u KB streamed and hashed in %u ms, nothing kept: the page cache (over %u MB)",
-                 (unsigned)(size >> 10), (unsigned)((t1 - t0) / 1000), (unsigned)XRC_ROM_RESIDENT_MB);
-        hash_verdict();
+        if (XHW_ROM_NOHASH) {
+            xhw_logf("[ROM] header checked in %u ms, SHA-1 not checked (XHW_ROM_NOHASH): the page cache (over %u MB)",
+                     (unsigned)((t1 - t0) / 1000), (unsigned)XRC_ROM_RESIDENT_MB);
+            xhw_splash_rom(NULL, NULL, 1);
+        } else {
+            xhw_logf("[ROM] %u KB streamed and hashed in %u ms, nothing kept: the page cache (over %u MB)",
+                     (unsigned)(size >> 10), (unsigned)((t1 - t0) / 1000), (unsigned)XRC_ROM_RESIDENT_MB);
+            hash_verdict();
+        }
         /* the handle stays open: the cache's fills read from it */
         if (!xhw_romcache_start(h, s_inside ? raw : 0, size, info->order, cache_cap()))
             xhw_fatal("Out of memory", "No room for the ROM's page cache.");

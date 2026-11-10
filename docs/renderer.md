@@ -206,6 +206,12 @@ Added 2026-10-18 (the `e7ad98f` console round):
 - RGBA at 4 or 8 bits (no such format) reads through the palette when the
   TLUT is on, as intensity when it is off (`XGFX_RGBA_LOWBIT`; Banjo's
   START screen).
+- IA and I at 4 or 8 bits read through the palette too when the TLUT is on,
+  as the RDP takes any 4- or 8-bit texel as an index then
+  (`XGFX_TLUT_ANYFMT`, 2026-11-07; host test `tlut_ia8`). WWF No Mercy's
+  title is 50 IA8 tiles over an RGBA16 palette: read as IA8 it was a black
+  logo on white (the maintainer's console, gold); through the palette it
+  matches the PC recomp's title in the host replay and in xemu.
 
 Added 2026-10-18:
 - an axis whose mask is 0 clamps whatever its clamp bit (the RDP has no

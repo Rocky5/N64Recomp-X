@@ -6,7 +6,9 @@
 
 #include <stddef.h>
 
-enum { XRC_WS_OFF = 0, XRC_WS_ON = 1, XRC_WS_AUTO = 2, XRC_WS_STRETCH = 3 };
+enum { XRC_WS_OFF = 0, XRC_WS_ON = 1, XRC_WS_AUTO = 2, XRC_WS_STRETCH = 3, XRC_WS_FORCE = 4 };
+/* 16:9 shows the 3D past the 4:3 edges (hor+) only for a game that culls for it (its pack's cull_patch, its games/patches
+ * file), the 4:3 picture between bars otherwise; FORCE: 16:9 with hor+ for any game (f3d_interp.c) */
 #define XRC_PORTS 4
 /* what a controller holds (the BACK menu's Paks page); AUTO: a Controller
  * Pak that becomes a Rumble Pak if the game probes for one first */

@@ -15,7 +15,7 @@
 
 #define XROMC_CHUNK (64u * 1024u)
 #define XROMC_SHIFT 16
-#define XROMC_MAX_CHUNKS 1024u   /* 64 MB, the biggest N64 ROM */
+#define XROMC_MAX_CHUNKS 2048u   /* 128 MB: the biggest N64 ROM is 64 MB, a ROM hack's can pass it (5 KB more) */
 
 typedef struct xromc_ops {
     /* make [p, p + n) usable memory (n = one chunk); 1 ok */

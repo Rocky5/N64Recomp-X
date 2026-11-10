@@ -505,7 +505,7 @@ def write_patch_c(pack, gen):
     rows = _patch_rows(pack)
     src = pack.dir / 'patch.c'
     out = gen / 'xrc_patch.c'
-    if not rows or not src.exists():
+    if not src.exists():   # (romonly.py keeps a file of the runtime's per-ROM hooks alone, with no XRC_PATCH in it)
         out.unlink(missing_ok=True)
         return 0
     text = src.read_text(encoding='utf-8')
@@ -1006,6 +1006,8 @@ def build(rom_path, out=None, engine="auto", video="auto", fast=False, gpr=None,
     prog.step(f'Compiling for the Xbox ({nfiles} generated files + the runtime{", fast" if fast else ", ThinLTO"})')
     flags = ['-DXRC_GPR32=1'] if bits == 32 else []
     flags += saves.cflags(pack, rom.data)   # libultra globals the runtime's saves keep (saves.py)
+    if (pack.raw.get('video') or {}).get('cull_patch'):   # the pack culls for widescreen: Wide 3D's Auto is hor+ (f3d_interp.c)
+        flags += ['-DXGFX_GAME_HORPLUS=1']
     recomp_bytes = recomp_rom.read_bytes()
     segs = ainfo['analysis'].img.segments if ainfo else ()
     exc = saves.exception_copy(recomp_bytes, segs)       # the __osException the runtime runs on a TLB miss

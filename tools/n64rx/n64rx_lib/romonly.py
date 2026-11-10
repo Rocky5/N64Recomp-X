@@ -251,6 +251,18 @@ def make(rom, bdir, base=None, learnt=None):
         x = int(t[5:] if t.startswith('func_') else t, 16)
         if x in nm and nm[x] not in replaced:
             interp[x] = nm[x]
+    # a ROM hack's few doubleword copies (ld/sd through a register, nothing else 64-bit in the build): those functions
+    # interpreted, whose registers are 64 bits for the call (interp.c), so the rest of the game keeps 32-bit registers.
+    # WWF No Mercy Plus V3 copies a struct with two ld/sd pairs in one menu function, and the whole build went 64-bit
+    # (mid 20s fps on the console where the retail game holds 30). N64RX_LDSD_INTERP=1: for every ROM; 0: never;
+    # unset: only a ROM with an entry hook
+    ldsd = os.environ.get('N64RX_LDSD_INTERP', '')
+    if ldsd == '1' or (ldsd != '0' and any(s.name.startswith('hook_') for s in a.img.segments)):
+        copies = _ldsd_only(a, live, nm, replaced, ignored, interp)
+        if copies:
+            interp.update(copies)
+            a.notes.append(f'{len(copies)} functions whose only 64-bit instructions are ld/sd copies, interpreted for 32-bit '
+                           f'registers: {", ".join(sorted(copies.values())[:4])}')
     # what N64Recomp would crash on (a jump table outside the function's segment) or refuse one run at a
     # time (a jal to no function): interpreted up front (N64RX_RECOMP_PRECHECK=0: left to the recompiler)
     if os.environ.get('N64RX_RECOMP_PRECHECK', '1') != '0':
@@ -290,6 +302,7 @@ def make(rom, bdir, base=None, learnt=None):
     # DIVERGES), built in place of the recompiled or interpreted ones (pipeline.py write_patch_c; Donkey
     # Kong 64's audio loop). N64RX_PATCHES=0: not used
     patched = {}
+    hooks_only = False
     pfile = ROOT / 'games' / 'patches' / f'{rom.code}.{rom.sha1[:12]}.c'
     if os.environ.get('N64RX_PATCHES', '1') != '0' and pfile.is_file():
         ptext = pfile.read_text(encoding='utf-8')
@@ -298,9 +311,12 @@ def make(rom, bdir, base=None, learnt=None):
             if x in nm and nm[x] not in replaced:
                 patched[x] = nm[x]
                 interp.pop(x, None)
-        if patched:
+        # a file with only the runtime's per-ROM hooks (xrc_game_vi, xrc_game_rcp_sender_us: weak in the runtime) is
+        # built too: stock WWF No Mercy's has no function of its own
+        hooks_only = bool(re.search(r'^\w[\w \t*]*\bxrc_game_\w+\s*\(', ptext, re.M))
+        if patched or hooks_only:
             (pdir / 'patch.c').write_text(ptext, encoding='utf-8', newline='\n')
-    if not patched:
+    if not patched and not hooks_only:
         (pdir / 'patch.c').unlink(missing_ok=True)
     (pdir / 'patch.txt').write_text(''.join(f'{n} 0x{x:08X}\n' for x, n in sorted(patched.items())), encoding='utf-8')
     ignored |= set(patched.values())
@@ -402,6 +418,13 @@ def _wants_8mb(a):
                     near = [Ins(x, 0) for x in ws[i + 1:i + 16]]
                     if any(n.op == 35 and n.rs == ins.rt and n.imm == 0 for n in near) and \
                             any(n.op == 43 and n.rs == ins.rt and n.imm == 0 for n in near):
+                        return True
+                # osMemSize's second byte read and compared with 0x80 (0x00800000): a ROM hack's hook that uses
+                # the Expansion Pak's memory for its own code (WWF No Mercy Plus)
+                if ins.op == 36 and ins.imm == 0x319:
+                    near = [Ins(x, 0) for x in ws[max(0, i - 2):i + 4]]
+                    if any(n.op == 15 and n.rt == ins.rs and n.imm == 0x8000 for n in near) and \
+                            any(n.op == 9 and n.rs == 0 and n.imm == 0x80 for n in near):
                         return True
                 if ins.op != 35 or ins.imm != 0x318:
                     continue
@@ -512,6 +535,44 @@ def _ra_labels(a, live, nm):
                         out[x] = nm[x]
                         break
     return out
+
+
+_LDSD_MAX = 8   # at most this many such functions (a game that uses doublewords everywhere stays 64-bit)
+
+
+def _op64(w):
+    """the 64-bit-ISA instruction a word is (recomp_scan64.py's set), or None"""
+    op, rs, funct = w >> 26, (w >> 21) & 31, w & 63
+    if op == 55:
+        return 'ld'
+    if op == 63:
+        return 'sd'
+    if op in (24, 25, 26, 27, 39, 44, 45, 52, 60):   # daddi, daddiu, ldl, ldr, lwu, sdl, sdr, lld, scd
+        return 'other'
+    if op == 0 and funct in (20, 22, 23, 28, 29, 30, 31, 44, 45, 46, 47, 56, 58, 59, 60, 62, 63):
+        return 'other'   # dsllv .. dsra32, dmult .. ddivu, dadd .. dsubu
+    if op == 17 and (rs in (1, 5, 21) or (rs in (16, 17) and funct in (8, 9, 10, 11, 37))):
+        return 'other'   # dmfc1, dmtc1, the .l conversions
+    return None
+
+
+def _ldsd_only(a, live, nm, replaced, ignored, interp):
+    """{key: name} of the live, recompiled functions with 64-bit instructions, when every one of them is ld or sd
+    and there are few; {} otherwise"""
+    from .analyze.mips import words
+    ovl = a.overlays()
+    out = {}
+    for seg in a.img.segments:
+        for v, f in a.funcs.get(seg.name, {}).items():
+            x = a.key(seg, v, ovl)
+            if x not in live or x == a.entry or x in interp or nm[x] in replaced or nm[x] in ignored:
+                continue
+            kinds = {_op64(w) for w in words(a.img.rom, seg.rom + (f.start - seg.vram), (f.end - f.start) // 4)} - {None}
+            if 'other' in kinds:
+                return {}
+            if kinds:
+                out[x] = nm[x]
+    return out if len(out) <= _LDSD_MAX else {}
 
 
 def _stack_switchers(a, live, nm):

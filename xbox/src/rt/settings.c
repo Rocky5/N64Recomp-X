@@ -9,7 +9,7 @@
  * rewritten whole.
  *
  *   [video]   output = auto|480i|480p|720p   progressive = 0|1
- *             widescreen = auto|on|off|stretch   texture_filter = n64|sharp
+ *             widescreen = auto|on|off|stretch|force   texture_filter = n64|sharp
  *             fps = 0|1   video_confirmed = <mode>
  *   [audio]   volume = 0..100
  *   [input]   rumble = 0|1
@@ -45,7 +45,7 @@
 XrcSettings g_xrc_settings;
 
 static const char* const k_out[] = { "auto", "480i", "480p", "720p", "1080i" };
-static const char* const k_ws[] = { "off", "on", "auto", "stretch" };
+static const char* const k_ws[] = { "off", "on", "auto", "stretch", "force" };
 static const char* const k_filter[] = { "n64", "sharp" };
 static const char* const k_pak[] = { "auto", "controller", "rumble", "none" };
 
@@ -82,7 +82,7 @@ static int controls_ok(int in, int n) {
 }
 
 const char* xrc_settings_output_name(int o) { return o >= 0 && o < 5 ? k_out[o] : "auto"; }
-const char* xrc_settings_widescreen_name(int w) { return w >= 0 && w < 4 ? k_ws[w] : "auto"; }
+const char* xrc_settings_widescreen_name(int w) { return w >= 0 && w < 5 ? k_ws[w] : "auto"; }
 const char* xrc_settings_pak_name(int p) { return p >= 0 && p < 4 ? k_pak[p] : "auto"; }
 
 void xrc_settings_defaults(XrcSettings* s) {
@@ -145,7 +145,7 @@ int xrc_settings_parse(XrcSettings* s, char* text) {
                     s->output = pick(v, k_out, 5, XHW_OUT_AUTO);
                     if (s->output >= XHW_OUT_COUNT) s->output = XHW_OUT_720P;
                 } else if (!strcmp(k, "progressive")) s->progressive = atoi(v) != 0;
-                else if (!strcmp(k, "widescreen")) s->widescreen = pick(v, k_ws, 4, XRC_WS_AUTO);
+                else if (!strcmp(k, "widescreen")) s->widescreen = pick(v, k_ws, 5, XRC_WS_AUTO);
                 else if (!strcmp(k, "texture_filter")) s->texture_filter = pick(v, k_filter, 2, 0);
                 else if (!strcmp(k, "fps")) s->fps = atoi(v) != 0;
                 else if (!strcmp(k, "video_confirmed"))

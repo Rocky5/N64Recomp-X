@@ -442,7 +442,9 @@ unsigned xhw_present_count(void) { return s_presents; }
 /* ---- screenshots ---- */
 static volatile LONG s_shot;
 
-void xhw_shot_request(int to_serial) { InterlockedExchange(&s_shot, to_serial ? 2 : 1); }
+static volatile LONG s_shot_reqs;
+void xhw_shot_request(int to_serial) { InterlockedExchange(&s_shot, to_serial ? 2 : 1); InterlockedIncrement(&s_shot_reqs); }
+unsigned xhw_shot_requests(void) { return (unsigned)s_shot_reqs; }
 int xhw_shot_take(void) { return (int)InterlockedExchange(&s_shot, 0); }
 
 int xhw_running_in_xemu(void) {

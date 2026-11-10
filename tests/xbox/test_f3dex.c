@@ -1066,6 +1066,35 @@ static void test_tlut_offset(void) {
     CHECK(s_tex_px0 == 0xFFFF0000u, "tlut offset: texel 0 is %08x (want the palette's red)", s_tex_px0);
 }
 
+/* An IA8 tile with the TLUT on reads its texels as palette indices, as the
+ * RDP does for any 4- or 8-bit format (XGFX_TLUT_ANYFMT): WWF No Mercy's
+ * title is IA8 tiles over an RGBA16 palette. Read as IA8, index 1 would be
+ * near-black and nearly transparent (0x11111111) */
+#define TEXIA_AT 0x3B000u
+static void test_tlut_ia8(void) {
+    GfxUcode u = uc_of("RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.");
+    unsigned i;
+    for (i = 0; i < 64; i++) put8(TEXIA_AT + i, 1);   /* 8x8 IA8, every texel 1 */
+    put16(TEXIA_AT + 64, 0x07C1); put16(TEXIA_AT + 66, 0xF801);   /* the palette after it: 1 = red */
+    s_pc = DL_AT;
+    head_ex2();
+    cmd(0xE3000000u | (0x0Eu << 8) | 2u, 2u << 14);                    /* SETOTHERMODE_H: TEXTLUT RGBA16 */
+    cmd(0xFD000000u | (2u << 21) | (1u << 19) | 0u, TEXIA_AT);          /* SETTIMG width 1 */
+    cmd(0xF5000000u | (2u << 21) | (1u << 19) | 256u, 7u << 24);        /* SETTILE 7 at TMEM 256 */
+    cmd(0xF0000000u | (64u << 14) | (0u << 2), (7u << 24) | ((64u + 1u) << 14));   /* LOADTLUT SL 64, SH 65 */
+    cmd(0xFD000000u | (3u << 21) | (1u << 19) | (8u - 1u), TEXIA_AT);   /* SETTIMG IA8 width 8 */
+    cmd(0xF5000000u | (3u << 21) | (1u << 19) | (1u << 9), 7u << 24);   /* SETTILE 7: line 1 */
+    cmd(0xF4000000u, (7u << 24) | (28u << 12) | 28u);                  /* LOADTILE 8x8 */
+    cmd(0xF5000000u | (3u << 21) | (1u << 19) | (1u << 9), 0);         /* SETTILE 0: IA8 */
+    cmd(0xF2000000u, (28u << 12) | 28u);
+    cmd(0xE4000000u | (64u << 12) | 64u, 0);
+    cmd(0xE1000000u, 0);
+    cmd(0xF1000000u, (1u << 26) | (1u << 10));
+    cmd(0xDF000000u, 0);
+    run(&u);
+    CHECK(s_tex_px0 == 0xFFFF0000u, "tlut ia8: texel 0 is %08x (want the palette's red)", s_tex_px0);
+}
+
 /* S2DEX2's G_BG_COPY (XGFX_S2DEX_BG): a 16x8 RGBA16 image into the frame
  * at 10,20, drawn as one chunk's quad (Ocarina of Time's pre-rendered
  * backgrounds); a 96-wide image comes out in two chunks */
@@ -1376,6 +1405,7 @@ int main(void) {
     test_tex_recheck();
     test_rdp_tri();
     test_tlut_offset();
+    test_tlut_ia8();
     test_s2dex_bg();
     test_s2dex_obj();
     test_s2dex_tlut();

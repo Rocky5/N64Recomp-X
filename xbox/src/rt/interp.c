@@ -786,10 +786,20 @@ static void run(uint8_t* rdram, recomp_context* ctx, uint32_t entry, int learnin
             continue;
         }
 #ifdef XRC_INTERP_TRACE_FROM
-        {   /* diagnosis: from that pc on, every call and register jump with sp and ra */
+        {   /* diagnosis: from that pc on, every call and register jump with sp and ra. -DXRC_INTERP_TRACE_SPAN=<bytes>:
+             * how far past that pc a branch starts it (0x400); -DXRC_INTERP_TRACE_THREAD=1: only the thread (its context)
+             * that started it, so other threads' calls do not use up the 20000 lines */
+#ifndef XRC_INTERP_TRACE_SPAN
+#define XRC_INTERP_TRACE_SPAN 0x400u
+#endif
+#ifndef XRC_INTERP_TRACE_THREAD
+#define XRC_INTERP_TRACE_THREAD 0
+#endif
             static int s_tr = -1;
-            if (s_tr < 0 && pc + 4 >= (uint32_t)(XRC_INTERP_TRACE_FROM) && pc <= (uint32_t)(XRC_INTERP_TRACE_FROM) + 0x400u) s_tr = 20000;
-            if (s_tr > 0 && (br.link || br.jreg)) {
+            static recomp_context* s_tr_ctx;
+            if (s_tr < 0 && pc + 4 >= (uint32_t)(XRC_INTERP_TRACE_FROM) && pc <= (uint32_t)(XRC_INTERP_TRACE_FROM) + (uint32_t)(XRC_INTERP_TRACE_SPAN))
+                s_tr = 20000, s_tr_ctx = ctx;
+            if (s_tr > 0 && (br.link || br.jreg) && (!XRC_INTERP_TRACE_THREAD || ctx == s_tr_ctx)) {
                 s_tr--;
                 xhw_logf("[ITRACE] %08x %s %08x sp %08x ra %08x frames %d%s", (unsigned)pc, br.link ? "call" : "jr",
                          (unsigned)br.target, (unsigned)st.r[29], (unsigned)st.r[31], st.nframes,

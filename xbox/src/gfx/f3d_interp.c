@@ -101,6 +101,19 @@
 #ifndef XGFX_TEX_MEMO
 #define XGFX_TEX_MEMO 1        /* per-frame (load address, tile key) -> texture memo */
 #endif
+/* G_LOADTLUT reads the palette as words of the image, and a palette loaded again unchanged keeps the palette hash and the
+ * draw state: WWF No Mercy's wrestlers load the same 256-entry palettes over and over, read a halfword at a time (a tenth of
+ * its display-list time on the host), and each load had every paletted bind hash 256 entries again. The same TMEM.
+ * -DXGFX_TLUT_WORDS=0: as before */
+#ifndef XGFX_TLUT_WORDS
+#define XGFX_TLUT_WORDS 1
+#endif
+/* the texture change check's hashes in four lanes (the multiplies overlap): a texture up to XGFX_TEX_FULLHASH_MAX bytes is
+ * hashed whole at each first bind in a frame, a sixth of No Mercy's display-list time on the host with one lane. Other
+ * values (a cache key only: compared with themselves). -DXGFX_HASH_LANES=0: one lane (two for the whole hash), as before */
+#ifndef XGFX_HASH_LANES
+#define XGFX_HASH_LANES 1
+#endif
 #ifndef XGFX_LOADTILE32
 #define XGFX_LOADTILE32 1      /* LOADTILE into a 32-bit tile: a row is twice its line (both banks) */
 #endif
@@ -145,6 +158,9 @@
 #endif
 #ifndef XGFX_RGBA_LOWBIT
 #define XGFX_RGBA_LOWBIT 1     /* RGBA at 4 or 8 bits: through the palette (TLUT on) or as I4/I8 */
+#endif
+#ifndef XGFX_TLUT_ANYFMT
+#define XGFX_TLUT_ANYFMT 1     /* IA and I at 4 or 8 bits read through the palette when the TLUT is on, as CI (WWF No Mercy's title) */
 #endif
 #ifndef XGFX_TILE_ROWHASH
 #define XGFX_TILE_ROWHASH 1    /* a LOADTILE's change check hashes every row, not the first and last */
@@ -617,6 +633,28 @@ static float s_xoff;            /* this draw state: the anchor's shift in frameb
 
 void f3d_set_widescreen(int on) { s_ws_req = on; }
 
+/* Hor+ draws past the 4:3 edges only what the game itself did not cull as off screen: without a culling patch, the AKI
+ * wrestling games (WWF No Mercy, WrestleMania 2000, WCW/nWo Revenge, Virtual Pro-Wrestling) drew their ropes and turnbuckle
+ * pads into the bars over black, and no pack has one yet (games/README.md cull_patch). Hor+ is used only for a game that
+ * culls for it (its pack's cull_patch, -DXGFX_GAME_HORPLUS=1 from n64rx, or its games/patches file's xrc_game_horplus
+ * returning 1), or for any game with Widescreen set to Force (settings.h XRC_WS_FORCE); otherwise 16:9 shows the 4:3
+ * picture between bars. -DXGFX_W3D_DEFAULT=1: hor+ for every game, as before */
+#ifndef XGFX_GAME_HORPLUS
+#define XGFX_GAME_HORPLUS -1
+#endif
+#ifndef XGFX_W3D_DEFAULT
+#define XGFX_W3D_DEFAULT 0
+#endif
+__attribute__((weak)) int xrc_game_horplus(void) { return XGFX_GAME_HORPLUS; }
+static volatile int s_w3d;   /* 1: Widescreen Force (hor+ for any game) */
+void f3d_set_wide3d(int mode) { s_w3d = mode; }
+int f3d_game_wide3d(void) {
+    static int s_g = -2;
+    if (s_g == -2) s_g = xrc_game_horplus();
+    return s_g > 0 || (s_g < 0 && XGFX_W3D_DEFAULT);
+}
+static int game_horplus(void) { return s_w3d == 1 || (s_w3d == 0 && f3d_game_wide3d()); }
+
 static void map_setup(void) {
     float aspect, shown;
     int wide = s_ws_req;
@@ -637,7 +675,7 @@ static void map_setup(void) {
     s_cx = (float)(int)(((float)s_out.fb_w - s_cw) * 0.5f + 0.5f);
     s_cy = 0.0f;
     /* DIVERGES: hor+ (the title stays in its fitted box) */
-    s_hp = wide && XGFX_HORPLUS && !s_title && s_cw < (float)s_out.fb_w - 1.0f;
+    s_hp = wide && XGFX_HORPLUS && !s_title && s_cw < (float)s_out.fb_w - 1.0f && game_horplus();
     s_wx0 = s_hp ? 0.0f : s_cx;
     s_wx1 = s_hp ? (float)s_out.fb_w : s_cx + s_cw;
     s_rej_kx = s_hp ? (s_wx1 - s_wx0) / s_cw : 1.0f;
@@ -851,6 +889,24 @@ static uint32_t s_frame_no = 1;
 #endif
 static uint32_t full_hash(const uint8_t* p, uint32_t bytes) {
     uint32_t h = 2166136261u, g = 0x811C9DC5u ^ bytes, i, w, v;
+    if (XGFX_HASH_LANES) {   /* four lanes, sixteen bytes a step */
+        uint32_t a = 2166136261u, b = 0x811C9DC5u ^ bytes, c = 0x01000193u, d = 0x9E3779B9u, x, y;
+        for (i = 0; i + 16 <= bytes; i += 16) {
+            memcpy(&w, p + i, 4);
+            memcpy(&v, p + i + 4, 4);
+            memcpy(&x, p + i + 8, 4);
+            memcpy(&y, p + i + 12, 4);
+            a = (a ^ w) * 16777619u;
+            b = (b ^ v) * 16777619u;
+            c = (c ^ x) * 16777619u;
+            d = (d ^ y) * 16777619u;
+        }
+        for (; i + 4 <= bytes; i += 4) {
+            memcpy(&w, p + i, 4);
+            a = (a ^ w) * 16777619u;
+        }
+        return (a ^ (b * 0x9E3779B1u) ^ (c * 0x85EBCA77u) ^ (d * 0xC2B2AE3Du) ^ bytes) | 1u;
+    }
     for (i = 0; i + 8 <= bytes; i += 8) {   /* two lanes, eight bytes a step (the multiplies overlap) */
         memcpy(&w, p + i, 4);
         memcpy(&v, p + i + 4, 4);
@@ -865,6 +921,24 @@ static uint32_t full_hash(const uint8_t* p, uint32_t bytes) {
 }
 static uint32_t sample_hash(const uint8_t* p, uint32_t bytes) {
     uint32_t h = 2166136261u, step = bytes > XGFX_TEX_FULLHASH_MAX ? bytes / 16 : 4, i, w;
+    if (XGFX_HASH_LANES && step == 4) {   /* every word: four lanes */
+        uint32_t a = 2166136261u, b = 0x811C9DC5u, c = 0x01000193u, d = 0x9E3779B9u, v, x, y;
+        for (i = 0; i + 16 <= bytes; i += 16) {
+            memcpy(&w, p + i, 4);
+            memcpy(&v, p + i + 4, 4);
+            memcpy(&x, p + i + 8, 4);
+            memcpy(&y, p + i + 12, 4);
+            a = (a ^ w) * 16777619u;
+            b = (b ^ v) * 16777619u;
+            c = (c ^ x) * 16777619u;
+            d = (d ^ y) * 16777619u;
+        }
+        for (; i + 4 <= bytes; i += 4) {
+            memcpy(&w, p + i, 4);
+            a = (a ^ w) * 16777619u;
+        }
+        return (a ^ (b * 0x9E3779B1u) ^ (c * 0x85EBCA77u) ^ (d * 0xC2B2AE3Du)) ^ bytes;
+    }
     for (i = 0; i + 4 <= bytes; i += step) {
         memcpy(&w, p + (i & ~3u), 4);
         h ^= w;
@@ -1016,8 +1090,16 @@ static TexEntry* texture_make(int tidx) {
     if (wrap && bytes > sizeof s_raw && bytes <= (1u << 20)) raw = s_raw_big = (uint8_t*)malloc(bytes);
     if (!raw || (raw == s_raw && bytes > sizeof s_raw)) { tex_miss("too big", tidx); return NULL; }
     key = t->fmt | t->siz << 3 | (w - 1) << 5 | (h - 1) << 15 | (uint32_t)(line & 0xFF) << 24 | (uint32_t)(ld->dxt != 0) << 31;
+    /* The RDP takes a 4- or 8-bit texel as a palette index whenever the TLUT
+     * is on, whatever the tile's format says. WWF No Mercy draws its title
+     * as IA8 tiles with an RGBA16 TLUT loaded first: read as IA8, the
+     * picture's index 0xFF (black in its palette) was white and its logo
+     * black on a white screen (the console; the host replay of its title
+     * task). -DXGFX_TLUT_ANYFMT=0: CI (and RGBA at 4 or 8 bits) only, as before */
     pal = t->fmt == F3D_G_IM_FMT_CI ||
-          (XGFX_RGBA_LOWBIT && t->fmt == F3D_G_IM_FMT_RGBA && t->siz <= F3D_G_IM_SIZ_8b && f3d_omh_text_lut(R.omh));
+          (XGFX_RGBA_LOWBIT && t->fmt == F3D_G_IM_FMT_RGBA && t->siz <= F3D_G_IM_SIZ_8b && f3d_omh_text_lut(R.omh)) ||
+          (XGFX_TLUT_ANYFMT && (t->fmt == F3D_G_IM_FMT_IA || t->fmt == F3D_G_IM_FMT_I) && t->siz <= F3D_G_IM_SIZ_8b &&
+           f3d_omh_text_lut(R.omh));
     if (pal) {   /* the palette is part of the picture: in the key (equality only) */
         unsigned n = t->siz == F3D_G_IM_SIZ_4b ? 16u : 256u, b = t->siz == F3D_G_IM_SIZ_4b ? t->palette * 16u : 0u;
         uint32_t th = f3d_omh_text_lut(R.omh);
@@ -3569,7 +3651,34 @@ static void run_dl(const uint32_t* pc) {
                     src += (((uint32_t)tl * R.timg_w + sl) << R.timg_siz) >> 1;
                     count = (uint16_t)(count >= sl ? count - sl : 0);
                 }
-                for (at -= 256, i = 0; i <= count && at + i < 256; i++) R.tlut[at + i] = rd16(src + 2 * i);
+                at -= 256;
+                if (XGFX_TLUT_WORDS) {   /* the image's words, and the palette's hash kept when nothing changed */
+                    unsigned n = count + 1u < 256u - at ? count + 1u : 256u - at, chg = 0;
+                    uint32_t p = src & 0x1FFFFFFFu;
+                    if (!(p & 3u) && p + 2u * n + 2u <= xrc_rdram_size) {
+                        const uint32_t* q = (const uint32_t*)xu_host(src);
+                        uint16_t* d = &R.tlut[at];
+                        for (i = 0; i + 1 < n; i += 2) {
+                            uint32_t w = q[i >> 1];
+                            chg |= (uint32_t)(d[i] ^ (uint16_t)(w >> 16)) | (uint32_t)(d[i + 1] ^ (uint16_t)w);
+                            d[i] = (uint16_t)(w >> 16), d[i + 1] = (uint16_t)w;
+                        }
+                        if (i < n) {
+                            uint16_t v = (uint16_t)(q[i >> 1] >> 16);
+                            chg |= (uint32_t)(d[i] ^ v);
+                            d[i] = v;
+                        }
+                    } else {
+                        for (i = 0; i < n; i++) {
+                            uint16_t v = (uint16_t)rd16(src + 2 * i);
+                            chg |= (uint32_t)(R.tlut[at + i] ^ v);
+                            R.tlut[at + i] = v;
+                        }
+                    }
+                    if (!chg) break;   /* the same palette again: TMEM as it was, nothing to redo */
+                } else {
+                    for (i = 0; i <= count && at + i < 256; i++) R.tlut[at + i] = rd16(src + 2 * i);
+                }
                 s_tlut_gen++;
                 DIRTY();
                 break;

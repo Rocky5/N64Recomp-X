@@ -27,6 +27,18 @@ LOOKUP_JAL = os.environ.get('N64RX_LOOKUP_JAL', '1') != '0'
 # function at that address the recompiler bound the call to it, whatever RDRAM held (Fighter's Destiny's boot code ran
 # one overlay's function with another's loaded, and wrote through a ROM offset). N64RX_OVL_LOOKUP=0: bound, as before
 OVL_LOOKUP = os.environ.get('N64RX_OVL_LOOKUP', '1') != '0'
+# In a ROM with an entry hook (a ROM hack, funcs.hook_copies), a `j` out of a function to where no function starts in its
+# own segment is a hook: the hack's code in a gap of the segment, which jumps back into the middle of the function. WWF No
+# Mercy Plus V3 stores a pointer at 0x804000F0 from 0x800430C0 (a gap in the boot segment, reached from 0x80038240 and back
+# to 0x80038134); recompiled, the jump was a tail call, the store never ran and an overlay wrote through 0xFFFF8864. The
+# interpreter runs such a function and follows the jumps in RDRAM. N64RX_HOOK_J=0: recompiled, as before
+HOOK_J = os.environ.get('N64RX_HOOK_J', '1') != '0'
+# In such a ROM, a `j` out of a function after a lui/addiu (or ori) that built an address in the rest of the function: a
+# call that returns through that register, not a tail call. WWF No Mercy Plus V3's Create-a-Wrestler menu, 0x80450D34, sets
+# $fp to 0x80450DB0 (just past the j, where the analysis ended the function) and jumps to 0x804500C4, which ends `move $ra, $fp; jr $ra`; recompiled, the function returned there
+# without its epilogue, 0x2A0 bytes down the stack, and its caller returned to a float (0xBDBAF3A3). The interpreter runs
+# such a function. N64RX_HOOK_JRET=0: recompiled, as before
+HOOK_JRET = os.environ.get('N64RX_HOOK_JRET', '1') != '0'
 # captured code's jump tables in KUSEG pages, and its callees in pages, no capture holds: asked for
 # (N64RX_KUSEG_WANT=0: not)
 KUSEG_WANT = os.environ.get('N64RX_KUSEG_WANT', '1') != '0'
@@ -565,6 +577,38 @@ def _table_elsewhere(a, rom, t, f):
     return False
 
 
+def _hook_jumps_back(rom, seg, t, starts, memo, limit=4096):
+    """the hack's code a jal lands on at t (inside `seg`, the code its entry hook copies) can `j` out of `seg` to where no
+    function starts: back into the middle of its caller, as a hook does instead of returning. A flood over its
+    instructions: branches and jumps inside `seg` are followed, a `jr` or a jump to a known start ends a path"""
+    import struct
+    from .mips import Ins
+    if t in memo:
+        return memo[t]
+    seen, todo, back = set(), [t], False
+    while todo and not back and len(seen) < limit:
+        v = todo.pop()
+        while seg.has(v) and v not in seen and len(seen) < limit:
+            seen.add(v)
+            o = seg.rom + (v - seg.vram)
+            if o < 0 or o + 4 > len(rom):
+                break
+            ins = Ins(struct.unpack('>I', rom[o:o + 4])[0], v)
+            if ins.is_j:
+                if seg.has(ins.target):
+                    todo.append(ins.target)
+                elif ins.target not in starts:
+                    back = True
+                break
+            if ins.is_jr:
+                break
+            if ins.is_branch and not ins.is_link_branch:
+                todo.append(ins.branch_target)
+            v += 4
+    memo[t] = back
+    return back
+
+
 def recomp_hazards(a: Analysis, live, nm, replaced, lookups=None):
     """live functions N64Recomp would crash on or refuse one run at a time:
     a jump table it reads outside the function's own segment (it takes the
@@ -583,6 +627,9 @@ def recomp_hazards(a: Analysis, live, nm, replaced, lookups=None):
     rom = a.img.rom
     starts = {x for fs in a.funcs.values() for x in fs}   # vram: N64Recomp finds a jal's function in every section
     ovl = a.overlays()
+    hooked = HOOK_J and any(s.name.startswith('hook_') for s in a.img.segments)   # a ROM hack's entry hook (funcs.hook_copies)
+    hook_segs = [s for s in a.img.segments if s.name.startswith('hook_')]
+    jumps_back = {}   # _hook_jumps_back's answers, by address
     out = {}
     for seg in a.img.segments:
         for v, f in a.funcs.get(seg.name, {}).items():
@@ -593,8 +640,29 @@ def recomp_hazards(a: Analysis, live, nm, replaced, lookups=None):
             off = seg.rom + (f.start - seg.vram)
             ws = words(rom, off, n)
             why, want = None, None
+            his, rets = {}, set()   # HOOK_JRET: registers a lui set, and those holding an address in the function
             for i, w in enumerate(ws):
                 ins = Ins(w, f.start + 4 * i)
+                if hooked and HOOK_JRET:
+                    if ins.is_j and rets and not f.start <= ins.target < f.end:
+                        why = f'j {ins.target:08X}: a call that returns through a register (a hook)'
+                        break
+                    if ins.op == 15:   # lui
+                        his[ins.rt] = ins.imm << 16
+                    elif ins.op in (9, 13) and ins.rs in his and ins.rs == ins.rt:   # addiu, ori
+                        v = (his.pop(ins.rs) + ins.simm if ins.op == 9 else his.pop(ins.rs) | ins.imm) & 0xFFFFFFFF
+                        if ins.pc < v < max(f.end, ins.pc + 0x40):   # the analysis may end the function at the j
+                            rets.add(ins.rt)
+                # a jal into the hack's own code where no function starts: its code may jump back into the caller instead of
+                # returning (WWF No Mercy Plus V3's standing special, 0x804921E0, from 0x8012A2BC: `j 0x8012A470`); called through
+                # the lookup, the safety net ran the rest of the caller and then the caller again, and the interpreter met the
+                # word at 0xC4 (the console). The interpreter runs the caller and follows it
+                # A function found there (the analysis's, or learnt from the console) may still jump back: the shop's call
+                # of 0x80471664, learnt as a function, did, and the interpreter met the word at 0x69 (the console)
+                hseg = next((s for s in hook_segs if s.has(ins.target)), None) if hooked and ins.is_jal else None
+                if hseg is not None and (ins.target not in starts or _hook_jumps_back(rom, hseg, ins.target, starts, jumps_back)):
+                    why = f'jal {ins.target:08X}: into the hack\'s code, which jumps back into its caller (a hook)'
+                    break
                 if (OVL_LOOKUP and LOOKUP_JAL and lookups is not None and ins.is_jal and ins.target in starts and
                         ins.target not in a.funcs.get(seg.name, {}) and
                         any(s.name in ovl and s.has(ins.target) for s in a.img.segments)):
@@ -629,6 +697,16 @@ def recomp_hazards(a: Analysis, live, nm, replaced, lookups=None):
                     break
                 if ins.op == 16 and ins.rs in (0, 4) and ins.rd != 12:   # mfc0/mtc0: N64Recomp takes Status only
                     why = f'{"mfc0" if ins.rs == 0 else "mtc0"} of cop0 register {ins.rd}'
+                    break
+                if hooked and ins.is_j and seg.has(ins.target) and not f.start <= ins.target < f.end and ins.target not in starts:
+                    why = f'j {ins.target:08X}: no function there (a hook)'
+                    break
+                # a `j` from the game's code into the hack's copied code is a hook too, even where a function was found there:
+                # the shop's 0x801465C4 jumps to 0x80454700, which jumps back to 0x801465C8; recompiled as a tail call, the
+                # interpreter resumed the shop's function on the wrong stack (sp 0x38 off, a return to 0x69 on the console)
+                if (hooked and ins.is_j and seg not in hook_segs and
+                        any(s.has(ins.target) for s in hook_segs)):
+                    why = f'j {ins.target:08X}: into the hack\'s code (a hook)'
                     break
                 if (ins.is_branch and not ins.is_link_branch) or ins.is_j:
                     t = ins.target if ins.is_j else ins.branch_target

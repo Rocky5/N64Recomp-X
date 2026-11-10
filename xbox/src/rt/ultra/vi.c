@@ -27,6 +27,9 @@ void xrc_video_vi(unsigned retrace);
 __attribute__((weak)) void xrc_gfx_swap(uint32_t fb) { (void)fb; }
 __attribute__((weak)) void xrc_gfx_swap_block(void) {}
 __attribute__((weak)) void xrc_gfx_vi(unsigned retrace) { (void)retrace; }
+/* a ROM's own work at each retrace (games/patches/<code>.<sha1>.c may define it): what a ROM hack hooked into
+ * libultra's VI manager, which the runtime replaces (__osViMgrMain never runs here). Weak: nothing */
+__attribute__((weak)) void xrc_game_vi(unsigned retrace) { (void)retrace; }
 
 #ifndef XRC_VI_RESERVE
 #define XRC_VI_RESERVE 2
@@ -126,6 +129,7 @@ static void vi_thread(void* arg) {
         if (!XRC_MENU_VI_FIRST) xrc_menu_vi(s_retrace);
         xrc_video_vi(s_retrace);   /* the video-mode prompt: A, or the timeout (../video.c) */
         xrc_gfx_vi(s_retrace);     /* a frame that waited too long for its swap (../gfx.c) */
+        xrc_game_vi(s_retrace);    /* the ROM's own (games/patches) */
 #ifdef XRC_PEEK
 #ifndef XRC_PEEK_EVERY
 #define XRC_PEEK_EVERY 30   /* retraces between peeks; with 1, only when the first word changes */

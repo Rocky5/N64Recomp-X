@@ -152,6 +152,7 @@ int xu_rcp_flush(void* mine) { (void)mine; return 0; }
 int xu_rcp_flush_recv(void* mine) { (void)mine; return 0; }
 void xu_rcp_senders_out(void* who) { (void)who; }
 int xu_rcp_dp_wait(void* mine, uint32_t key) { (void)mine, (void)key; return 0; }
+int xu_rcp_sender_sleeps(void* me) { (void)me; return 0; }
 void xu_sp_held(void* me) { (void)me; }
 void* xu_task_thr(void) { return NULL; }
 void xu_vi_start(void) {}

@@ -259,6 +259,14 @@ def apply(a, learnt, rom_len):
         else:   # where overlays share the address, the one the newest DMA put there
             pairs.append((x, next((d for d in reversed(learnt.dmas) if d[1] <= x < d[1] + d[2]), None), False))
     for x, d, nodma in pairs:
+        # in a ROM hack's copied code (funcs.hook_copies) a learnt address is where the game's code jumps in, not a
+        # function: made one, a jal to it was a call, and the interpreter ran it as a run of its own, which jumped back
+        # into its caller and ran the caller's epilogue (WWF No Mercy Plus V3's corner finisher, 0x804921E0 from
+        # 0x8012A2BC: the caller then returned to 0). Left to the interpreter in line. N64RX_LEARN_HOOK=1: learnt
+        if (os.environ.get('N64RX_LEARN_HOOK', '0') != '1' and
+                any(s.name.startswith('hook_') and s.has(x) for s in a.img.segments)):
+            notes.append(f'learnt {x:08X}: in the hack\'s copied code, where it jumps in (skipped)')
+            continue
         if nodma:   # the CPU put its code there: a segment only where it is the one code at that address
             holders = [s for s in a.img.segments if s.has(x)]
             seg = holders[0] if len(holders) == 1 else None

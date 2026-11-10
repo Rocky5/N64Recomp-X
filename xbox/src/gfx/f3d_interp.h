@@ -26,6 +26,9 @@ int f3d_last_fullsync(void);   /* the last f3d_run's list had a G_RDPFULLSYNC */
 void f3d_set_ucode(const GfxUcode* uc);
 /* hor+ on or off (the settings' Widescreen row), taken at the next frame */
 void f3d_set_widescreen(int on);
+/* 1: hor+ for any game (settings.h XRC_WS_FORCE); 0: only for a game that culls for it, which f3d_game_wide3d says */
+void f3d_set_wide3d(int mode);
+int f3d_game_wide3d(void);
 /* Level load (the game reuses its heap): drop every cached texture. */
 void f3d_tex_reset(void);
 /* Screen fades (patches/026): 1 keeps the picture presented last under every

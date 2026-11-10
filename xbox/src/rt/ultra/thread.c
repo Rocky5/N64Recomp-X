@@ -421,6 +421,7 @@ static void sleep_on(Thr* me, uint32_t key) {
     {
         int out = xu_rcp_flush(me);
         out += xu_rcp_dp_wait(me, key);
+        out += xu_rcp_sender_sleeps(me);   /* the dones held for it as the sender (sp.c XRC_RCP_SENDER_BLOCKED) */
         if (out && !waiter_first(me, key)) return;
     }
     me->wait = key;
@@ -1205,11 +1206,54 @@ ULTRA(osJamMesg) {
     RET(xu_send(ARG(0), ARG(1), (int)ARG(2) == OS_MESG_BLOCK, 1));
 }
 
+/* diagnosis, -DXRC_TIMELINE (with XRC_TL_Q1..XRC_TL_Q3, the queues; XRC_TL_FROM, the first retrace; XRC_TL_N, the
+ * lines): each take from those queues as [TL] with its wait and the retraces it spanned, beside gfx.c's task starts and
+ * ends, in microseconds of one clock: where a frame's time goes between a game's threads (WWF No Mercy's graphics thread
+ * waits for two retraces, then for its tasks, then for the game's next frame) */
+#ifdef XRC_TIMELINE
+#ifndef XRC_TL_Q1
+#define XRC_TL_Q1 0u
+#endif
+#ifndef XRC_TL_Q2
+#define XRC_TL_Q2 0u
+#endif
+#ifndef XRC_TL_Q3
+#define XRC_TL_Q3 0u
+#endif
+#ifndef XRC_TL_FROM
+#define XRC_TL_FROM 0u
+#endif
+#ifndef XRC_TL_N
+#define XRC_TL_N 4000u
+#endif
+static volatile unsigned s_tl_n;
+int xrc_timeline_watch(uint32_t mq) {
+    if (s_tl_n >= (unsigned)(XRC_TL_N) || xu_retrace() < (unsigned)(XRC_TL_FROM)) return 0;
+    return mq && (mq == (uint32_t)(XRC_TL_Q1) || mq == (uint32_t)(XRC_TL_Q2) || mq == (uint32_t)(XRC_TL_Q3));
+}
+void xrc_timeline_recv(uint32_t mq, uint32_t msg, uint64_t t0, unsigned r0) {
+    uint64_t t1 = xhw_time_us();
+    if (s_tl_n++ >= (unsigned)(XRC_TL_N)) return;
+    xhw_logf("[TL] %u recv %08x msg %08x waited %u us, retrace %u..%u", (unsigned)t1, (unsigned)mq, (unsigned)msg,
+             (unsigned)(t1 - t0), r0, xu_retrace());
+}
+void xrc_timeline_task(int end) {
+    if (s_tl_n >= (unsigned)(XRC_TL_N) || xu_retrace() < (unsigned)(XRC_TL_FROM)) return;
+    s_tl_n++;
+    xhw_logf("[TL] %u task %s, retrace %u", (unsigned)xhw_time_us(), end ? "end" : "start", xu_retrace());
+}
+#endif
+
 ULTRA(osRecvMesg) {
     uint32_t mq = ARG(0), out = ARG(1);
     int block = (int)ARG(2) == OS_MESG_BLOCK;
     Thr* me = block ? self() : NULL;
     int32_t valid, first, count;
+#ifdef XRC_TIMELINE
+    uint64_t tl_t0 = xrc_timeline_watch(mq) ? xhw_time_us() : 0;
+    unsigned tl_r0 = xu_retrace();
+    uint32_t tl_msg = 0;
+#endif
     (void)rdram;
     xu_sp_held(me ? me : tls_thr());
 #ifdef XRC_WATCH_RECV
@@ -1260,7 +1304,13 @@ ULTRA(osRecvMesg) {
 #endif
     wake_first(mq | 1);
     if (valid > 1) wake_first(mq);   /* (messages left, and a waiter a send did not reach: one taken by a thread that never blocked) */
+#ifdef XRC_TIMELINE
+    tl_msg = rd32(rd32(mq + MQ_MSG) + 4 * (uint32_t)first);
+#endif
     xu_unlock();
+#ifdef XRC_TIMELINE
+    if (tl_t0) xrc_timeline_recv(mq, tl_msg, tl_t0, tl_r0);
+#endif
     token_yield(tls_thr());
     RET(0);
 }

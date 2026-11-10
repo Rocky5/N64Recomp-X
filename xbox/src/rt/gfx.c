@@ -31,7 +31,8 @@ void xrc_gfx_boot(void) {
     s_up = 1;
     xgfx_set_fps_overlay(g_xrc_settings.fps);
     xgfx_set_tex_filter(g_xrc_settings.texture_filter ? 2 : 0);   /* settings: 0 N64, 1 sharp; xgfx: 2 sharp */
-    f3d_set_widescreen(g_xrc_settings.widescreen == XRC_WS_ON ||
+    f3d_set_wide3d(g_xrc_settings.widescreen == XRC_WS_FORCE);
+    f3d_set_widescreen(g_xrc_settings.widescreen == XRC_WS_ON || g_xrc_settings.widescreen == XRC_WS_FORCE ||
                        (g_xrc_settings.widescreen == XRC_WS_AUTO && (xhw_video()->height >= 720 || xhw_video_widescreen_set())));
 }
 
@@ -170,7 +171,12 @@ static void dl_dump(uint32_t task) {
     static uint32_t* s_hash;
     uint32_t words[17], np = xrc_rdram_size / 4096u;
     unsigned i, n = 0;
-    if (s_done >= XRC_DLDUMP_N || xu_retrace() < (unsigned)XRC_DLDUMP) return;
+    if (s_done >= XRC_DLDUMP_N) return;
+#if defined(XRC_DLDUMP_SHOT) && XRC_DLDUMP_SHOT   /* -DXRC_DLDUMP_SHOT=1: from the first screenshot request (BACK + WHITE) on, not a retrace */
+    if (!xhw_shot_requests()) return;
+#else
+    if (xu_retrace() < (unsigned)XRC_DLDUMP) return;
+#endif
     if (!s_hash && !(s_hash = (uint32_t*)malloc(np * sizeof *s_hash))) return;
     for (i = 0; i < 16; i++) words[i] = rd32(task + i * 4);
     words[16] = xrc_rdram_size;
@@ -325,6 +331,9 @@ void xrc_gfx_task(uint32_t task) {
     unsigned before;
     s_dp = 1;
     if (!s_up) return;
+#ifdef XRC_TIMELINE
+    { void xrc_timeline_task(int end); xrc_timeline_task(0); }   /* ultra/thread.c */
+#endif
     task_begin(&split, &n, &before);
 #if defined(XRC_DLDUMP) && XRC_DLDUMP > 0
     dl_dump(task);
@@ -339,6 +348,9 @@ void xrc_gfx_task(uint32_t task) {
                                      rd32(task + TK_DATA_PTR)));
     f3d_run(rd32(task + TK_DATA_PTR), !split);
     task_end(split, before);
+#ifdef XRC_TIMELINE
+    { void xrc_timeline_task(int end); xrc_timeline_task(1); }
+#endif
 }
 
 /* osDpSetNextBuffer (ultra/sp.c): an RDP list the game wrote itself, with no RSP task (Killer Instinct Gold clears its screen so) */

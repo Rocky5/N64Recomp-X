@@ -156,6 +156,7 @@ uint32_t xu_thr_t(void* thr);   /* the OSThread of a runtime thread (thread.c) *
 int xu_rcp_flush(void* mine);   /* sp.c: held done events out (under the lock): `mine`'s, or (NULL) a retrace's; how many */
 int xu_rcp_flush_recv(void* mine);   /* sp.c: XRC_RCP_RECV: `mine`'s, at a blocking receive that finds a message */
 int xu_rcp_dp_wait(void* mine, uint32_t key);   /* sp.c: blocking on `key`, the DP done's queue, with the SP done's full */
+int xu_rcp_sender_sleeps(void* me);   /* sp.c: XRC_RCP_SENDER_BLOCKED: the dones held for `me`, the sender, as it sleeps */
 
 /* pi.c: the ROM the PI reads (z64 order), through xhw_rom_read (resident or
  * the page cache, PLAN.md 3.5); 0 = done, 1 = outside the ROM (nothing read) */

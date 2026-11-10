@@ -1507,7 +1507,7 @@ int main(int argc, char** argv) {
     fseek(f, 0, SEEK_END);
     n = ftell(f);
     fseek(f, 0, SEEK_SET);
-    if (n < 0x101000 || n > 0x4000000) { fprintf(stderr, "dryboot: %s is not a ROM\n", rom_path); fclose(f); return 1; }
+    if (n < 0x101000 || n > 0xFC00000) {   /* (the cartridge window: a ROM hack can pass 64 MB) */ fprintf(stderr, "dryboot: %s is not a ROM\n", rom_path); fclose(f); return 1; }
     s_romsize = (uint32_t)n;
     s_rom = (uint8_t*)malloc(s_romsize);
     if (!s_rom || fread(s_rom, 1, s_romsize, f) != s_romsize) { fclose(f); return 1; }

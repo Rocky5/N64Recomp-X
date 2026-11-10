@@ -198,7 +198,7 @@ static int restart_needed(void) { return !s_pre && out_index(&g_xrc_settings) !=
 
 static int wide_now(const XrcSettings* st) {
     const xhw_video_mode* vm = xhw_video();
-    if (st->widescreen == XRC_WS_ON || st->widescreen == XRC_WS_STRETCH) return 1;
+    if (st->widescreen == XRC_WS_ON || st->widescreen == XRC_WS_STRETCH || st->widescreen == XRC_WS_FORCE) return 1;
     if (st->widescreen == XRC_WS_AUTO) return vm->height >= 720 || s_dash_wide;
     return 0;
 }
@@ -206,6 +206,7 @@ static int wide_now(const XrcSettings* st) {
 static void apply_now(void) {
     const XrcSettings* g = &g_xrc_settings;
     f3d_set_widescreen(g->widescreen != XRC_WS_OFF && wide_now(g));
+    f3d_set_wide3d(g->widescreen == XRC_WS_FORCE);
     xgfx_set_tex_filter(g->texture_filter ? 2 : 0);
     xgfx_set_fps_overlay(g->fps);
 }
@@ -247,7 +248,8 @@ static void row_value(int r, char* v, size_t cap, int* star) {
     }
     case ROW_WIDE:
         if (g->widescreen == XRC_WS_AUTO) snprintf(v, cap, "Auto, %s", wide_now(g) ? "16:9" : "4:3");
-        else snprintf(v, cap, "%s", g->widescreen == XRC_WS_ON ? "On" : g->widescreen == XRC_WS_STRETCH ? "Stretch" : "Off");
+        else snprintf(v, cap, "%s", g->widescreen == XRC_WS_ON ? "On" : g->widescreen == XRC_WS_FORCE ? "Force" :
+                                    g->widescreen == XRC_WS_STRETCH ? "Stretch" : "Off");
         break;
     case ROW_FILTER: snprintf(v, cap, "%s", g->texture_filter ? "Sharp" : "N64 (bilinear)"); break;
     case ROW_FPS: snprintf(v, cap, "%s", g->fps ? "On" : "Off"); break;
@@ -274,7 +276,8 @@ static void info_text(char* out, size_t cap) {
     case ROW_WIDE:
         if (xhw_video()->height >= 720) snprintf(out, cap, "Off: the 4:3 picture in the middle");
         else if (!s_dash_wide) snprintf(out, cap, "At 480 lines 16:9 needs the dashboard's widescreen");
-        else snprintf(out, cap, "More world at the sides; the HUD stays 4:3");
+        else if (g->widescreen == XRC_WS_FORCE) snprintf(out, cap, "3D to the edges; the game may not draw there");
+        else snprintf(out, cap, f3d_game_wide3d() ? "More world at the sides; the HUD stays 4:3" : "This game: the 4:3 picture, bars at the sides");
         break;
     case ROW_FILTER: snprintf(out, cap, "Sharp: no texture smoothing"); break;
     case ROW_FPS: snprintf(out, cap, "Frames per second, top-left corner"); break;
@@ -575,11 +578,11 @@ static void change(int dir, int wrap) {
         break;
     }
     case ROW_WIDE: {
-        /* Auto, On, Off (Stretch comes with M6's interpreter work) */
-        static const int order[3] = { XRC_WS_AUTO, XRC_WS_ON, XRC_WS_OFF };
+        /* Auto, On, Force, Off (Stretch comes with M6's interpreter work) */
+        static const int order[4] = { XRC_WS_AUTO, XRC_WS_ON, XRC_WS_FORCE, XRC_WS_OFF };
         int i = 0;
-        while (i < 3 && order[i] != g->widescreen) i++;
-        g->widescreen = order[step(i % 3, dir, 1, 0, 2, 1)];
+        while (i < 4 && order[i] != g->widescreen) i++;
+        g->widescreen = order[step(i % 4, dir, 1, 0, 3, 1)];
         break;
     }
     case ROW_FILTER: g->texture_filter = !g->texture_filter; break;

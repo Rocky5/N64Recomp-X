@@ -101,6 +101,74 @@ class Image:
         return int.from_bytes(self.rom[o:o + 4], 'big')
 
 
+def _entry_hook(rom, entry):
+    """A ROM hack's hook over the entry's first instructions: `j hook`, a run of code that does what the hack
+    needs (WWF No Mercy Plus copies its own code from the ROM to 0x80400FE0 when it has 8 MB), the instructions
+    the jump replaced, then `j` back into the entry. Returns (where the entry goes on, as an index of words;
+    the registers the hook set on its straight way there), or (0, {}) for an entry with no hook.
+    N64RX_ENTRY_HOOK=0: no such entry is read"""
+    def at(o, v):
+        return Ins(int.from_bytes(rom[o:o + 4], 'big'), v) if o + 4 <= len(rom) else None
+    ins = at(0x1000, entry)
+    if os.environ.get('N64RX_ENTRY_HOOK', '1') == '0' or ins is None or not ins.is_j or not entry < ins.target < entry + 0x100000:
+        return 0, {}
+    regs = {}
+    for k in range(512):
+        v = ins.target + 4 * k
+        x = at(0x1000 + (v - entry), v)
+        if x is None:
+            break
+        back = x.is_j and entry < x.target <= entry + 0x40 and not (x.target - entry) & 3
+        for y in (x, at(0x1000 + (v - entry) + 4, v + 4)) if back else (x,):
+            if y.op == 15:
+                regs[y.rt] = y.imm << 16
+            elif y.op in (8, 9) and y.rs in regs:
+                regs[y.rt] = (regs[y.rs] + y.simm) & 0xFFFFFFFF
+            elif y.op == 13 and y.rs in regs:
+                regs[y.rt] = regs[y.rs] | y.imm
+        if back:
+            return (x.target - entry) // 4, regs
+    return 0, {}
+
+
+def hook_copies(rom, entry):
+    """What an entry hook (_entry_hook) copies with the CPU from the cartridge: lw rX, 0(src); sw rX, 0(dst), a
+    pointer from the ROM's window to RAM, up to an end address. WWF No Mercy Plus's own code, 0x9F020 bytes at
+    0x80400FE0. A Segment each, for the analysis to walk from the jals into it."""
+    first, _ = _entry_hook(rom, entry)
+    if not first:
+        return []
+    def at(v):
+        o = 0x1000 + (v - entry)
+        return Ins(int.from_bytes(rom[o:o + 4], 'big'), v) if 0 <= o and o + 4 <= len(rom) else None
+    out, regs = [], {}
+    v = at(entry).target
+    for _ in range(512):
+        x = at(v)
+        if x is None or (x.is_j and entry < x.target <= entry + 0x40):
+            break
+        if x.op == 15:
+            regs[x.rt] = x.imm << 16
+        elif x.op in (8, 9) and x.rs in regs:
+            regs[x.rt] = (regs[x.rs] + x.simm) & 0xFFFFFFFF
+        elif x.op == 13 and x.rs in regs:
+            regs[x.rt] = regs[x.rs] | x.imm
+        y = at(v + 4)
+        if x.op == 35 and y is not None and y.op == 43 and x.rt == y.rt and not x.imm and not y.imm:
+            src, dst = regs.get(x.rs), regs.get(y.rs)
+            # the loop's bne on the destination against the end, within a few words
+            for k in range(2, 8):
+                b = at(v + 4 * k)
+                if b is not None and b.is_branch and y.rs in (b.rs, b.rt):
+                    end = regs.get(b.rt if b.rs == y.rs else b.rs)
+                    if (src is not None and dst is not None and end is not None and 0xB0000000 <= src < 0xB0000000 + len(rom)
+                            and 0x80000000 <= dst < end <= 0x80800000):
+                        out.append(Segment(f'hook_{dst:08X}', src - 0xB0000000, dst, end - dst))
+                    break
+        v += 4
+    return out
+
+
 def parse_entry(rom, entry):
     """The SDK entry: lui/addiu t0 = BSS start, lui/ori t1 = BSS size, a clear
     loop, then the stack and a jump to main (jr t2 or j main). The variants
@@ -112,7 +180,9 @@ def parse_entry(rom, entry):
     regs, bss, size, main, snap = {}, None, None, None, None
     empty = False
     last_call = None
-    for i in range(64):
+    first, hook_regs = _entry_hook(rom, entry)
+    regs.update(hook_regs)
+    for i in range(first, 64):
         o = 0x1000 + 4 * i
         ins = Ins(int.from_bytes(rom[o:o + 4], 'big'), entry + 4 * i)
         d = ins.dest

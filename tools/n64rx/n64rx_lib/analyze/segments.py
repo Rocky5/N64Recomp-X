@@ -204,6 +204,38 @@ LOAD_START = os.environ.get('N64RX_LOAD_START', '1') != '0'
 # (lwc1 and the like), so they are used only for a function the console ran there (learn.apply,
 # high_load). N64RX_HIGH_SEGS=0: KSEG0 only
 HIGH_SEGS = os.environ.get('N64RX_HIGH_SEGS', '1') != '0'
+# A described text (a load table's start, end and RAM) whose only bad walks are a few `jr` with no table: those functions
+# are interpreted (romonly.py), the rest of the overlay is recompiled, instead of losing it whole. WWF No Mercy Plus V3's
+# two menu overlays at 0x80107C60 (ROM 0xAE400: 1 of 660 functions, 0xFD2C0: 5 of 344) were left out, and the one overlay
+# found there ran on their data (a crash after START). N64RX_OVL_JR=1: for every ROM; 0: never; unset: only a ROM with an
+# entry hook (a ROM hack, funcs.hook_copies) or one whose games/patches file says `n64rx: ovl_jr` (WWF WrestleMania 2000),
+# so other retail builds stay as they were
+OVL_JR = os.environ.get('N64RX_OVL_JR', '')
+OVL_JR_SHARE = 0.05   # at most this share of the overlay's functions
+_OVL_JR_ROM = {}      # id of a ROM image -> its games/patches file asks for it
+
+
+def _rom_asks_ovl_jr(img):
+    """the ROM's own file in games/patches (<code>.<sha1[:12]>.c) says `n64rx: ovl_jr`: WWF WrestleMania 2000 (NWXE) loses its
+    match overlay (ROM 0xD2720 at 0x800E1B90, a few `jr` without a table) and crashed entering a match without it"""
+    key = id(img.rom)
+    if key not in _OVL_JR_ROM:
+        import hashlib
+        import pathlib
+        rom = bytes(img.rom)
+        code = rom[0x3B:0x3F].decode('ascii', 'replace')
+        f = pathlib.Path(__file__).resolve().parents[4] / 'games' / 'patches' / f'{code}.{hashlib.sha1(rom).hexdigest()[:12]}.c'
+        _OVL_JR_ROM[key] = f.is_file() and 'n64rx: ovl_jr' in f.read_text(encoding='utf-8')
+    return _OVL_JR_ROM[key]
+
+
+def _jr_only(img, fs):
+    """the walks of a described text are clean but for a few `jr` without a table, under N64RX_OVL_JR"""
+    if OVL_JR == '0' or (OVL_JR != '1' and not any(s.name.startswith('hook_') for s in img.segments)
+                         and not _rom_asks_ovl_jr(img)):
+        return False
+    bad = [f for f in fs.values() if f.bad]
+    return bool(bad) and all(f.bad.startswith('jr $') for f in bad) and len(bad) <= OVL_JR_SHARE * len(fs)
 
 
 def _taken(img, r, v):
@@ -284,7 +316,7 @@ def find(img, funcs_by_seg, rom_size):
             ok, inside = True, like
         if ok:
             fs = discover(img, seg, inside, weak(seg, inside))
-            ok = bool(fs) and not any(f.bad for f in fs.values())
+            ok = bool(fs) and (not any(f.bad for f in fs.values()) or (natural == 3 and _jr_only(img, fs)))
         img.segments.remove(seg)
         if ok:
             trials.append((-natural, -score, -len(inside), n, seg, inside, pc))

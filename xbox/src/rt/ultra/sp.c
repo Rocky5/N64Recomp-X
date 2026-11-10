@@ -111,6 +111,20 @@ ULTRA(osSpTaskLoad) {
 #ifndef XRC_RCP_SENDER_US
 #define XRC_RCP_SENDER_US 2000
 #endif
+/* A ROM's own value (games/patches: xrc_game_rcp_sender_us, -1 for the default): WWF No Mercy's graphics thread sends
+ * its frame as about six tasks in a row and waits for each one's done, so the hold was paid six times a frame (3 to 5 ms
+ * each, the sender's thread below the graphics thread): a 4-wrestler match spent 20 ms a frame waiting and ran at 20 to
+ * 28 fps; with 0, 30. */
+__attribute__((weak)) int xrc_game_rcp_sender_us(void) { return -1; }
+static unsigned sender_us(void) {
+    static int s_us = -2;
+    if (s_us == -2) {
+        int g = xrc_game_rcp_sender_us();
+        s_us = g >= 0 ? g : (int)(XRC_RCP_SENDER_US);
+        if (g >= 0) xhw_logf("[SP] graphics task dones held %d us (this ROM's)", s_us);
+    }
+    return (unsigned)s_us;
+}
 int xu_thr_in_send(void);   /* thread.c */
 int xu_thr_above_runs(void* thr);
 void* xu_thr_low_sender(void);
@@ -170,10 +184,24 @@ static void take(int i) {
 #ifndef XRC_RCP_ORDER
 #define XRC_RCP_ORDER 1
 #endif
+/* A done held for its sender goes out as the sender goes to sleep (thread.c sleep_on), unless a thread is still inside
+ * its osSendMesg: then there is nothing left for the sender to do after its send, and the hold is only waiting. The
+ * games the hold is for go on after the send (Hydro Thunder sets its "RCP busy" flag, Mortal Kombat 4 swaps its frame
+ * index), so theirs stay held; WWF No Mercy's graphics thread sends a task and waits for its done, six times a frame, and
+ * paid the hold each time. -DXRC_RCP_SENDER_BLOCKED=1 to use it; 0 (the default until those two games say): as before */
+#ifndef XRC_RCP_SENDER_BLOCKED
+#define XRC_RCP_SENDER_BLOCKED 0
+#endif
+static void* s_sender_asleep;   /* the sender, while sleep_on flushes for it */
+
 /* this one's done waits for a sender, or for the time after one */
 static int held_for_sender(int i, uint64_t now, int* in_send) {
     int young = xu_retrace() - s_pend[i].at < 2;
     if (!s_pend[i].due) return 0;
+    if (s_sender_asleep) {
+        if (*in_send < 0) *in_send = xu_thr_in_send();
+        if (!*in_send) return 0;
+    }
     if (s_pend[i].due > now) return young;
     if (*in_send < 0) *in_send = xu_thr_in_send();
     return *in_send && young;
@@ -184,7 +212,7 @@ int xu_event_waited(int e);   /* thread.c */
 
 int xu_rcp_flush(void* mine) {
     int i = 0, n = 0, in_send = -1;
-    uint64_t now = XRC_RCP_SENDER_US ? xu_count64() : 0;
+    uint64_t now = sender_us() ? xu_count64() : 0;
     /* the retrace's: a thread already asleep on the DP done's queue, the task's own thread still running */
     if (!mine) dp_past_full_sp(xu_event_waited(OS_EVENT_DP));
     if (XRC_RCP_ORDER) {
@@ -193,7 +221,8 @@ int xu_rcp_flush(void* mine) {
         for (i = 0; i < s_npend; i++) {
             int go = !XRC_RCP_OWNER ||
                      (mine ? s_pend[i].thr == mine
-                           : xu_thr_blocked(s_pend[i].thr) || xu_retrace() - s_pend[i].at >= 2);
+                           : xu_thr_blocked(s_pend[i].thr) || xu_retrace() - s_pend[i].at >= 2 ||
+                                 (s_sender_asleep && s_pend[i].thr == s_sender_asleep));
             if (XRC_DP_LATENCY && s_pend[i].dp && xu_retrace() - s_pend[i].at < (unsigned)XRC_DP_LATENCY) go = 0;
             if (!go) continue;
             if (held_for_sender(i, now, &in_send)) break;   /* those after it ran after it */
@@ -239,10 +268,21 @@ int xu_rcp_flush(void* mine) {
 #ifndef XRC_RCP_RECV
 #define XRC_RCP_RECV 0
 #endif
+/* thread.c's sleep_on, under the lock, before `me` sleeps: the dones held for it, when it is the sender (XRC_RCP_SENDER_BLOCKED).
+ * How many went out */
+int xu_rcp_sender_sleeps(void* me) {
+    int n;
+    if (!XRC_RCP_SENDER_BLOCKED || !s_npend || !me || me != s_sender || !sender_us()) return 0;
+    s_sender_asleep = me;
+    n = xu_rcp_flush(NULL);
+    s_sender_asleep = NULL;
+    return n;
+}
+
 /* thread.c, under the lock: the last sender is out of its osSendMesg */
 void xu_rcp_senders_out(void* who) {
     int i, any = 0;
-    uint64_t due = xu_count64() + (uint64_t)XRC_RCP_SENDER_US * 46875u / 1000u;
+    uint64_t due = xu_count64() + (uint64_t)sender_us() * 46875u / 1000u;
     if (who != s_sender) return;
     for (i = 0; i < s_npend; i++)
         if (s_pend[i].due) s_pend[i].due = due, any = 1;
@@ -253,7 +293,7 @@ void xu_rcp_senders_out(void* who) {
 uint64_t xu_rcp_tick(uint64_t now) {
     uint64_t next = 0;
     int i;
-    if (!XRC_RCP_SENDER_US) return 0;
+    if (!sender_us()) return 0;
     if (s_sender && xu_thr_above_runs(s_sender)) {   /* the sender has not had the CPU */
         uint64_t later = now + 46875u;   /* (1 ms) */
         for (i = 0; i < s_npend; i++)
@@ -433,8 +473,8 @@ static void sp_run_now(uint32_t task) {
     s_pend[s_npend].dp = gfx;
     s_pend[s_npend].at = xu_retrace();
     s_pend[s_npend].due = 0;
-    if (XRC_RCP_SENDER_US && takes_time) {
-        s_pend[s_npend].due = xu_count64() + (uint64_t)XRC_RCP_SENDER_US * 46875u / 1000u;
+    if (sender_us() && takes_time) {
+        s_pend[s_npend].due = xu_count64() + (uint64_t)sender_us() * 46875u / 1000u;
         s_sender = xu_thr_low_sender();
         xu_rcp_kick();
     }
